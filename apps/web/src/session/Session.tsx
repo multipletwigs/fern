@@ -3,7 +3,6 @@ import type { SessionHeader } from "@repo/api";
 import { CacheCountdown } from "@repo/ui/CacheCountdown";
 import { Empty } from "@repo/ui/Empty";
 import { Glow } from "@repo/ui/Glow";
-import { LiveStatus } from "@repo/ui/LiveStatus";
 import { TopBar } from "@repo/ui/TopBar";
 import { TranscriptRow } from "@repo/ui/TranscriptRow";
 import { TranscriptTitle } from "@repo/ui/TranscriptTitle";
@@ -38,7 +37,6 @@ export function Session({ id }: { id: string }) {
             remainingMs={DateTime.toEpochMillis(header.cacheExpiresAt) - now}
           />
         )}
-        <LiveStatus live={live} />
       </TopBar>
       {header ? (
         <Virtuoso

@@ -3,8 +3,12 @@ import { clsx } from "clsx";
 import { type KeyboardEvent, useState } from "react";
 import { Loader } from "./Loader";
 
-// The message box under a transcript. Enter sends, Shift+Enter adds a line. While a turn runs it
-// offers Stop instead of Send.
+// A button lifted off the box the way the active sidebar tab is lifted off the sidebar.
+const raised =
+  "flex size-8 items-center justify-center rounded-lg bg-white/[0.09] text-ink shadow-[0_1px_2px_rgb(0_0_0/0.5),inset_0_1px_0_rgb(255_255_255/0.08)] transition-[background-color,opacity] hover:bg-white/[0.14] disabled:opacity-30 disabled:hover:bg-white/[0.09]";
+
+// The message box under a transcript, a raised surface like the active sidebar tab. Enter sends,
+// Shift+Enter adds a line. While a turn runs it offers Stop instead of Send.
 export function Composer({
   placeholder,
   disabled = false,
@@ -49,8 +53,8 @@ export function Composer({
       {notice && <p className="mb-2 px-1 text-xs text-muted">{notice}</p>}
       <div
         className={clsx(
-          "flex items-end gap-2 rounded-2xl border bg-white/[0.035] p-2 pl-4 shadow-[0_8px_30px_rgb(0_0_0/0.4)] transition-colors focus-within:border-ice/25",
-          disabled ? "border-hairline opacity-60" : "border-white/10",
+          "flex flex-col rounded-2xl bg-white/[0.06] shadow-[0_1px_2px_rgb(0_0_0/0.5),0_10px_30px_rgb(0_0_0/0.35),inset_0_1px_0_rgb(255_255_255/0.06)] transition-colors focus-within:bg-white/[0.08]",
+          disabled && "opacity-60",
         )}
       >
         <textarea
@@ -59,39 +63,35 @@ export function Composer({
           onKeyDown={onKeyDown}
           disabled={disabled}
           placeholder={placeholder}
-          rows={1}
-          className="max-h-60 min-h-9 flex-1 resize-none bg-transparent py-2 text-[15px] leading-6 text-ink outline-none [field-sizing:content] placeholder:text-faint disabled:cursor-not-allowed"
+          rows={3}
+          className="max-h-72 min-h-[84px] resize-none bg-transparent px-4 pt-3.5 text-[15px] leading-6 text-ink outline-none [field-sizing:content] placeholder:text-faint disabled:cursor-not-allowed"
         />
-        {running ? (
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-2 text-xs text-muted">
-              <Loader variant="orbit" className="text-sm text-ink" />
-              Working
-            </span>
+        <div className="flex justify-end p-2 pt-0">
+          {running ? (
             <button
               type="button"
               onClick={onStop}
               title="Stop"
-              className="flex size-9 items-center justify-center rounded-xl bg-white/10 text-ink transition-colors hover:bg-white/15"
+              className={raised}
             >
               <StopIcon weight="fill" className="size-3.5" />
             </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => void send()}
-            disabled={!canSend}
-            title="Send"
-            className="flex size-9 items-center justify-center rounded-xl bg-ink text-canvas transition-opacity hover:opacity-90 disabled:opacity-20"
-          >
-            {sending ? (
-              <Loader className="text-sm" />
-            ) : (
-              <ArrowUpIcon weight="bold" className="size-4" />
-            )}
-          </button>
-        )}
+          ) : (
+            <button
+              type="button"
+              onClick={() => void send()}
+              disabled={!canSend}
+              title="Send"
+              className={raised}
+            >
+              {sending ? (
+                <Loader className="text-sm" />
+              ) : (
+                <ArrowUpIcon weight="bold" className="size-4" />
+              )}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
