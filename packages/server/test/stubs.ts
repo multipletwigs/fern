@@ -24,6 +24,7 @@ export const UnusedTranscripts = Layer.succeed(
 
 export const unusedTurns = Turns.of({
   send: () => Effect.die("unused"),
+  unqueue: () => Effect.die("unused"),
   start: () => Effect.die("unused"),
   interrupt: () => Effect.die("unused"),
   turn: () => Effect.die("unused"),

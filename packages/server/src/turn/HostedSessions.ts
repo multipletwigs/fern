@@ -3,7 +3,7 @@ import {
   type SDKSessionInfo,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { TranscriptError } from "@repo/api";
-import { Clock, Context, Effect, Layer, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Ref, Schema } from "effect";
 import { SqlClient, SqlSchema } from "effect/sql";
 import { sdk } from "../agentSdk";
 
@@ -20,7 +20,8 @@ export class HostedSessions extends Context.Service<
       ReadonlyArray<SDKSessionInfo>,
       TranscriptError
     >;
-    // Whether a listed Session ran in the folder, which is what makes it a Project.
+    // Whether a listed Session ran in the folder, which is what makes it a Project. A folder once
+    // seen as one stays one, so only a folder not yet seen costs a listing.
     isProject(cwd: string): Effect.Effect<boolean, TranscriptError>;
   }
 >()("@repo/server/turn/HostedSessions") {
@@ -33,6 +34,15 @@ export class HostedSessions extends Context.Service<
         Result: Schema.Struct({ id: Schema.String }),
         execute: () => sql`SELECT id FROM hosted_sessions`,
       });
+      // Every folder a listing has shown a Session in. Listing reads every transcript on disk, too
+      // slow to repeat on each request that names a Project.
+      const projects = yield* Ref.make<ReadonlySet<string>>(new Set());
+      const remember = (sessions: ReadonlyArray<SDKSessionInfo>) =>
+        Ref.update(projects, (known) => {
+          const next = new Set(known);
+          for (const info of sessions) if (info.cwd) next.add(info.cwd);
+          return next.size === known.size ? known : next;
+        });
 
       const record = Effect.fn("HostedSessions.record")(function* (
         id: string,
@@ -52,22 +62,30 @@ export class HostedSessions extends Context.Service<
           ],
           { concurrency: "unbounded" },
         );
-        if (started.length === 0) return developers;
+        if (started.length === 0) {
+          yield* remember(developers);
+          return developers;
+        }
         const ids = new Set(started.map((row) => row.id));
         const shown = new Set(developers.map((info) => info.sessionId));
         const everything = yield* sdk("listSessions", () => listSessions());
-        return [
+        const sessions = [
           ...developers,
           ...everything.filter(
             (info) => ids.has(info.sessionId) && !shown.has(info.sessionId),
           ),
         ].toSorted((a, b) => b.lastModified - a.lastModified);
+        yield* remember(sessions);
+        return sessions;
       }).pipe(Effect.withSpan("HostedSessions.listed"));
 
-      const isProject = (cwd: string) =>
-        listed.pipe(
-          Effect.map((sessions) => sessions.some((info) => info.cwd === cwd)),
-        );
+      const isProject = Effect.fn("HostedSessions.isProject")(function* (
+        cwd: string,
+      ) {
+        if ((yield* Ref.get(projects)).has(cwd)) return true;
+        yield* listed;
+        return (yield* Ref.get(projects)).has(cwd);
+      });
 
       return HostedSessions.of({ record, listed, isProject });
     }),

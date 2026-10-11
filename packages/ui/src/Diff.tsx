@@ -12,8 +12,8 @@ export function Diff({ lines }: { lines: ReadonlyArray<string> }) {
           className={clsx(
             "px-3 whitespace-pre-wrap",
             line.startsWith("+")
-              ? "bg-ice/[0.06] text-ice/90"
-              : "bg-danger/[0.06] text-danger/80",
+              ? "bg-mint/[0.07] text-mint/90"
+              : "bg-danger/[0.07] text-danger/85",
           )}
         >
           {line}

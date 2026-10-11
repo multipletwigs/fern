@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 
 // A Project's code, read from the folder its Sessions ran in. Only folders a Session ran in can be
 // read, and only paths inside them.
@@ -58,42 +58,6 @@ export class SessionChanges extends Schema.Class<SessionChanges>(
 }) {}
 
 export class ProjectsApi extends HttpApiGroup.make("projects")
-  .add(
-    // Every file git doesn't ignore, as paths relative to the folder, re-sent when the set changes.
-    HttpApiEndpoint.get("files", "/files", {
-      query: { root: Schema.NonEmptyString },
-      success: HttpApiSchema.StreamSse({
-        data: Schema.Array(Schema.String),
-        error: WorkspaceError,
-      }),
-      error: [ProjectNotFound, WorkspaceError],
-    }),
-  )
-  .add(
-    // One file, re-sent whenever it changes on disk.
-    HttpApiEndpoint.get("file", "/file", {
-      query: { root: Schema.NonEmptyString, path: Schema.NonEmptyString },
-      success: HttpApiSchema.StreamSse({
-        data: FileContent,
-        error: WorkspaceError,
-      }),
-      error: [ProjectNotFound, FileNotFound, WorkspaceError],
-    }),
-  )
-  .add(
-    // A Session's net change in the folder, re-sent when it changes.
-    HttpApiEndpoint.get("changes", "/changes", {
-      query: {
-        root: Schema.NonEmptyString,
-        session: Schema.NonEmptyString,
-      },
-      success: HttpApiSchema.StreamSse({
-        data: SessionChanges,
-        error: WorkspaceError,
-      }),
-      error: [ProjectNotFound, WorkspaceError],
-    }),
-  )
   .add(
     // The slash commands Claude Code offers in the folder.
     HttpApiEndpoint.get("commands", "/commands", {

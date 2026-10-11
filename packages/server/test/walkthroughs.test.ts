@@ -1,9 +1,10 @@
 import { NodeServices } from "@effect/platform-node";
 import { assert, layer } from "@effect/vitest";
-import { FernApi, SessionInUse, type Walkthrough } from "@repo/api";
+import { FernApi, LiveRpcs, SessionInUse, type Walkthrough } from "@repo/api";
 import { Effect, Layer, PubSub, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
+import { RpcTest } from "effect/rpc";
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
@@ -111,15 +112,13 @@ const FakeTurns = Layer.succeed(
 );
 
 const makeClient = HttpApiTest.groups(FernApi, ["walkthroughs"]);
+const makeLive = RpcTest.makeClient(LiveRpcs);
 
 // The Session's Walkthroughs once `count` of them are written.
 const written = (count: number) =>
   Effect.gen(function* () {
-    const client = yield* makeClient;
-    const list = yield* client.walkthroughs.list({
-      query: { session: SESSION },
-    });
-    const [walkthroughs] = yield* list.pipe(
+    const live = yield* makeLive;
+    const [walkthroughs] = yield* live.Walkthroughs({ session: SESSION }).pipe(
       Stream.filter(
         (all) =>
           all.length === count && all.every((w) => w.status !== "writing"),

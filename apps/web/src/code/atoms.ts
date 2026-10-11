@@ -1,6 +1,6 @@
 import { Effect, Predicate, Schedule, Stream } from "effect";
 import { Atom } from "effect/reactivity";
-import { ApiClient } from "../ApiClient";
+import { LiveClient } from "../LiveClient";
 
 // Reconnect after a dropped connection, but not when the server has said why it can't serve this.
 const reconnect = Schedule.spaced("2 seconds").pipe(
@@ -14,11 +14,11 @@ const reconnect = Schedule.spaced("2 seconds").pipe(
 
 // A Project's files, kept current by the server.
 export const projectFilesAtom = Atom.family((root: string) =>
-  ApiClient.runtime.atom(
+  LiveClient.runtime.atom(
     Stream.unwrap(
       Effect.gen(function* () {
-        const client = yield* ApiClient;
-        return yield* client.projects.files({ query: { root } });
+        const client = yield* LiveClient;
+        return client("ProjectFiles", { root });
       }),
     ).pipe(Stream.retry(reconnect)),
   ),
@@ -27,32 +27,35 @@ export const projectFilesAtom = Atom.family((root: string) =>
 // One file's content, re-sent whenever it changes on disk.
 export const fileAtom = Atom.family((root: string) =>
   Atom.family((path: string) =>
-    ApiClient.runtime.atom(
+    LiveClient.runtime.atom(
       Stream.unwrap(
         Effect.gen(function* () {
-          const client = yield* ApiClient;
-          return yield* client.projects.file({ query: { root, path } });
+          const client = yield* LiveClient;
+          return client("File", { root, path });
         }),
       ).pipe(Stream.retry(reconnect)),
     ),
   ),
 );
 
-// A Session's net change in the Project, from git, kept current by the server.
-export const sessionChangesAtom = Atom.family((root: string) =>
-  Atom.family((sessionId: string) =>
-    ApiClient.runtime.atom(
+// A Session's net change in the Project, from git, kept current by the server. Stays loaded a
+// while after it leaves the screen, like the Session's transcript. One family keyed by both, as a
+// family of families can drop the inner one, and with it the loaded atoms.
+const changesFamily = Atom.family((key: string) => {
+  const [root = "", session = ""] = key.split("\0");
+  return LiveClient.runtime
+    .atom(
       Stream.unwrap(
         Effect.gen(function* () {
-          const client = yield* ApiClient;
-          return yield* client.projects.changes({
-            query: { root, session: sessionId },
-          });
+          const client = yield* LiveClient;
+          return client("Changes", { root, session });
         }),
       ).pipe(Stream.retry(reconnect)),
-    ),
-  ),
-);
+    )
+    .pipe(Atom.setIdleTTL("1 minute"));
+});
+export const sessionChangesAtom = (root: string, sessionId: string) =>
+  changesFamily(`${root}\0${sessionId}`);
 
 // What the code panel shows: a file, as an absolute path, or a Walkthrough.
 export type OpenItem =

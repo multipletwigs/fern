@@ -1,9 +1,9 @@
 import { NodeServices } from "@effect/platform-node";
 import { assert, layer } from "@effect/vitest";
-import { FernApi, type SessionChanges } from "@repo/api";
+import { LiveRpcs, type SessionChanges } from "@repo/api";
 import { Effect, Layer, Stream } from "effect";
 import { HttpServer } from "effect/http";
-import { HttpApiTest } from "effect/http-api";
+import { RpcTest } from "effect/rpc";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -52,14 +52,13 @@ writeFileSync(
 );
 process.env.CLAUDE_CONFIG_DIR = configDir;
 
-const makeClient = HttpApiTest.groups(FernApi, ["projects"]);
+const makeLive = RpcTest.makeClient(LiveRpcs);
 
 const changes = Effect.gen(function* () {
-  const client = yield* makeClient;
-  const stream = yield* client.projects.changes({
-    query: { root, session: SESSION },
-  });
-  const [first] = yield* stream.pipe(Stream.take(1), Stream.runCollect);
+  const live = yield* makeLive;
+  const [first] = yield* live
+    .Changes({ root, session: SESSION })
+    .pipe(Stream.take(1), Stream.runCollect);
   return first;
 });
 

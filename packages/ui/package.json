@@ -17,6 +17,7 @@
     "clsx": "2.1.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "react-virtuoso": "4.18.16",
     "shiki": "4.5.0",
     "streamdown": "2.7.0"
   },

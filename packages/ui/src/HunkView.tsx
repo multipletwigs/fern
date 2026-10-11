@@ -1,7 +1,8 @@
 import { clsx } from "clsx";
 
-// One hunk of a diff: its header, then its lines with the added and removed ones tinted. Lines
-// left out to keep things small are counted at the end.
+// One hunk of a diff: its header, then its lines, added ones green and removed ones red. Long lines
+// wrap, their continuations indented past the +/- so the column of markers stays clean. Lines left
+// out to keep things small are counted at the end.
 export function HunkView({
   header,
   lines,
@@ -12,7 +13,7 @@ export function HunkView({
   omitted: number;
 }) {
   return (
-    <div className="overflow-x-auto font-mono text-xs leading-5">
+    <div className="font-mono text-xs leading-5">
       <div className="px-3 py-1 text-faint">{header}</div>
       {lines.map((line, index) => (
         <div
@@ -20,11 +21,11 @@ export function HunkView({
           // oxlint-disable-next-line react/no-array-index-key
           key={index}
           className={clsx(
-            "min-w-max px-3 whitespace-pre",
+            "-indent-[1ch] pr-3 pl-[calc(0.75rem+1ch)] whitespace-pre-wrap wrap-anywhere",
             line.startsWith("+")
-              ? "bg-ice/[0.06] text-ice/90"
+              ? "bg-mint/[0.07] text-mint/90"
               : line.startsWith("-")
-                ? "bg-danger/[0.06] text-danger/80"
+                ? "bg-danger/[0.07] text-danger/85"
                 : line.startsWith("\\")
                   ? "text-faint"
                   : "text-ink/60",

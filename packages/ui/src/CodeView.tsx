@@ -1,107 +1,99 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  type BundledLanguage,
-  bundledLanguages,
-  createHighlighter,
-  type Highlighter,
-} from "shiki";
+import { type Components, Virtuoso } from "react-virtuoso";
+import { CodeLine } from "./CodeLine";
+import { highlight, type Line } from "./highlight";
 
-const isBundled = (name: string): name is BundledLanguage =>
-  Object.hasOwn(bundledLanguages, name);
+// Every line is this tall, so the list never measures one.
+const LINE_HEIGHT = 20;
+// A tab's width, as `pre` renders it.
+const TAB = 8;
 
-// Shiki's language for a file, from its name; plain text when Shiki doesn't know it.
-const languageOf = (path: string): BundledLanguage | "text" => {
-  const name = path.split("/").at(-1)?.toLowerCase() ?? "";
-  const ext = name.includes(".") ? name.split(".").at(-1) : undefined;
-  const guess =
-    name === "dockerfile"
-      ? "docker"
-      : name === "makefile"
-        ? "make"
-        : ext === "mjs" || ext === "cjs"
-          ? "js"
-          : ext === "mts" || ext === "cts"
-            ? "ts"
-            : ext;
-  return guess && isBundled(guess) ? guess : "text";
-};
+const plain = (text: string): Line => [[text, undefined]];
+const textOf = (line: Line) => line.map(([content]) => content).join("");
 
-const THEME = "github-dark";
-// Tokenizing runs on every change, so very large files stay plain to keep typing smooth.
-const MAX_HIGHLIGHT_CHARS = 300_000;
-
-// One highlighter for every file. Each language loads once; after that, tokenizing is
-// synchronous, so a file changing on disk never renders a plain-text frame in between.
-const highlighter = createHighlighter({ themes: [THEME], langs: [] });
-
-const plain = (content: string) =>
-  content.split("\n").map((text) => [{ content: text, color: undefined }]);
-
-// A file's content with line numbers and syntax highlighting.
-export function CodeView({ path, content }: { path: string; content: string }) {
-  const language = languageOf(path);
-  const [ready, setReady] = useState<{
-    highlighter: Highlighter;
-    language: string;
+// The content's highlighted lines once the worker has them. Until then, a line that read the same
+// in the previous highlighting keeps its colors, so a file changing on disk doesn't flash plain.
+const useHighlighted = (path: string, content: string) => {
+  const [highlighted, setHighlighted] = useState<{
+    content: string;
+    lines: ReadonlyArray<Line>;
   }>();
 
   useEffect(() => {
-    let cancelled = false;
-    void highlighter
-      .then(async (loaded) => {
-        if (language !== "text") await loaded.loadLanguage(language);
-        if (!cancelled) setReady({ highlighter: loaded, language });
-      })
-      .catch(() => undefined);
+    let current = true;
+    void highlight(path, content).then((lines) => {
+      if (current && lines) setHighlighted({ content, lines });
+    });
     return () => {
-      cancelled = true;
+      current = false;
     };
-  }, [language]);
+  }, [path, content]);
 
-  const lines = useMemo(
-    () =>
-      ready?.language === language &&
-      language !== "text" &&
-      content.length <= MAX_HIGHLIGHT_CHARS
-        ? ready.highlighter.codeToTokens(content, {
-            lang: language,
-            theme: THEME,
-          }).tokens
-        : plain(content),
-    [ready, language, content],
+  return useMemo(() => {
+    if (highlighted?.content === content) return highlighted.lines;
+    const previous = new Map(
+      highlighted?.lines.map((line) => [textOf(line), line]),
+    );
+    return content.split("\n").map((text) => previous.get(text) ?? plain(text));
+  }, [highlighted, content]);
+};
+
+interface Context {
+  // Characters in the widest line number.
+  readonly gutter: number;
+  // Characters in the widest line, tabs expanded.
+  readonly widest: number;
+}
+
+const components: Components<Line, Context> = {
+  Header: () => <div className="h-3" />,
+  Footer: () => <div className="h-3" />,
+  // Lines off screen aren't on the page to stretch it, so the list takes the widest line's width
+  // up front: the gutter, the line, and its right padding.
+  List: ({ style, children, ref, context }) => (
+    <div
+      ref={ref}
+      style={{
+        ...style,
+        minWidth: `calc(${context.gutter + 3 + context.widest}ch + 1.5rem)`,
+      }}
+    >
+      {children}
+    </div>
+  ),
+};
+
+const renderLine = (index: number, line: Line, context: Context) => (
+  <CodeLine number={index + 1} gutter={context.gutter} line={line} />
+);
+
+// A file's content with line numbers and syntax highlighting. Only the lines in view are on the
+// page, so a long file opens about as fast as a short one.
+export function CodeView({ path, content }: { path: string; content: string }) {
+  const lines = useHighlighted(path, content);
+  const context = useMemo(
+    (): Context => ({
+      gutter: String(lines.length).length,
+      widest: Math.max(
+        0,
+        ...lines.map((line) => {
+          const text = textOf(line);
+          return text.length + (TAB - 1) * (text.split("\t").length - 1);
+        }),
+      ),
+    }),
+    [lines],
   );
-  const gutter = String(lines.length).length;
 
   return (
-    <div className="h-full overflow-auto">
-      <pre className="min-w-max py-3 font-mono text-[12.5px] leading-5">
-        {lines.map((line, index) => (
-          <div
-            // Lines are positional; nothing else identifies them.
-            // oxlint-disable-next-line react/no-array-index-key
-            key={index}
-            className="flex hover:bg-white/[0.025]"
-          >
-            <span
-              className="sticky left-0 shrink-0 bg-[#0a0a0a] pr-4 pl-4 text-right text-faint select-none"
-              style={{ width: `${gutter + 3}ch` }}
-            >
-              {index + 1}
-            </span>
-            <span className="pr-6 whitespace-pre text-ink/90">
-              {line.map((token, at) => (
-                <span
-                  // oxlint-disable-next-line react/no-array-index-key
-                  key={at}
-                  style={token.color ? { color: token.color } : undefined}
-                >
-                  {token.content}
-                </span>
-              ))}
-            </span>
-          </div>
-        ))}
-      </pre>
-    </div>
+    <Virtuoso
+      className="h-full font-mono text-[12.5px] leading-5 text-ink/90"
+      data={lines}
+      context={context}
+      components={components}
+      itemContent={renderLine}
+      fixedItemHeight={LINE_HEIGHT}
+      increaseViewportBy={LINE_HEIGHT * 20}
+    />
   );
 }

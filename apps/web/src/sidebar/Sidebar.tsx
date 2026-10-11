@@ -1,20 +1,24 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Hint } from "@repo/ui/Hint";
 import { LocationPill } from "@repo/ui/LocationPill";
+import { NewSessionButton } from "@repo/ui/NewSessionButton";
 import { ProjectGroup } from "@repo/ui/ProjectGroup";
 import { SessionRow } from "@repo/ui/SessionRow";
 import { SidebarPanel } from "@repo/ui/SidebarPanel";
 import { isWorking } from "@repo/api";
 import { DateTime } from "effect";
-import { AsyncResult } from "effect/reactivity";
+import { Atom, AsyncResult } from "effect/reactivity";
+import { useContext } from "react";
 import {
   activeProjectAtom,
   activeSessionIdAtom,
   newSessionAtom,
+  preloadedSessionAtom,
   projectsAtom,
   selectedSessionAtom,
 } from "../session/atoms";
 import { ago, useNow } from "../session/time";
+import { screenAtoms } from "../workspace/screen";
 
 const projectName = (path: string) => path.split("/").at(-1) || "Unknown";
 
@@ -23,12 +27,21 @@ export function Sidebar() {
   const activeId = useAtomValue(activeSessionIdAtom);
   const activeProject = useAtomValue(activeProjectAtom);
   const setSelected = useAtomSet(selectedSessionAtom);
-  const closeNew = useAtomSet(newSessionAtom);
+  const setNew = useAtomSet(newSessionAtom);
   const select = (id: string) => {
     setSelected(id);
-    closeNew(undefined);
+    setNew(undefined);
   };
   const now = useNow();
+  // Subscribing for a moment starts a Session's streams; they stay open a while after.
+  const registry = useContext(RegistryContext);
+  const setPreloaded = useAtomSet(preloadedSessionAtom);
+  const preload = (id: string, root: string) => {
+    setPreloaded(id);
+    screenAtoms(id, root).forEach((atom: Atom.Atom<unknown>) =>
+      registry.mount(atom)(),
+    );
+  };
 
   if (!AsyncResult.isSuccess(projects))
     return (
@@ -51,10 +64,19 @@ export function Sidebar() {
     <SidebarPanel
       header={
         activeProject && (
-          <LocationPill
-            primary={projectName(activeProject.path)}
-            secondary={activeSession?.gitBranch}
-          />
+          <div className="flex items-center gap-1.5">
+            <div className="min-w-0 flex-1">
+              <LocationPill
+                primary={projectName(activeProject.path)}
+                secondary={activeSession?.gitBranch}
+              />
+            </div>
+            <NewSessionButton
+              name={projectName(activeProject.path)}
+              onClick={() => setNew(activeProject.path)}
+              className="size-9 rounded-lg bg-white/[0.05]"
+            />
+          </div>
         )
       }
     >
@@ -64,6 +86,7 @@ export function Sidebar() {
           key={project.path}
           name={projectName(project.path)}
           path={project.path}
+          onNew={() => setNew(project.path)}
           rows={project.sessions.map((session) => {
             const lastActivityMs = DateTime.toEpochMillis(
               session.lastActivityAt,
@@ -76,6 +99,7 @@ export function Sidebar() {
                 live={isWorking(lastActivityMs, session.hostedTurn, now)}
                 lastActive={ago(now - lastActivityMs)}
                 onSelect={() => select(session.id)}
+                onPreload={() => preload(session.id, project.path)}
               />
             );
           })}

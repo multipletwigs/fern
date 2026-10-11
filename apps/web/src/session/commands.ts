@@ -28,17 +28,21 @@ export const useCommands = (root: string | undefined) => {
   );
 };
 
-// What the composer hands over, as the server takes it. A slash command goes to Claude Code as
-// typed, followed by its arguments.
-export const outgoing = ({
-  text,
-  images,
-  command,
-}: {
-  text: string;
-  images: ReadonlyArray<ComposerImage>;
-  command?: string;
-}): OutgoingMessage => ({
+// What the composer hands over, as the server takes it, to run on `model` when one is picked. A
+// slash command goes to Claude Code as typed, followed by its arguments.
+export const outgoing = (
+  {
+    text,
+    images,
+    command,
+  }: {
+    text: string;
+    images: ReadonlyArray<ComposerImage>;
+    command?: string;
+  },
+  model: string | undefined,
+): OutgoingMessage => ({
   text: command ? [`/${command}`, text].filter(Boolean).join(" ") : text,
   images: images.map(({ mediaType, data }) => ({ mediaType, data })),
+  ...(model ? { model } : {}),
 });

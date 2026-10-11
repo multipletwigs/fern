@@ -11,7 +11,6 @@ import {
   isInUseElsewhere,
   type OutgoingMessage,
   ProjectNotFound,
-  SessionBusy,
   SessionInUse,
   SessionNotFound,
   TranscriptError,
@@ -54,19 +53,38 @@ export interface FinishedTurn {
   readonly cwd: string;
 }
 
-// Marks a turn as running on the Session unless one already is, or another process is writing it.
+// Marks a turn as running on the Session, unless another process is writing it.
 const claim = (
   all: TurnMap,
   id: string,
   lastActivityMs: number,
   nowMs: number,
-): readonly [SessionBusy | SessionInUse | undefined, TurnMap] => {
+): readonly [SessionInUse | undefined, TurnMap] => {
   const turn = all.get(id);
-  if (turn?.running) return [new SessionBusy({ id }), all];
   if (isInUseElsewhere(lastActivityMs, turn, nowMs))
     return [new SessionInUse({ id }), all];
-  return [undefined, new Map(all).set(id, { running: true })];
+  return [
+    undefined,
+    new Map(all).set(id, {
+      running: true,
+      contextWindow: turn?.contextWindow,
+    }),
+  ];
 };
+
+// A message waiting in a Session's queue.
+interface Queued {
+  readonly id: string;
+  readonly message: OutgoingMessage;
+}
+const summary = (queue: ReadonlyArray<Queued>) =>
+  queue.length === 0
+    ? undefined
+    : queue.map(({ id, message }) => ({
+        id,
+        text: message.text,
+        images: message.images?.length ?? 0,
+      }));
 
 // Why a turn's result message says it failed, if it does.
 const resultError = (message: SDKMessage) => {
@@ -74,6 +92,28 @@ const resultError = (message: SDKMessage) => {
   return message.subtype === "success"
     ? message.result
     : message.errors.join("\n") || message.subtype;
+};
+
+// What a turn's messages tell about it: why it failed, the main loop's model, and that model's
+// context window, from the result's per-model usage.
+interface TurnReport {
+  readonly error: string | undefined;
+  readonly model: string | undefined;
+  readonly contextWindow: number | undefined;
+}
+const report = (seen: TurnReport, message: SDKMessage): TurnReport => {
+  if (message.type === "system" && message.subtype === "init")
+    return { ...seen, model: message.model };
+  if (message.type !== "result") return seen;
+  const usage = Object.entries(message.modelUsage);
+  const main =
+    usage.find(([model]) => model === seen.model) ??
+    usage.toSorted(([, a], [, b]) => b.contextWindow - a.contextWindow)[0];
+  return {
+    ...seen,
+    error: resultError(message) ?? seen.error,
+    contextWindow: main?.[1].contextWindow ?? seen.contextWindow,
+  };
 };
 
 // The message as the one user turn Claude Code resumes the Session with: images first, then text.
@@ -108,23 +148,25 @@ async function* userTurn(
 }
 
 // Turns Fern runs on a Session itself, by resuming it through the Agent SDK, or by starting a new
-// Session. One turn at a time per Session; tool permissions go through Claude Code's auto mode.
+// Session. One turn at a time per Session: messages sent meanwhile queue up and run in order once
+// it ends. Tool permissions go through Claude Code's auto mode.
 export class Turns extends Context.Service<
   Turns,
   {
+    // Runs the message as a turn, or queues it behind the running one.
     send(
       id: string,
       message: OutgoingMessage,
-    ): Effect.Effect<
-      void,
-      SessionNotFound | SessionBusy | SessionInUse | TranscriptError
-    >;
+    ): Effect.Effect<void, SessionNotFound | SessionInUse | TranscriptError>;
+    // Takes a message out of the Session's queue, if it's still there.
+    unqueue(id: string, item: string): Effect.Effect<void>;
     // Starts a new Session in a Project's folder with this message, and returns its id.
     start(
       cwd: string,
       message: OutgoingMessage,
     ): Effect.Effect<string, ProjectNotFound | TranscriptError>;
-    // Stops the running turn the way Esc does in Claude Code, or forcibly if it doesn't stop.
+    // Stops the running turn the way Esc does in Claude Code, or forcibly if it doesn't stop, and
+    // empties the Session's queue.
     interrupt(id: string): Effect.Effect<void>;
     // The latest turn Fern ran on the Session, if any.
     turn(id: string): Effect.Effect<HostedTurn | undefined>;
@@ -153,6 +195,24 @@ export class Turns extends Context.Service<
       const queries = new Map<string, Query>();
       // Sessions whose running turn the developer asked to stop.
       const interrupted = new Set<string>();
+      // Messages waiting for the running turn per Session, in order. What they say is also on the
+      // Session's turn, for the page; the images are only kept here.
+      const queues = new Map<string, ReadonlyArray<Queued>>();
+
+      // Queues the message if a turn is running on the Session.
+      const enqueue = (all: TurnMap, id: string, message: OutgoingMessage) => {
+        const turn = all.get(id);
+        if (!turn?.running) return [false, all] as const;
+        const queue = [
+          ...(queues.get(id) ?? []),
+          { id: crypto.randomUUID(), message },
+        ];
+        queues.set(id, queue);
+        return [
+          true,
+          new Map(all).set(id, { ...turn, queued: summary(queue) }),
+        ] as const;
+      };
 
       const setTurn = (id: string, turn: HostedTurn) =>
         Ref.update(turns, (all) => new Map(all).set(id, turn));
@@ -185,7 +245,11 @@ export class Turns extends Context.Service<
             const ended = new AbortController();
             const turn = query({
               prompt: userTurn(message, ended.signal),
-              options: { ...session, permissionMode: "auto" },
+              options: {
+                ...session,
+                permissionMode: "auto",
+                ...(message.model ? { model: message.model } : {}),
+              },
             });
             queries.set(id, turn);
             return { turn, ended };
@@ -198,8 +262,12 @@ export class Turns extends Context.Service<
               // With its input open, Claude Code waits for more after the result; the turn is over.
               Stream.takeUntil((event) => event.type === "result"),
               Stream.runFold(
-                (): string | undefined => undefined,
-                (error, event) => resultError(event) ?? error,
+                (): TurnReport => ({
+                  error: undefined,
+                  model: undefined,
+                  contextWindow: undefined,
+                }),
+                report,
               ),
             ),
           ({ turn, ended }) =>
@@ -208,26 +276,73 @@ export class Turns extends Context.Service<
               ended.abort();
               turn.close();
             }),
-        ).pipe(
-          Effect.onExit((exit) =>
+        );
+
+      // Runs the message as a turn, then each message queued meanwhile, in order, until the queue
+      // is empty or the developer stops a turn.
+      const serve = (
+        id: string,
+        first: OutgoingMessage,
+        session: Pick<Options, "resume" | "sessionId"> & { cwd: string },
+      ) =>
+        Effect.gen(function* () {
+          let message = first;
+          let options = session;
+          while (true) {
+            const exit = yield* Effect.exit(run(id, message, options));
+            const endedAt = yield* DateTime.now;
+            // A turn the developer stopped ended as asked, not with an error.
+            const stopped = interrupted.delete(id);
+            const reported = Exit.isSuccess(exit) ? exit.value : undefined;
+            const error = stopped
+              ? undefined
+              : Exit.isSuccess(exit)
+                ? exit.value.error
+                : Cause.hasInterruptsOnly(exit.cause)
+                  ? undefined
+                  : Cause.pretty(exit.cause);
+            const window = windows.findLast((w) => w.id === id);
+            if (window) window.endedAt = DateTime.toEpochMillis(endedAt);
+            // The next queued message starts in the same step, so the Session never looks idle
+            // between the two turns.
+            const next = yield* Ref.modify(turns, (all) => {
+              const contextWindow =
+                reported?.contextWindow ?? all.get(id)?.contextWindow;
+              const [head, ...rest] = stopped ? [] : (queues.get(id) ?? []);
+              if (rest.length > 0) queues.set(id, rest);
+              else queues.delete(id);
+              const turn: HostedTurn = head
+                ? { running: true, contextWindow, queued: summary(rest) }
+                : { running: false, endedAt, error, contextWindow };
+              return [head, new Map(all).set(id, turn)] as const;
+            });
+            if (next) {
+              message = next.message;
+              options = { resume: id, cwd: session.cwd };
+              continue;
+            }
+            // Walkthroughs follow the last turn of a run, once nothing is left queued.
+            if (!stopped && Exit.isSuccess(exit) && error === undefined)
+              yield* PubSub.publish(finished, { id, cwd: session.cwd });
+            return;
+          }
+        }).pipe(
+          // Stopped forcibly: the turn and everything queued behind it are over.
+          Effect.onInterrupt(() =>
             Effect.gen(function* () {
+              interrupted.delete(id);
+              queues.delete(id);
               const endedAt = yield* DateTime.now;
-              // A turn the developer stopped ended as asked, not with an error.
-              const stopped = interrupted.delete(id);
-              const error = stopped
-                ? undefined
-                : Exit.isSuccess(exit)
-                  ? exit.value
-                  : Cause.hasInterruptsOnly(exit.cause)
-                    ? undefined
-                    : Cause.pretty(exit.cause);
-              yield* setTurn(id, { running: false, endedAt, error });
               const window = windows.findLast((w) => w.id === id);
-              if (window) window.endedAt = DateTime.toEpochMillis(endedAt);
-              const completed =
-                !stopped && Exit.isSuccess(exit) && exit.value === undefined;
-              if (completed)
-                yield* PubSub.publish(finished, { id, cwd: session.cwd });
+              if (window && window.endedAt === undefined)
+                window.endedAt = DateTime.toEpochMillis(endedAt);
+              yield* Ref.update(turns, (all) =>
+                new Map(all).set(id, {
+                  running: false,
+                  endedAt,
+                  contextWindow: all.get(id)?.contextWindow,
+                }),
+              );
             }),
           ),
         );
@@ -236,6 +351,9 @@ export class Turns extends Context.Service<
         id: string,
         message: OutgoingMessage,
       ) {
+        // A Session just started may not be on disk yet; behind its first turn, it doesn't need to be.
+        if (yield* Ref.modify(turns, (all) => enqueue(all, id, message)))
+          return yield* Effect.void;
         const info = yield* sdk("getSessionInfo", () =>
           getSessionInfo(id),
         ).pipe(
@@ -245,16 +363,23 @@ export class Turns extends Context.Service<
           ),
         );
         const now = yield* Clock.currentTimeMillis;
-        // Claim the Session atomically, so two sends can't both start a turn.
-        const refused = yield* Ref.modify(turns, (all) =>
-          claim(all, id, info.lastModified, now),
+        // Queue or claim atomically, so two sends can't both start a turn, and a message can't
+        // queue behind a turn that has just ended.
+        const outcome = yield* Ref.modify(
+          turns,
+          (all): readonly ["queued" | SessionInUse | undefined, TurnMap] => {
+            const [queued, next] = enqueue(all, id, message);
+            if (queued) return ["queued", next];
+            return claim(all, id, info.lastModified, now);
+          },
         );
-        if (refused) return yield* refused;
+        if (outcome === "queued") return yield* Effect.void;
+        if (outcome) return yield* outcome;
         yield* markStart(info.cwd ?? "", id);
         return yield* FiberMap.run(
           fibers,
           id,
-          run(id, message, { resume: id, cwd: info.cwd ?? "" }),
+          serve(id, message, { resume: id, cwd: info.cwd ?? "" }),
         ).pipe(Effect.asVoid);
       });
 
@@ -271,7 +396,7 @@ export class Turns extends Context.Service<
         yield* FiberMap.run(
           fibers,
           id,
-          run(id, message, { sessionId: id, cwd }),
+          serve(id, message, { sessionId: id, cwd }),
         );
         return id;
       });
@@ -280,6 +405,13 @@ export class Turns extends Context.Service<
         const fiber = yield* FiberMap.get(fibers, id);
         if (Option.isNone(fiber)) return;
         interrupted.add(id);
+        queues.delete(id);
+        yield* Ref.update(turns, (all) => {
+          const turn = all.get(id);
+          return turn
+            ? new Map(all).set(id, { ...turn, queued: undefined })
+            : all;
+        });
         const turn = queries.get(id);
         if (turn)
           yield* Effect.tryPromise(() => turn.interrupt()).pipe(
@@ -293,8 +425,20 @@ export class Turns extends Context.Service<
         if (Option.isNone(stopped)) yield* Fiber.interrupt(fiber.value);
       });
 
+      const unqueue = (id: string, item: string) =>
+        Ref.update(turns, (all) => {
+          const turn = all.get(id);
+          const queue = (queues.get(id) ?? []).filter((q) => q.id !== item);
+          if (queue.length > 0) queues.set(id, queue);
+          else queues.delete(id);
+          return turn
+            ? new Map(all).set(id, { ...turn, queued: summary(queue) })
+            : all;
+        });
+
       return Turns.of({
         send,
+        unqueue,
         start,
         interrupt,
         turn: (id) => Ref.get(turns).pipe(Effect.map((all) => all.get(id))),

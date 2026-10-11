@@ -10,9 +10,11 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   // Loaded from local disk by Electron, so large chunks (Shiki grammars, Mermaid) cost little.
   build: { chunkSizeWarningLimit: 2000 },
+  // The code view's highlighting worker loads Shiki's grammars on demand, which needs ES modules.
+  worker: { format: "es" },
   server: {
     port: 5173,
     strictPort: true,
-    proxy: { "/api": `http://127.0.0.1:${apiPort}` },
+    proxy: { "/api": { target: `http://127.0.0.1:${apiPort}`, ws: true } },
   },
 });

@@ -4,6 +4,7 @@ import {
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
+  type ReactNode,
   useLayoutEffect,
   useRef,
   useState,
@@ -37,13 +38,16 @@ const raised =
 // The message box under a transcript, a raised surface like the active sidebar tab. Enter sends,
 // Shift+Enter adds a line. Images can be pasted, dropped, or picked. Typing "/" offers the slash
 // commands; a chosen one sits at the start of the box as a chip, and what follows is its
-// arguments. While a turn runs it offers Stop instead of Send.
+// arguments. While a turn runs, an empty box offers Stop, and a message sent then queues behind
+// the turn.
 export function Composer({
   placeholder,
   disabled = false,
   running,
   notice,
   commands = [],
+  tools,
+  queue,
   onSend,
   onStop,
 }: {
@@ -53,6 +57,10 @@ export function Composer({
   commands?: ReadonlyArray<ComposerCommand>;
   // Shown above the box, e.g. why it's disabled or why the last turn failed.
   notice?: string;
+  // Shown beside the image button, e.g. the model picker.
+  tools?: ReactNode;
+  // Shown just above the box, e.g. messages waiting for the running turn.
+  queue?: ReactNode;
   // Resolves true once the message is accepted. The box clears straight away and gets the message
   // back if it isn't.
   // `command` is the slash command, without its slash, when the message is one; `text` is then
@@ -62,7 +70,8 @@ export function Composer({
     images: ReadonlyArray<ComposerImage>;
     command?: string;
   }) => Promise<boolean>;
-  onStop: () => void;
+  // Returns text to put back in the box, as when stopping drops queued messages.
+  onStop: () => string | undefined | void;
 }) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ReadonlyArray<ComposerImage>>([]);
@@ -83,11 +92,9 @@ export function Composer({
     command === undefined ? /^\/(\S*)$/.exec(text)?.[1] : undefined;
   const matches = typedName === undefined ? [] : matching(commands, typedName);
   const menuOpen = !menuDismissed && matches.length > 0;
-  const canSend =
-    !disabled &&
-    !running &&
-    !sending &&
-    (text.trim() !== "" || images.length > 0 || command !== undefined);
+  const hasMessage =
+    text.trim() !== "" || images.length > 0 || command !== undefined;
+  const canSend = !disabled && !sending && hasMessage;
 
   // The chip sits over the first line, so that line starts after it.
   useLayoutEffect(() => {
@@ -100,7 +107,7 @@ export function Composer({
   });
 
   const send = async (chosen = command, args = text) => {
-    if (disabled || running || sending) return;
+    if (disabled || sending) return;
     // A known command typed out in full counts as picked.
     const typed = chosen
       ? undefined
@@ -218,6 +225,7 @@ export function Composer({
           {notice ?? "Only PNG, JPEG, GIF, and WebP images can be attached."}
         </p>
       )}
+      {queue}
       <div
         onDragOver={onDragOver}
         onDragLeave={() => setDragging(false)}
@@ -279,15 +287,18 @@ export function Composer({
           />
         </div>
         <div className="flex items-center justify-between p-2 pt-0">
-          <button
-            type="button"
-            onClick={() => picker.current?.click()}
-            disabled={disabled}
-            title="Attach images"
-            className="flex size-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-white/[0.06] hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
-          >
-            <ImageIcon className="size-4" />
-          </button>
+          <div className="flex min-w-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => picker.current?.click()}
+              disabled={disabled}
+              title="Attach images"
+              className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-white/[0.06] hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <ImageIcon className="size-4" />
+            </button>
+            {tools}
+          </div>
           <input
             ref={picker}
             type="file"
@@ -299,10 +310,13 @@ export function Composer({
               event.target.value = "";
             }}
           />
-          {running ? (
+          {running && !hasMessage ? (
             <button
               type="button"
-              onClick={onStop}
+              onClick={() => {
+                const back = onStop();
+                if (back) setText((current) => current || back);
+              }}
               title="Stop"
               className={raised}
             >
@@ -313,7 +327,7 @@ export function Composer({
               type="button"
               onClick={() => void send()}
               disabled={!canSend}
-              title="Send"
+              title={running ? "Queue" : "Send"}
               className={raised}
             >
               {sending ? (

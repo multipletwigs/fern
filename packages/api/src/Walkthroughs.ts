@@ -142,17 +142,6 @@ export class WalkthroughError extends Schema.TaggedError<WalkthroughError>()(
 
 export class WalkthroughsApi extends HttpApiGroup.make("walkthroughs")
   .add(
-    // A Session's Walkthroughs, oldest first, re-sent whenever one changes.
-    HttpApiEndpoint.get("list", "/", {
-      query: { session: Schema.NonEmptyString },
-      success: HttpApiSchema.StreamSse({
-        data: Schema.Array(Walkthrough),
-        error: WalkthroughError,
-      }),
-      error: WalkthroughError,
-    }),
-  )
-  .add(
     // Starts writing a Walkthrough of what changed since the last one. Fern also does this on its own
     // whenever a turn it ran finishes.
     HttpApiEndpoint.post("write", "/", {

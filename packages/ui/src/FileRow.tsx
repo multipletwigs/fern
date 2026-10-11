@@ -37,7 +37,7 @@ export function FileRow({
         {folder}
       </span>
       <span className="flex shrink-0 gap-1.5 font-mono text-[11px] tabular-nums">
-        {added > 0 && <span className="text-ice/80">+{added}</span>}
+        {added > 0 && <span className="text-mint/80">+{added}</span>}
         {removed > 0 && <span className="text-danger/70">−{removed}</span>}
       </span>
     </button>

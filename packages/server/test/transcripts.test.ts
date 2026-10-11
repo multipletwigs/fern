@@ -1,8 +1,9 @@
 import { assert, layer } from "@effect/vitest";
-import { FernApi } from "@repo/api";
+import { FernApi, LiveRpcs } from "@repo/api";
 import { Effect, Layer, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
+import { RpcTest } from "effect/rpc";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,6 +48,8 @@ const transcript = [
     usage: {
       input_tokens: 1,
       output_tokens: 1,
+      cache_creation_input_tokens: 50,
+      cache_read_input_tokens: 1000,
       cache_creation: { ephemeral_1h_input_tokens: 50 },
     },
     content: [
@@ -90,6 +93,7 @@ writeFileSync(
 process.env.CLAUDE_CONFIG_DIR = configDir;
 
 const makeClient = HttpApiTest.groups(FernApi, ["sessions"]);
+const makeLive = RpcTest.makeClient(LiveRpcs);
 
 layer(
   Layer.mergeAll(
@@ -107,9 +111,10 @@ layer(
 
   it.effect("groups sessions into projects", () =>
     Effect.gen(function* () {
-      const client = yield* makeClient;
-      const stream = yield* client.sessions.projects();
-      const [projects] = yield* stream.pipe(Stream.take(1), Stream.runCollect);
+      const live = yield* makeLive;
+      const [projects] = yield* live
+        .Projects()
+        .pipe(Stream.take(1), Stream.runCollect);
       assert.deepStrictEqual(
         projects?.map((p) => ({
           path: p.path,
@@ -126,9 +131,10 @@ layer(
 
   it.effect("streams the transcript as renderable items", () =>
     Effect.gen(function* () {
-      const client = yield* makeClient;
-      const stream = yield* client.sessions.live({ params: { id: SESSION } });
-      const [update] = yield* stream.pipe(Stream.take(1), Stream.runCollect);
+      const live = yield* makeLive;
+      const [update] = yield* live
+        .Transcript({ id: SESSION })
+        .pipe(Stream.take(1), Stream.runCollect);
       assert.isDefined(update);
       if (!update) return;
 
@@ -150,6 +156,10 @@ layer(
       assert.deepStrictEqual(call.result, { text: "ok", isError: false });
       assert.deepStrictEqual(call.diff, ["-a", "+b"]);
       assert.strictEqual(update.header.model, "claude-opus-5-5");
+      // Read, written to the cache, and output: 1 + 1000 + 50 + 1.
+      assert.strictEqual(update.header.contextTokens, 1052);
+      // No turn Fern ran has reported the window yet.
+      assert.isUndefined(update.header.contextWindow);
       assert.isDefined(update.header.cacheExpiresAt);
     }),
   );
@@ -207,10 +217,10 @@ layer(
 
   it.effect("rejects unknown sessions", () =>
     Effect.gen(function* () {
-      const client = yield* makeClient;
-      const error = yield* client.sessions
-        .live({ params: { id: "00000000-0000-4000-8000-000000000000" } })
-        .pipe(Effect.flip);
+      const live = yield* makeLive;
+      const error = yield* live
+        .Transcript({ id: "00000000-0000-4000-8000-000000000000" })
+        .pipe(Stream.runDrain, Effect.flip);
       assert.strictEqual(error._tag, "SessionNotFound");
     }),
   );

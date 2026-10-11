@@ -16,7 +16,7 @@ export const Draft = Schema.Struct({
       }),
       explanation: Schema.String.annotate({
         description:
-          "Markdown prose for the developer: what changed and why, in one to three short paragraphs.",
+          "Markdown for the developer: why this changed, and what to look at, in one to three sentences. The hunks are shown right below, so don't walk through the code.",
       }),
       dropped: Schema.optional(Schema.String).annotate({
         description:
@@ -108,7 +108,7 @@ export const writePrompt = ({ since, hunks, rejections }: WriteRequest) => {
   });
   return `Fern, the app hosting this Session, needs a Walkthrough of the net change in the repository ${SINCE[since]}. The developer reviews your Walkthrough instead of the raw diff, so it has to account for every changed line.
 
-Group the hunks below into Sections. Each Section is one semantic change, explained for the developer: what changed and why, citing the intent and any decisions from this conversation. Order Sections so they read well, most important first. Claim every hunk you made in exactly one Section. List hunks that none of your own tool calls made in notFromSession instead of claiming them; another agent or the developer may have made them. Note in one line any approach you tried and dropped on the way.
+Group the hunks below into Sections. Each Section is one semantic change, explained for the developer in one to three sentences: why it changed, citing the intent and any decisions from this conversation, and anything they should look at closely. The developer reads the hunks right under your explanation, so don't restate what the code does, and skip headings, lists and recaps. Order Sections so they read well, most important first. Claim every hunk you made in exactly one Section. List hunks that none of your own tool calls made in notFromSession instead of claiming them; another agent or the developer may have made them. Note in one line any approach you tried and dropped on the way.
 ${
   rejections.length > 0
     ? `

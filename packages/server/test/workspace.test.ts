@@ -1,8 +1,9 @@
 import { assert, layer } from "@effect/vitest";
-import { FernApi } from "@repo/api";
+import { FernApi, LiveRpcs } from "@repo/api";
 import { Effect, Layer, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
+import { RpcTest } from "effect/rpc";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -43,6 +44,7 @@ writeFileSync(
 process.env.CLAUDE_CONFIG_DIR = configDir;
 
 const makeClient = HttpApiTest.groups(FernApi, ["projects"]);
+const makeLive = RpcTest.makeClient(LiveRpcs);
 
 const first = <A, E>(stream: Stream.Stream<A, E>) =>
   stream.pipe(
@@ -59,22 +61,16 @@ layer(
 )("Projects API", (it) => {
   it.effect("lists the files git doesn't ignore", () =>
     Effect.gen(function* () {
-      const client = yield* makeClient;
-      const files = yield* first(
-        yield* client.projects.files({ query: { root: repo } }),
-      );
+      const live = yield* makeLive;
+      const files = yield* first(live.ProjectFiles({ root: repo }));
       assert.deepStrictEqual(files, [".gitignore", "bin.dat", "src/a.ts"]);
     }),
   );
 
   it.effect("streams a file's content", () =>
     Effect.gen(function* () {
-      const client = yield* makeClient;
-      const file = yield* first(
-        yield* client.projects.file({
-          query: { root: repo, path: "src/a.ts" },
-        }),
-      );
+      const live = yield* makeLive;
+      const file = yield* first(live.File({ root: repo, path: "src/a.ts" }));
       assert.strictEqual(file?.content, "export const a = 1;\n");
       assert.strictEqual(file?.skipped, undefined);
     }),
@@ -82,10 +78,8 @@ layer(
 
   it.effect("leaves out binary content", () =>
     Effect.gen(function* () {
-      const client = yield* makeClient;
-      const file = yield* first(
-        yield* client.projects.file({ query: { root: repo, path: "bin.dat" } }),
-      );
+      const live = yield* makeLive;
+      const file = yield* first(live.File({ root: repo, path: "bin.dat" }));
       assert.strictEqual(file?.skipped, "binary");
       assert.strictEqual(file?.content, "");
     }),
@@ -93,20 +87,20 @@ layer(
 
   it.effect("won't read outside the project", () =>
     Effect.gen(function* () {
-      const client = yield* makeClient;
-      const error = yield* client.projects
-        .file({ query: { root: repo, path: "../../etc/hosts" } })
-        .pipe(Effect.flip);
+      const live = yield* makeLive;
+      const error = yield* first(
+        live.File({ root: repo, path: "../../etc/hosts" }),
+      ).pipe(Effect.flip);
       assert.strictEqual(error._tag, "FileNotFound");
     }),
   );
 
   it.effect("won't read folders no Session ran in", () =>
     Effect.gen(function* () {
-      const client = yield* makeClient;
-      const error = yield* client.projects
-        .files({ query: { root: tmpdir() } })
-        .pipe(Effect.flip);
+      const live = yield* makeLive;
+      const error = yield* first(live.ProjectFiles({ root: tmpdir() })).pipe(
+        Effect.flip,
+      );
       assert.strictEqual(error._tag, "ProjectNotFound");
     }),
   );

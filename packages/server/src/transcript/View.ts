@@ -194,6 +194,7 @@ export const buildView = (
 
   const items: Array<TranscriptItem> = [];
   let model: string | undefined;
+  let contextTokens: number | undefined;
   let lastRequestAt: DateTime.Utc | undefined;
   let cacheTtl = Duration.minutes(5);
 
@@ -208,6 +209,16 @@ export const buildView = (
     } else if (m.type === "assistant") {
       const message = assistantMessage(m);
       model = message.model;
+      // Everything the request read, plus what it wrote: the context the next request starts from.
+      // Synthetic messages, such as API errors Claude Code records, carry no usage worth reading.
+      const usage = message.usage;
+      const total = usage
+        ? usage.input_tokens +
+          (usage.cache_creation_input_tokens ?? 0) +
+          (usage.cache_read_input_tokens ?? 0) +
+          usage.output_tokens
+        : 0;
+      if (total > 0 && m.parent_tool_use_id === null) contextTokens = total;
       if (m.timestamp) lastRequestAt = DateTime.makeUnsafe(m.timestamp);
       if ((message.usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0)
         cacheTtl = Duration.hours(1);
@@ -230,6 +241,8 @@ export const buildView = (
     cwd: info.cwd,
     gitBranch: info.gitBranch,
     model,
+    contextTokens,
+    contextWindow: hostedTurn?.contextWindow,
     lastActivityAt: DateTime.makeUnsafe(info.lastModified),
     cacheExpiresAt:
       lastRequestAt && DateTime.addDuration(lastRequestAt, cacheTtl),

@@ -10,12 +10,26 @@ export const LIVE_WINDOW_MS = 30_000;
 // Fern's own writes can land this long after its turn ends; they don't make a Session "in use".
 const HOSTED_TAIL_MS = 2_000;
 
+// A message sent while a turn ran, waiting for the turns before it to end.
+export const QueuedMessage = Schema.Struct({
+  id: Schema.String,
+  text: Schema.String,
+  // How many images it carries.
+  images: Schema.Finite,
+});
+export type QueuedMessage = typeof QueuedMessage.Type;
+
 // The latest turn Fern ran on a Session itself, making it a Hosted Session.
 export const HostedTurn = Schema.Struct({
   running: Schema.Boolean,
   endedAt: Schema.optional(Schema.DateTimeUtcFromMillis),
   // Why the turn stopped early, when it did.
   error: Schema.optional(Schema.String),
+  // The size of the context window of the model the turn ran on, as the previous turn reported it
+  // while this one runs.
+  contextWindow: Schema.optional(Schema.Finite),
+  // Messages to run once this turn ends, in order.
+  queued: Schema.optional(Schema.Array(QueuedMessage)),
 });
 export type HostedTurn = typeof HostedTurn.Type;
 
@@ -53,6 +67,9 @@ export type ImageAttachment = typeof ImageAttachment.Type;
 export const OutgoingMessage = Schema.Struct({
   text: Schema.String,
   images: Schema.optional(Schema.Array(ImageAttachment)),
+  // The model to run this turn and the ones after on, as Claude Code names it, e.g. "opus".
+  // Without one, the Session keeps its model.
+  model: Schema.optional(Schema.NonEmptyString),
 }).check(
   Schema.makeFilter((m) =>
     m.text.trim() !== "" || (m.images?.length ?? 0) > 0
@@ -80,6 +97,10 @@ export class SessionHeader extends Schema.Class<SessionHeader>("SessionHeader")(
     cwd: Schema.optional(Schema.String),
     gitBranch: Schema.optional(Schema.String),
     model: Schema.optional(Schema.String),
+    // Tokens in the context window as of Claude's latest response.
+    contextTokens: Schema.optional(Schema.Finite),
+    // The context window's size, known once Fern has run a turn on the Session.
+    contextWindow: Schema.optional(Schema.Finite),
     lastActivityAt: Schema.DateTimeUtcFromMillis,
     cacheExpiresAt: Schema.optional(Schema.DateTimeUtcFromMillis),
     hostedTurn: Schema.optional(HostedTurn),
@@ -209,23 +230,15 @@ export class SessionsApi extends HttpApiGroup.make("sessions")
     }),
   )
   .add(
-    // Every Project, most recently active first, re-sent whenever a Session changes.
-    HttpApiEndpoint.get("projects", "/projects", {
-      success: HttpApiSchema.StreamSse({
-        data: Schema.Array(Project),
-        error: TranscriptError,
-      }),
-      error: TranscriptError,
-    }),
-  )
-  .add(
     // Sessions Fern is running a turn on right now.
     HttpApiEndpoint.get("running", "/running", {
       success: Schema.Array(Schema.String),
     }),
   )
   .add(
-    // Starts a turn: Claude Code resumes the Session with this message. Progress arrives on `live`.
+    // Starts a turn: Claude Code resumes the Session with this message. While a turn runs, the
+    // message waits in the Session's queue instead. Progress arrives on the Transcript stream
+    // (LiveRpcs).
     HttpApiEndpoint.post("send", "/:id/messages", {
       params: { id: Schema.NonEmptyString },
       payload: OutgoingMessage,
@@ -251,13 +264,10 @@ export class SessionsApi extends HttpApiGroup.make("sessions")
     }),
   )
   .add(
-    HttpApiEndpoint.get("live", "/:id/live", {
-      params: { id: Schema.NonEmptyString },
-      success: HttpApiSchema.StreamSse({
-        data: TranscriptUpdate,
-        error: TranscriptError,
-      }),
-      error: [SessionNotFound, TranscriptError],
+    // Takes a message out of the Session's queue before it runs.
+    HttpApiEndpoint.delete("unqueue", "/:id/queue/:item", {
+      params: { id: Schema.NonEmptyString, item: Schema.NonEmptyString },
+      success: HttpApiSchema.NoContent,
     }),
   )
   .prefix("/sessions") {}

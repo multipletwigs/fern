@@ -6,6 +6,7 @@ import type {
 import { Effect, Schedule, Stream } from "effect";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { ApiClient } from "../ApiClient";
+import { LiveClient } from "../LiveClient";
 
 export const currentSessionAtom = ApiClient.query("sessions", "current", {});
 
@@ -28,6 +29,7 @@ export const pendingPromptAtom = Atom.family((_sessionId: string) =>
 );
 export const startSessionAtom = ApiClient.mutation("sessions", "start");
 export const interruptAtom = ApiClient.mutation("sessions", "interrupt");
+export const unqueueAtom = ApiClient.mutation("sessions", "unqueue");
 
 // The Session picked in the sidebar; until one is picked, the screen follows the current Session.
 export const selectedSessionAtom = Atom.make<string | undefined>(
@@ -35,14 +37,20 @@ export const selectedSessionAtom = Atom.make<string | undefined>(
 ).pipe(Atom.keepAlive);
 
 // Every Project and its Sessions, kept current by the server's live stream.
-export const projectsAtom = ApiClient.runtime.atom(
+export const projectsAtom = LiveClient.runtime.atom(
   Stream.unwrap(
     Effect.gen(function* () {
-      const client = yield* ApiClient;
-      return yield* client.sessions.projects();
+      const client = yield* LiveClient;
+      return client("Projects", undefined);
     }),
   ).pipe(Stream.retry(Schedule.spaced("1 second"))),
 );
+
+// The Session the pointer last rested on in the sidebar, drawn out of sight so picking it shows it
+// at once.
+export const preloadedSessionAtom = Atom.make<string | undefined>(
+  undefined,
+).pipe(Atom.keepAlive);
 
 // The folder of a blank Session on screen, opened by /clear, until its first message starts it.
 export const newSessionAtom = Atom.make<string | undefined>(undefined).pipe(
@@ -52,6 +60,12 @@ export const newSessionAtom = Atom.make<string | undefined>(undefined).pipe(
 // The slash commands Claude Code offers in a Project's folder.
 export const commandsAtom = Atom.family((root: string) =>
   ApiClient.query("projects", "commands", { query: { root } }),
+);
+
+// The model picked for a Session in its composer. Every message sent from Fern then runs on it;
+// until one is picked, Claude Code runs the Session on its default.
+export const modelChoiceAtom = Atom.family((_sessionId: string) =>
+  Atom.make<string | undefined>(undefined).pipe(Atom.keepAlive),
 );
 
 // The Session on screen: none while a new one is open, else the one picked in the sidebar, else
@@ -95,20 +109,23 @@ const apply = (
 };
 
 // A Session's transcript, kept current by the server's live stream. Reconnects after a dropped
-// connection; the server then resends every item.
+// connection; the server then resends every item. Stays loaded a while after it leaves the screen,
+// so switching back to it is instant.
 export const transcriptAtom = Atom.family((id: string) =>
-  ApiClient.runtime.atom(
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const client = yield* ApiClient;
-        return yield* client.sessions.live({ params: { id } });
-      }),
-    ).pipe(
-      Stream.retry(Schedule.spaced("1 second")),
-      Stream.scan<Transcript, TranscriptUpdate>(
-        () => ({ header: undefined, items: [] }),
-        apply,
+  LiveClient.runtime
+    .atom(
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const client = yield* LiveClient;
+          return client("Transcript", { id });
+        }),
+      ).pipe(
+        Stream.retry(Schedule.spaced("1 second")),
+        Stream.scan<Transcript, TranscriptUpdate>(
+          () => ({ header: undefined, items: [] }),
+          apply,
+        ),
       ),
-    ),
-  ),
+    )
+    .pipe(Atom.setIdleTTL("1 minute")),
 );

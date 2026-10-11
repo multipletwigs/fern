@@ -68,7 +68,17 @@ const rowRect = (scroller: HTMLElement, id: string) =>
     ?.closest("[data-index]")
     ?.getBoundingClientRect();
 
-export function Session({ id }: { id: string }) {
+// Calls `onPainted` once its list shows, or there's nothing to list, so a screen holding it out
+// of sight knows it can show it without a blank frame. `visible` is false while held out of sight.
+export function Session({
+  id,
+  visible = true,
+  onPainted,
+}: {
+  id: string;
+  visible?: boolean;
+  onPainted?: (id: string) => void;
+}) {
   const result = useAtomValue(transcriptAtom(id));
   const now = useNow();
   const transcript = AsyncResult.isSuccess(result) ? result.value : undefined;
@@ -167,6 +177,25 @@ export function Session({ id }: { id: string }) {
 
   useLayoutEffect(measure, [measure]);
   const mounted = header !== undefined;
+  // Whether the view was at the end of the list when it last scrolled.
+  const wasAtEnd = useRef(true);
+  // Drawn out of sight, the list may have been laid out at another width; shown, its rows re-wrap
+  // while the list measures them again. Hold it at the end, if it was there, until they settle.
+  const wasVisible = useRef(visible);
+  useLayoutEffect(() => {
+    const shownNow = visible && !wasVisible.current;
+    wasVisible.current = visible;
+    const view = scroller.current;
+    if (!shownNow || !view || !wasAtEnd.current) return undefined;
+    let frames = 0;
+    let frame = 0;
+    const hold = () => {
+      view.scrollTop = view.scrollHeight;
+      if (frames++ < 10) frame = requestAnimationFrame(hold);
+    };
+    hold();
+    return () => cancelAnimationFrame(frame);
+  }, [visible]);
   useEffect(() => {
     const view = scroller.current;
     // The list mounts once the transcript's header arrives.
@@ -178,6 +207,8 @@ export function Session({ id }: { id: string }) {
     let scrollTop = view.scrollTop;
     const onScroll = () => {
       scrollTop = view.scrollTop;
+      wasAtEnd.current =
+        view.scrollTop + view.clientHeight >= view.scrollHeight - 1;
     };
     const observer = new ResizeObserver(() => {
       const pulled = scrollTop - view.scrollTop;
@@ -241,6 +272,36 @@ export function Session({ id }: { id: string }) {
         : undefined,
     [header, spacer, thinking, tracked?.prior],
   );
+
+  // Virtuoso keeps its rows hidden until it has scrolled to the end, so a screen holding this
+  // Session out of sight waits for that, or for there being nothing to list. Gives up after a
+  // while rather than hold the screen.
+  const nothingToList =
+    AsyncResult.isFailure(result) ||
+    (context !== undefined && rows.length === 0);
+  const hasRows = context !== undefined && rows.length > 0;
+  useEffect(() => {
+    if (!onPainted || !(nothingToList || hasRows)) return undefined;
+    if (nothingToList) {
+      onPainted(id);
+      return undefined;
+    }
+    let frames = 0;
+    let frame = 0;
+    const check = () => {
+      const itemList = scroller.current?.querySelector(
+        "[data-testid=virtuoso-item-list]",
+      );
+      const shown =
+        itemList instanceof HTMLElement &&
+        itemList.style.visibility !== "hidden" &&
+        itemList.querySelector("[data-row-id]") !== null;
+      if (shown || frames++ > 40) onPainted(id);
+      else frame = requestAnimationFrame(check);
+    };
+    check();
+    return () => cancelAnimationFrame(frame);
+  }, [id, hasRows, nothingToList, onPainted]);
 
   return (
     <div className="relative flex h-full flex-col">
