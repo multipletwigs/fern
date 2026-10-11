@@ -1,0 +1,11 @@
+appId: com.fern.desktop
+productName: Fern
+directories:
+  output: release
+files:
+  - dist/**
+  - package.json
+# Copies the Next.js standalone server into Resources/web.
+afterPack: scripts/after-pack.cjs
+mac:
+  target: dmg

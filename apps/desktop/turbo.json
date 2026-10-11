@@ -1,0 +1,9 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "dev": {
+      "with": ["web#dev"],
+      "dependsOn": ["web#dev:ready"]
+    }
+  }
+}
