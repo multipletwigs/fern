@@ -5,6 +5,7 @@ import {
   type SDKSessionInfo,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
+  type HostedTurn,
   Project,
   SessionNotFound,
   SessionRef,
@@ -29,7 +30,15 @@ import { buildView } from "./View";
 
 // Groups Sessions by working directory. The SDK lists newest first, so each Project's Sessions
 // and the Projects themselves come out most recently active first.
-const toProjects = (infos: ReadonlyArray<SDKSessionInfo>) => {
+type TurnsById = ReadonlyMap<string, HostedTurn>;
+
+const toProjects = ({
+  infos,
+  turns,
+}: {
+  infos: ReadonlyArray<SDKSessionInfo>;
+  turns: TurnsById;
+}) => {
   const byPath = new Map<string, Array<SessionSummary>>();
   for (const info of infos) {
     const path = info.cwd ?? "";
@@ -40,6 +49,7 @@ const toProjects = (infos: ReadonlyArray<SDKSessionInfo>) => {
         title: info.customTitle ?? info.summary,
         gitBranch: info.gitBranch,
         lastActivityAt: DateTime.makeUnsafe(info.lastModified),
+        hostedTurn: turns.get(info.sessionId),
       }),
     );
     byPath.set(path, sessions);
@@ -50,12 +60,18 @@ const toProjects = (infos: ReadonlyArray<SDKSessionInfo>) => {
 };
 
 // What the sidebar shows of a Session; a change to any of it means the list should be re-sent.
-const listingKey = (infos: ReadonlyArray<SDKSessionInfo>) =>
+const listingKey = ({
+  infos,
+  turns,
+}: {
+  infos: ReadonlyArray<SDKSessionInfo>;
+  turns: TurnsById;
+}) =>
   infos
-    .map(
-      (i) =>
-        `${i.sessionId}:${i.lastModified}:${i.customTitle ?? i.summary}:${i.gitBranch}`,
-    )
+    .map((i) => {
+      const turn = turns.get(i.sessionId);
+      return `${i.sessionId}:${i.lastModified}:${i.customTitle ?? i.summary}:${i.gitBranch}:${turn?.running}:${turn?.endedAt?.epochMilliseconds}`;
+    })
     .join("\n");
 
 export class Transcripts extends Context.Service<
@@ -93,10 +109,22 @@ export class Transcripts extends Context.Service<
         ),
 
         // Headless SDK sessions are left out, matching Claude Code's own /resume picker.
+        // Each Session goes with the latest turn Fern ran on it, so a stopped turn stops showing as
+        // live without waiting out the live window.
         projects: Stream.fromEffectSchedule(
-          sdk("listSessions", () =>
-            listSessions({ includeProgrammatic: false }),
-          ),
+          Effect.gen(function* () {
+            const infos = yield* sdk("listSessions", () =>
+              listSessions({ includeProgrammatic: false }),
+            );
+            const hosted = yield* Effect.forEach(infos, (info) =>
+              turns
+                .turn(info.sessionId)
+                .pipe(Effect.map((turn) => [info.sessionId, turn] as const)),
+            );
+            const byId = new Map<string, HostedTurn>();
+            for (const [id, turn] of hosted) if (turn) byId.set(id, turn);
+            return { infos, turns: byId };
+          }),
           Schedule.spaced("2 seconds"),
         ).pipe(
           Stream.changesWith((a, b) => listingKey(a) === listingKey(b)),

@@ -58,7 +58,12 @@ const resultError = (message: SDKMessage) => {
 };
 
 // The message as the one user turn Claude Code resumes the Session with: images first, then text.
-async function* userTurn({ text, images = [] }: OutgoingMessage) {
+// The input then stays open until `ended` aborts: once it closes, Claude Code can no longer take
+// control requests, so an interrupt would go unheard.
+async function* userTurn(
+  { text, images = [] }: OutgoingMessage,
+  ended: AbortSignal,
+) {
   const message: SDKUserMessage = {
     type: "user",
     parent_tool_use_id: null,
@@ -78,6 +83,9 @@ async function* userTurn({ text, images = [] }: OutgoingMessage) {
     },
   };
   yield message;
+  await new Promise((resolve) =>
+    ended.addEventListener("abort", resolve, { once: true }),
+  );
 }
 
 // Turns Fern runs on a Session itself, by resuming it through the Agent SDK, or by starting a new
@@ -112,6 +120,8 @@ export class Turns extends Context.Service<
       const turns = yield* Ref.make<TurnMap>(new Map());
       // The live query per Session, so an interrupt can reach it.
       const queries = new Map<string, Query>();
+      // Sessions whose running turn the developer asked to stop.
+      const interrupted = new Set<string>();
 
       const setTurn = (id: string, turn: HostedTurn) =>
         Ref.update(turns, (all) => new Map(all).set(id, turn));
@@ -124,37 +134,45 @@ export class Turns extends Context.Service<
       ) =>
         Effect.acquireUseRelease(
           Effect.sync(() => {
+            const ended = new AbortController();
             const turn = query({
-              prompt: userTurn(message),
+              prompt: userTurn(message, ended.signal),
               options: { ...session, permissionMode: "auto" },
             });
             queries.set(id, turn);
-            return turn;
+            return { turn, ended };
           }),
-          (turn) =>
+          ({ turn }) =>
             Stream.fromAsyncIterable(
               turn,
               (cause) => new TranscriptError({ message: String(cause) }),
             ).pipe(
+              // With its input open, Claude Code waits for more after the result; the turn is over.
+              Stream.takeUntil((event) => event.type === "result"),
               Stream.runFold(
                 (): string | undefined => undefined,
                 (error, event) => resultError(event) ?? error,
               ),
             ),
-          (turn) =>
+          ({ turn, ended }) =>
             Effect.sync(() => {
               queries.delete(id);
+              ended.abort();
               turn.close();
             }),
         ).pipe(
           Effect.onExit((exit) =>
             Effect.gen(function* () {
               const endedAt = yield* DateTime.now;
-              const error = Exit.isSuccess(exit)
-                ? exit.value
-                : Cause.hasInterruptsOnly(exit.cause)
-                  ? undefined
-                  : Cause.pretty(exit.cause);
+              // A turn the developer stopped ended as asked, not with an error.
+              const stopped = interrupted.delete(id);
+              const error = stopped
+                ? undefined
+                : Exit.isSuccess(exit)
+                  ? exit.value
+                  : Cause.hasInterruptsOnly(exit.cause)
+                    ? undefined
+                    : Cause.pretty(exit.cause);
               yield* setTurn(id, { running: false, endedAt, error });
             }),
           ),
@@ -204,6 +222,7 @@ export class Turns extends Context.Service<
       const interrupt = Effect.fn("Turns.interrupt")(function* (id: string) {
         const fiber = yield* FiberMap.get(fibers, id);
         if (Option.isNone(fiber)) return;
+        interrupted.add(id);
         const turn = queries.get(id);
         if (turn)
           yield* Effect.tryPromise(() => turn.interrupt()).pipe(

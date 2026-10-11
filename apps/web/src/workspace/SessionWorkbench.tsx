@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Workbench } from "@repo/ui/Workbench";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo, useState } from "react";
+import { sessionCommits } from "../code/commits";
 import { changedFiles, followedFile, readFiles } from "../code/paths";
 import { ProjectCode } from "../code/ProjectCode";
 import { transcriptAtom } from "../session/atoms";
@@ -25,6 +26,7 @@ export function SessionWorkbench({
     () => (items && root ? readFiles(items, root) : undefined),
     [items, root],
   );
+  const commits = useMemo(() => (items ? sessionCommits(items) : []), [items]);
   const followed = useMemo(
     () => (items && root ? followedFile(items, root) : undefined),
     [items, root],
@@ -47,6 +49,7 @@ export function SessionWorkbench({
             sessionId={sessionId}
             root={root}
             changed={changed ?? []}
+            commits={commits}
             read={read ?? []}
             followed={followed}
           />

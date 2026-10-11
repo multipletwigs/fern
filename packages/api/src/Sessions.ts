@@ -62,6 +62,13 @@ export const OutgoingMessage = Schema.Struct({
 );
 export type OutgoingMessage = typeof OutgoingMessage.Type;
 
+// Whether something is working on the Session: a turn Fern runs, or another process writing it.
+export const isWorking = (
+  lastActivityMs: number,
+  turn: HostedTurn | undefined,
+  nowMs: number,
+) => turn?.running === true || isInUseElsewhere(lastActivityMs, turn, nowMs);
+
 export class SessionRef extends Schema.Class<SessionRef>("SessionRef")({
   id: Schema.String,
 }) {}
@@ -86,6 +93,7 @@ export class SessionSummary extends Schema.Class<SessionSummary>(
   title: Schema.String,
   gitBranch: Schema.optional(Schema.String),
   lastActivityAt: Schema.DateTimeUtcFromMillis,
+  hostedTurn: Schema.optional(HostedTurn),
 }) {}
 
 // The Sessions that ran in one working directory, newest first.

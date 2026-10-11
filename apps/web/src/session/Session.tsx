@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { SessionHeader } from "@repo/api";
+import { isWorking, type SessionHeader } from "@repo/api";
 import { CacheCountdown } from "@repo/ui/CacheCountdown";
 import { Empty } from "@repo/ui/Empty";
 import { Glow } from "@repo/ui/Glow";
@@ -22,7 +22,7 @@ import { type PendingPrompt, pendingPromptAtom, transcriptAtom } from "./atoms";
 import { ItemView } from "./ItemView";
 import { type Row, toRows } from "./rows";
 import { SessionComposer } from "./SessionComposer";
-import { isLive, useNow } from "./time";
+import { useNow } from "./time";
 import { ToolRun } from "./ToolRun";
 
 // Space kept under the last row, room for the Thinking line included.
@@ -78,14 +78,22 @@ export function Session({ id }: { id: string }) {
   // A message just sent stands at the end until Claude Code records it.
   const pending = useAtomValue(pendingPromptAtom(id));
   const lastTurnId = recorded.findLast(isDeveloperTurn)?.id;
-  const waiting = pending !== undefined && pending.after === lastTurnId;
+  const endedAt = header?.hostedTurn?.endedAt;
+  const waiting =
+    pending !== undefined &&
+    pending.after === lastTurnId &&
+    !(endedAt && DateTime.toEpochMillis(endedAt) > pending.sentAt);
   const rows = useMemo(
     () => (waiting && pending ? [...recorded, pendingRow(pending)] : recorded),
     [recorded, waiting, pending],
   );
   const live =
     header !== undefined &&
-    isLive(DateTime.toEpochMillis(header.lastActivityAt), now);
+    isWorking(
+      DateTime.toEpochMillis(header.lastActivityAt),
+      header.hostedTurn,
+      now,
+    );
 
   const list = useRef<VirtuosoHandle>(null);
   const scroller = useRef<HTMLElement>(null);
@@ -191,6 +199,15 @@ export function Session({ id }: { id: string }) {
       view.removeEventListener("scroll", onScroll);
     };
   }, [measure, mounted]);
+  // The list hands its footer new props a render late, so the space is written to the page here,
+  // in the same frame it's sized; scrolling right after would otherwise run out of room.
+  useLayoutEffect(() => {
+    const footer = scroller.current?.querySelector<HTMLElement>(
+      "[data-transcript-footer]",
+    );
+    if (footer) footer.style.height = `${spacer.height}px`;
+  }, [spacer.height]);
+
   // Once the space under it is there, bring the anchor up, before the frame paints.
   useLayoutEffect(() => {
     if (
@@ -199,13 +216,19 @@ export function Session({ id }: { id: string }) {
       scrolledTo.current === anchor.id
     )
       return;
-    scrolledTo.current = anchor.id;
+    // Scroll by what the page measures: the list's own scrollToIndex works from size estimates,
+    // which miss while new rows are still being measured, and it corrects itself later, which
+    // read as the message jumping down when the next row arrived.
+    const view = scroller.current;
+    const top = view && rowRect(view, anchor.id);
+    if (view && top) {
+      scrolledTo.current = anchor.id;
+      view.scrollTop += top.top - view.getBoundingClientRect().top;
+      return;
+    }
+    // Not on the page yet: bring it near, and land exactly once it's measured.
     const index = rows.findIndex((row) => row.id === anchor.id);
-    if (index >= 0)
-      list.current?.scrollToIndex({
-        index,
-        align: "start",
-      });
+    if (index >= 0) list.current?.scrollToIndex({ index, align: "start" });
   }, [anchor, spacer, rows]);
 
   const thinking =

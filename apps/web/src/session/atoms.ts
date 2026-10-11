@@ -12,9 +12,11 @@ export const currentSessionAtom = ApiClient.query("sessions", "current", {});
 export const sendMessageAtom = ApiClient.mutation("sessions", "send");
 
 // A message the developer just sent, shown in the transcript before Claude Code records it. It
-// stands in until a developer turn newer than `after` (the latest one when it was sent) arrives.
+// stands in until a developer turn newer than `after` (the latest one when it was sent) arrives,
+// or the turn ends without recording it, as when stopped at once.
 export interface PendingPrompt {
   readonly id: string;
+  readonly sentAt: number;
   // The slash command, without its slash, when the message is one; `text` is then its arguments.
   readonly command: string | undefined;
   readonly text: string;

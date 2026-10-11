@@ -5,6 +5,7 @@ import { PanelBar } from "@repo/ui/PanelBar";
 import { AsyncResult } from "effect/reactivity";
 import { openFileAtom, projectFilesAtom } from "./atoms";
 import { OpenFile } from "./OpenFile";
+import type { SessionCommit } from "./commits";
 import { type ChangedFile, type ReadFile, relativeTo } from "./paths";
 import { SessionFiles } from "./SessionFiles";
 
@@ -14,12 +15,14 @@ export function ProjectCode({
   sessionId,
   root,
   changed,
+  commits,
   read,
   followed,
 }: {
   sessionId: string;
   root: string;
   changed: ReadonlyArray<ChangedFile>;
+  commits: ReadonlyArray<SessionCommit>;
   read: ReadonlyArray<ReadFile>;
   // The file Claude last changed, as an absolute path.
   followed: string | undefined;
@@ -47,6 +50,7 @@ export function ProjectCode({
         <div className="w-64 shrink-0 border-r border-hairline">
           <SessionFiles
             changed={changed}
+            commits={commits}
             read={read}
             current={open}
             onPick={choose}

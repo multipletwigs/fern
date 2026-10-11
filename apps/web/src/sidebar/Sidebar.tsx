@@ -4,6 +4,7 @@ import { LocationPill } from "@repo/ui/LocationPill";
 import { ProjectGroup } from "@repo/ui/ProjectGroup";
 import { SessionRow } from "@repo/ui/SessionRow";
 import { SidebarPanel } from "@repo/ui/SidebarPanel";
+import { isWorking } from "@repo/api";
 import { DateTime } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -13,7 +14,7 @@ import {
   projectsAtom,
   selectedSessionAtom,
 } from "../session/atoms";
-import { ago, isLive, useNow } from "../session/time";
+import { ago, useNow } from "../session/time";
 
 const projectName = (path: string) => path.split("/").at(-1) || "Unknown";
 
@@ -72,7 +73,7 @@ export function Sidebar() {
                 key={session.id}
                 title={session.title}
                 active={session.id === activeId}
-                live={isLive(lastActivityMs, now)}
+                live={isWorking(lastActivityMs, session.hostedTurn, now)}
                 lastActive={ago(now - lastActivityMs)}
                 onSelect={() => select(session.id)}
               />

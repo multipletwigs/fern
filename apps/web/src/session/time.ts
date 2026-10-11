@@ -1,8 +1,4 @@
-import { LIVE_WINDOW_MS } from "@repo/api";
 import { useEffect, useState } from "react";
-
-export const isLive = (lastActivityMs: number, now: number) =>
-  now - lastActivityMs < LIVE_WINDOW_MS;
 
 export const useNow = () => {
   const [now, setNow] = useState(() => Date.now());

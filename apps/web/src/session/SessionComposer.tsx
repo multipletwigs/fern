@@ -71,6 +71,7 @@ export function SessionComposer({
         // Shown straight away, so the message rises to the top before Claude Code records it.
         setPending({
           id: crypto.randomUUID(),
+          sentAt: Date.now(),
           command: message.command,
           text: message.text,
           images: message.images.map((image) => image.url),
