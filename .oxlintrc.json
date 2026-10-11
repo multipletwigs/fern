@@ -1,14 +1,9 @@
 {
   "$schema": "./node_modules/@effect/tsgo/oxlint-schema.json",
-  "plugins": ["typescript", "react", "nextjs", "import", "unicorn", "oxc"],
+  "plugins": ["typescript", "react", "import", "unicorn", "oxc"],
   "categories": {
     "correctness": "error",
     "suspicious": "warn"
-  },
-  "settings": {
-    "next": {
-      "rootDir": ["apps/docs/"]
-    }
   },
   "rules": {
     "react/react-in-jsx-scope": "off",
@@ -22,7 +17,6 @@
     "no-underscore-dangle": ["warn", { "allow": ["_tag"] }]
   },
   "ignorePatterns": [
-    "**/.next/**",
     "**/dist/**",
     "**/release/**",
     "**/next-env.d.ts"

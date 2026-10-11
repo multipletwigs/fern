@@ -9,7 +9,6 @@ Electron desktop app with a Vite + React UI and an [Effect v4](https://effect.we
 - `packages/api` (`@repo/api`): client-safe Effect `HttpApi` contract: schemas and endpoints.
 - `packages/server` (`@repo/server`): Effect services, layers, and handlers implementing the contract, with tests.
 - `packages/ui`, `packages/typescript-config`: shared starter packages.
-- `apps/docs`: leftover Turborepo starter app, safe to delete.
 
 The UI and the API share an origin (Vite's proxy in dev, one server in production), so there's no CORS. To add an endpoint: define it in `packages/api`, implement it in `packages/server/src/http.ts` (backed by a service), and query it from the web app with `ApiClient.query(...)`. The OpenAPI spec is served at `/api/openapi.json`.
 
