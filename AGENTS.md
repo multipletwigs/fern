@@ -19,3 +19,17 @@ Application logic is written with [Effect v4](https://effect.website/docs/v4/get
 - `apps/web`: talks to the API through `ApiClient` (`AtomHttpApi`) and `@effect/atom-react`.
 
 `pnpm lint` runs oxlint with the Effect rules from `@effect/tsgo`; `pnpm install` patches TypeScript and oxlint for them via `prepare`.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `multipletwigs/fern`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Multi-context: `GLOSSARY-MAP.md` at the root points to one `GLOSSARY.md` per workspace package. See `docs/agents/domain.md`.
