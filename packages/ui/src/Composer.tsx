@@ -47,7 +47,7 @@ export function Composer({
   notice,
   commands = [],
   tools,
-  queue,
+  above,
   onSend,
   onStop,
 }: {
@@ -60,7 +60,7 @@ export function Composer({
   // Shown beside the image button, e.g. the model picker.
   tools?: ReactNode;
   // Shown just above the box, e.g. messages waiting for the running turn.
-  queue?: ReactNode;
+  above?: ReactNode;
   // Resolves true once the message is accepted. The box clears straight away and gets the message
   // back if it isn't.
   // `command` is the slash command, without its slash, when the message is one; `text` is then
@@ -225,7 +225,7 @@ export function Composer({
           {notice ?? "Only PNG, JPEG, GIF, and WebP images can be attached."}
         </p>
       )}
-      {queue}
+      {above}
       <div
         onDragOver={onDragOver}
         onDragLeave={() => setDragging(false)}

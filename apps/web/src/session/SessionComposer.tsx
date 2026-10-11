@@ -14,6 +14,7 @@ import {
 } from "./atoms";
 import { outgoing, useCommands } from "./commands";
 import { SessionTools } from "./SessionTools";
+import { SessionWalkthrough } from "../walkthrough/SessionWalkthrough";
 
 const failureNotice = (tag: string | undefined) => {
   switch (tag) {
@@ -69,11 +70,14 @@ export function SessionComposer({
       }
       commands={commands}
       tools={<SessionTools header={header} disabled={inUse} />}
-      queue={
-        <QueuedMessages
-          items={queued}
-          onRemove={(item) => unqueue({ params: { id: header.id, item } })}
-        />
+      above={
+        <>
+          <SessionWalkthrough sessionId={header.id} />
+          <QueuedMessages
+            items={queued}
+            onRemove={(item) => unqueue({ params: { id: header.id, item } })}
+          />
+        </>
       }
       onSend={async (message) => {
         if (message.command === "clear") {

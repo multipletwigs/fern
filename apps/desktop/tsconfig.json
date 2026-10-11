@@ -1,7 +1,7 @@
 {
   "extends": "@repo/typescript-config/base.json",
   "compilerOptions": {
-    "lib": ["es2023"],
+    "lib": ["es2024"],
     "declaration": false,
     "declarationMap": false,
     "module": "ESNext",

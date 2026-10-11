@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseLive } from "../src/database/Database";
 import { HandlersNoDeps } from "../src/http";
+import { LiveHandlersNoDeps } from "../src/live";
 import { Snapshots } from "../src/snapshot/Snapshots";
 import { type FinishedTurn, Turns } from "../src/turn/Turns";
 import { Walkthroughs } from "../src/walkthrough/Walkthroughs";
@@ -152,7 +153,9 @@ const Services = Layer.mergeAll(
 // The steps build on each other, one review after another, so they run in order.
 layer(
   Layer.mergeAll(
-    HandlersNoDeps.pipe(Layer.provide(Services)),
+    Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
+      Layer.provide(Services),
+    ),
     Services,
     HttpServer.layerServices,
   ),
