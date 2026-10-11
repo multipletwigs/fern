@@ -8,7 +8,8 @@ Electron desktop app with a Vite + React UI and an [Effect v4](https://effect.we
 - `apps/web`: Vite + React UI. Calls the API through `ApiClient` (Effect atoms) with relative URLs; in dev, Vite proxies `/api` to the main process.
 - `packages/api` (`@repo/api`): client-safe Effect `HttpApi` contract: schemas and endpoints.
 - `packages/server` (`@repo/server`): Effect services, layers, and handlers implementing the contract, with tests.
-- `packages/ui`, `packages/typescript-config`: shared starter packages.
+- `packages/ui` (`@repo/ui`): presentational React components, one per file, imported as `@repo/ui/<Component>`. They take plain props; components in `apps/web` read atoms and pass data in.
+- `packages/typescript-config`: shared tsconfig bases.
 
 The UI and the API share an origin (Vite's proxy in dev, one server in production), so there's no CORS. To add an endpoint: define it in `packages/api`, implement it in `packages/server/src/http.ts` (backed by a service), and query it from the web app with `ApiClient.query(...)`. The OpenAPI spec is served at `/api/openapi.json`.
 
@@ -18,7 +19,7 @@ Linting is [oxlint](https://oxc.rs/docs/guide/usage/linter) plus Effect's type-a
 
 ```sh
 pnpm install
-pnpm dev --filter=desktop   # Vite + Electron window (restart it after main-process or server changes)
+pnpm dev --filter=desktop   # Vite + Electron; main-process and server changes restart Electron, after any running turn
 pnpm build                  # Vite build + Electron main
 pnpm --filter=desktop start # run the production build in Electron
 pnpm package                # build a .dmg into apps/desktop/release

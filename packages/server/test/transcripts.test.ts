@@ -6,9 +6,11 @@ import { HttpApiTest } from "effect/http-api";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Greeter } from "../src/Greeter";
 import { HandlersNoDeps } from "../src/http";
 import { Transcripts } from "../src/transcript/Transcripts";
+import { Turns } from "../src/turn/Turns";
+import { Workspace } from "../src/workspace/Workspace";
+import { NodeServices } from "@effect/platform-node";
 
 const SESSION = "4b01f026-4f24-41ef-b407-1e7e05c2684c";
 
@@ -83,7 +85,11 @@ const makeClient = HttpApiTest.groups(FernApi, ["sessions"]);
 
 layer(
   Layer.mergeAll(
-    HandlersNoDeps.pipe(Layer.provide([Greeter.layer, Transcripts.layer])),
+    HandlersNoDeps.pipe(
+      Layer.provide(Transcripts.layer),
+      Layer.provide([Turns.layer, Workspace.layer]),
+      Layer.provide(NodeServices.layer),
+    ),
     HttpServer.layerServices,
   ),
 )("Sessions API", (it) => {
@@ -92,6 +98,25 @@ layer(
       const client = yield* makeClient;
       const ref = yield* client.sessions.current();
       assert.strictEqual(ref.id, SESSION);
+    }),
+  );
+
+  it.effect("groups sessions into projects", () =>
+    Effect.gen(function* () {
+      const client = yield* makeClient;
+      const stream = yield* client.sessions.projects();
+      const [projects] = yield* stream.pipe(Stream.take(1), Stream.runCollect);
+      assert.deepStrictEqual(
+        projects?.map((p) => ({
+          path: p.path,
+          sessions: p.sessions.map((s) => s.id),
+        })),
+        [{ path: "/repo", sessions: [SESSION] }],
+      );
+      assert.strictEqual(
+        projects?.[0]?.sessions[0]?.title,
+        "Render my session",
+      );
     }),
   );
 
@@ -115,6 +140,37 @@ layer(
       assert.deepStrictEqual(call.diff, ["-a", "+b"]);
       assert.strictEqual(update.header.model, "claude-opus-5-5");
       assert.isDefined(update.header.cacheExpiresAt);
+    }),
+  );
+
+  it.effect("reports no running turns", () =>
+    Effect.gen(function* () {
+      const client = yield* makeClient;
+      assert.deepStrictEqual(yield* client.sessions.running(), []);
+    }),
+  );
+
+  it.effect("won't send to a session another process is writing", () =>
+    Effect.gen(function* () {
+      const client = yield* makeClient;
+      // The fixture transcript was written moments ago, as if Claude Code were running it.
+      const error = yield* client.sessions
+        .send({ params: { id: SESSION }, payload: { text: "hello" } })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "SessionInUse");
+    }),
+  );
+
+  it.effect("won't send to an unknown session", () =>
+    Effect.gen(function* () {
+      const client = yield* makeClient;
+      const error = yield* client.sessions
+        .send({
+          params: { id: "00000000-0000-4000-8000-000000000000" },
+          payload: { text: "hello" },
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "SessionNotFound");
     }),
   );
 

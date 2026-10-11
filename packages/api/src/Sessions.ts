@@ -1,8 +1,36 @@
-import { Schema } from "effect";
+import { DateTime, Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 
 // The renderable shape of a Claude Code Session. Long tool output is truncated server-side so a
 // live update stays small. Times travel as epoch millis because SSE data is plain JSON.
+
+// A Session counts as live while its transcript was written to within this window.
+export const LIVE_WINDOW_MS = 30_000;
+// Fern's own writes can land this long after its turn ends; they don't make a Session "in use".
+const HOSTED_TAIL_MS = 2_000;
+
+// The latest turn Fern ran on a Session itself, making it a Hosted Session.
+export const HostedTurn = Schema.Struct({
+  running: Schema.Boolean,
+  endedAt: Schema.optional(Schema.DateTimeUtcFromMillis),
+  // Why the turn stopped early, when it did.
+  error: Schema.optional(Schema.String),
+});
+export type HostedTurn = typeof HostedTurn.Type;
+
+// Whether something other than Fern, such as Claude Code in a terminal, is writing the Session.
+export const isInUseElsewhere = (
+  lastActivityMs: number,
+  turn: HostedTurn | undefined,
+  nowMs: number,
+) => {
+  if (turn?.running) return false;
+  if (nowMs - lastActivityMs >= LIVE_WINDOW_MS) return false;
+  return (
+    turn?.endedAt === undefined ||
+    lastActivityMs > DateTime.toEpochMillis(turn.endedAt) + HOSTED_TAIL_MS
+  );
+};
 
 export class SessionRef extends Schema.Class<SessionRef>("SessionRef")({
   id: Schema.String,
@@ -17,8 +45,24 @@ export class SessionHeader extends Schema.Class<SessionHeader>("SessionHeader")(
     model: Schema.optional(Schema.String),
     lastActivityAt: Schema.DateTimeUtcFromMillis,
     cacheExpiresAt: Schema.optional(Schema.DateTimeUtcFromMillis),
+    hostedTurn: Schema.optional(HostedTurn),
   },
 ) {}
+
+export class SessionSummary extends Schema.Class<SessionSummary>(
+  "SessionSummary",
+)({
+  id: Schema.String,
+  title: Schema.String,
+  gitBranch: Schema.optional(Schema.String),
+  lastActivityAt: Schema.DateTimeUtcFromMillis,
+}) {}
+
+// The Sessions that ran in one working directory, newest first.
+export class Project extends Schema.Class<Project>("Project")({
+  path: Schema.String,
+  sessions: Schema.Array(SessionSummary),
+}) {}
 
 export const Question = Schema.Struct({
   header: Schema.String,
@@ -61,6 +105,8 @@ export const ToolCall = Schema.TaggedStruct("ToolCall", {
   name: Schema.String,
   summary: Schema.String,
   input: Schema.String,
+  // The file the call read or changed, as an absolute path.
+  path: Schema.optional(Schema.String),
   result: Schema.optional(
     Schema.Struct({ text: Schema.String, isError: Schema.Boolean }),
   ),
@@ -96,6 +142,20 @@ export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()(
   { httpApiStatus: 404 },
 ) {}
 
+// Fern is already running a turn on this Session.
+export class SessionBusy extends Schema.TaggedError<SessionBusy>()(
+  "SessionBusy",
+  { id: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
+// Another process, such as Claude Code in a terminal, is writing this Session right now.
+export class SessionInUse extends Schema.TaggedError<SessionInUse>()(
+  "SessionInUse",
+  { id: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
 export class TranscriptError extends Schema.TaggedError<TranscriptError>()(
   "TranscriptError",
   { message: Schema.String },
@@ -106,6 +166,37 @@ export class SessionsApi extends HttpApiGroup.make("sessions")
     HttpApiEndpoint.get("current", "/current", {
       success: SessionRef,
       error: [SessionNotFound, TranscriptError],
+    }),
+  )
+  .add(
+    // Every Project, most recently active first, re-sent whenever a Session changes.
+    HttpApiEndpoint.get("projects", "/projects", {
+      success: HttpApiSchema.StreamSse({
+        data: Schema.Array(Project),
+        error: TranscriptError,
+      }),
+      error: TranscriptError,
+    }),
+  )
+  .add(
+    // Sessions Fern is running a turn on right now.
+    HttpApiEndpoint.get("running", "/running", {
+      success: Schema.Array(Schema.String),
+    }),
+  )
+  .add(
+    // Starts a turn: Claude Code resumes the Session with this message. Progress arrives on `live`.
+    HttpApiEndpoint.post("send", "/:id/messages", {
+      params: { id: Schema.NonEmptyString },
+      payload: Schema.Struct({ text: Schema.NonEmptyString }),
+      success: HttpApiSchema.NoContent,
+      error: [SessionNotFound, SessionBusy, SessionInUse, TranscriptError],
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("interrupt", "/:id/interrupt", {
+      params: { id: Schema.NonEmptyString },
+      success: HttpApiSchema.NoContent,
     }),
   )
   .add(

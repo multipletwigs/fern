@@ -16,10 +16,6 @@
     "effecttsgo/unstable-api-usage": "off",
     "no-underscore-dangle": ["warn", { "allow": ["_tag"] }]
   },
-  "ignorePatterns": [
-    "**/dist/**",
-    "**/release/**",
-    "**/next-env.d.ts"
-  ],
+  "ignorePatterns": ["**/dist/**", "**/release/**"],
   "extends": ["./node_modules/@effect/tsgo/oxlint-presets/recommended.json"]
 }

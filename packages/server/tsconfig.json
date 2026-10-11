@@ -1,6 +1,7 @@
 {
   "extends": "@repo/typescript-config/base.json",
   "compilerOptions": {
+    "lib": ["es2023"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "noEmit": true

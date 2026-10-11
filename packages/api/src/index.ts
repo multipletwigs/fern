@@ -1,4 +1,4 @@
 export * from "./Api";
-export * from "./Greetings";
+export * from "./Projects";
 export * from "./Sessions";
 export * from "./System";

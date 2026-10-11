@@ -8,7 +8,7 @@ import type {
   ToolResultBlockParam,
   ToolUseBlock,
 } from "@anthropic-ai/sdk/resources/messages";
-import { SessionHeader, type TranscriptItem } from "@repo/api";
+import { type HostedTurn, SessionHeader, type TranscriptItem } from "@repo/api";
 import { DateTime, Duration, Option, Predicate, Schema } from "effect";
 
 // Turns the messages the Agent SDK reads from a transcript into renderable items. The SDK has
@@ -105,6 +105,8 @@ const toolCall = (
     name: block.name,
     summary: (summary ?? "").replace(`${cwd}/`, "").split("\n")[0] ?? "",
     input: JSON.stringify(block.input, null, 2),
+    path:
+      field(block.input, "file_path") ?? field(block.input, "notebook_path"),
     result,
     diff: diff?.slice(0, MAX_DIFF_LINES),
     questions: Option.getOrUndefined(
@@ -155,6 +157,7 @@ const fromUser = (
 export const buildView = (
   info: SDKSessionInfo,
   messages: ReadonlyArray<StoredMessage>,
+  hostedTurn?: HostedTurn,
 ) => {
   const cwd = info.cwd ?? "";
   const results = new Map<string, { text: string; isError: boolean }>();
@@ -211,6 +214,7 @@ export const buildView = (
     lastActivityAt: DateTime.makeUnsafe(info.lastModified),
     cacheExpiresAt:
       lastRequestAt && DateTime.addDuration(lastRequestAt, cacheTtl),
+    hostedTurn,
   });
 
   return { header, items };
