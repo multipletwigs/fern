@@ -6,14 +6,25 @@ import {
   activeProjectAtom,
   activeSessionIdAtom,
   currentSessionAtom,
+  newSessionAtom,
 } from "../session/atoms";
+import { NewSession } from "../session/NewSession";
 import { SessionWorkbench } from "./SessionWorkbench";
 
-// Everything right of the sidebar: the Session on screen, or why there isn't one.
+// Everything right of the sidebar: the Session on screen, a new one being started, or why there
+// isn't one.
 export function Workspace() {
   const sessionId = useAtomValue(activeSessionIdAtom);
   const project = useAtomValue(activeProjectAtom);
   const current = useAtomValue(currentSessionAtom);
+  const newRoot = useAtomValue(newSessionAtom);
+  if (newRoot !== undefined)
+    return (
+      <Workbench
+        chat={<NewSession key={newRoot} root={newRoot} />}
+        code={undefined}
+      />
+    );
   if (sessionId !== undefined)
     return <SessionWorkbench sessionId={sessionId} root={project?.path} />;
   return (

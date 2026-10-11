@@ -9,6 +9,7 @@ import { AsyncResult } from "effect/reactivity";
 import {
   activeProjectAtom,
   activeSessionIdAtom,
+  newSessionAtom,
   projectsAtom,
   selectedSessionAtom,
 } from "../session/atoms";
@@ -20,7 +21,12 @@ export function Sidebar() {
   const projects = useAtomValue(projectsAtom);
   const activeId = useAtomValue(activeSessionIdAtom);
   const activeProject = useAtomValue(activeProjectAtom);
-  const select = useAtomSet(selectedSessionAtom);
+  const setSelected = useAtomSet(selectedSessionAtom);
+  const closeNew = useAtomSet(newSessionAtom);
+  const select = (id: string) => {
+    setSelected(id);
+    closeNew(undefined);
+  };
   const now = useNow();
 
   if (!AsyncResult.isSuccess(projects))

@@ -1,5 +1,6 @@
 import { DateTime, Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+import { ProjectNotFound } from "./Projects";
 
 // The renderable shape of a Claude Code Session. Long tool output is truncated server-side so a
 // live update stays small. Times travel as epoch millis because SSE data is plain JSON.
@@ -31,6 +32,35 @@ export const isInUseElsewhere = (
     lastActivityMs > DateTime.toEpochMillis(turn.endedAt) + HOSTED_TAIL_MS
   );
 };
+
+// The image types the Messages API accepts.
+export const ImageMediaType = Schema.Literals([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
+export type ImageMediaType = typeof ImageMediaType.Type;
+
+// An image attached to a message: its type and base64 bytes.
+export const ImageAttachment = Schema.Struct({
+  mediaType: ImageMediaType,
+  data: Schema.NonEmptyString,
+});
+export type ImageAttachment = typeof ImageAttachment.Type;
+
+// What a send carries: text, images, or both, but never neither.
+export const OutgoingMessage = Schema.Struct({
+  text: Schema.String,
+  images: Schema.optional(Schema.Array(ImageAttachment)),
+}).check(
+  Schema.makeFilter((m) =>
+    m.text.trim() !== "" || (m.images?.length ?? 0) > 0
+      ? undefined
+      : "a message needs text or an image",
+  ),
+);
+export type OutgoingMessage = typeof OutgoingMessage.Type;
 
 export class SessionRef extends Schema.Class<SessionRef>("SessionRef")({
   id: Schema.String,
@@ -73,6 +103,8 @@ export const Question = Schema.Struct({
 export const Prompt = Schema.TaggedStruct("Prompt", {
   id: Schema.String,
   text: Schema.String,
+  // Images sent with the message, as data URLs.
+  images: Schema.optional(Schema.Array(Schema.String)),
 });
 
 export const Command = Schema.TaggedStruct("Command", {
@@ -188,9 +220,20 @@ export class SessionsApi extends HttpApiGroup.make("sessions")
     // Starts a turn: Claude Code resumes the Session with this message. Progress arrives on `live`.
     HttpApiEndpoint.post("send", "/:id/messages", {
       params: { id: Schema.NonEmptyString },
-      payload: Schema.Struct({ text: Schema.NonEmptyString }),
+      payload: OutgoingMessage,
       success: HttpApiSchema.NoContent,
       error: [SessionNotFound, SessionBusy, SessionInUse, TranscriptError],
+    }),
+  )
+  .add(
+    // Starts a new Session in a Project's folder with this message, as /clear does in Claude Code.
+    HttpApiEndpoint.post("start", "/", {
+      payload: Schema.Struct({
+        cwd: Schema.NonEmptyString,
+        message: OutgoingMessage,
+      }),
+      success: SessionRef,
+      error: [ProjectNotFound, TranscriptError],
     }),
   )
   .add(

@@ -28,6 +28,10 @@ const openWindow = Effect.fn("MainWindow.open")(function* (url: string) {
     if (!target.startsWith(url)) void shell.openExternal(target);
     return { action: "deny" };
   });
+  // Dropping a file anywhere but the composer would otherwise replace the app with that file.
+  win.webContents.on("will-navigate", (event, target) => {
+    if (!target.startsWith(url)) event.preventDefault();
+  });
 
   yield* Effect.promise(() => win.loadURL(url));
 });

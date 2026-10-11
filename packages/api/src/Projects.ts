@@ -30,6 +30,15 @@ export class FileContent extends Schema.Class<FileContent>("FileContent")({
   modifiedAt: Schema.DateTimeUtcFromMillis,
 }) {}
 
+// A slash command Claude Code offers in a Project: a skill, a custom command, or a built-in.
+export class SlashCommand extends Schema.Class<SlashCommand>("SlashCommand")({
+  // Without the leading slash.
+  name: Schema.String,
+  description: Schema.String,
+  // What the command takes after its name, e.g. "<file>"; empty when nothing.
+  argumentHint: Schema.String,
+}) {}
+
 export class ProjectsApi extends HttpApiGroup.make("projects")
   .add(
     // Every file git doesn't ignore, as paths relative to the folder, re-sent when the set changes.
@@ -51,6 +60,14 @@ export class ProjectsApi extends HttpApiGroup.make("projects")
         error: WorkspaceError,
       }),
       error: [ProjectNotFound, FileNotFound, WorkspaceError],
+    }),
+  )
+  .add(
+    // The slash commands Claude Code offers in the folder.
+    HttpApiEndpoint.get("commands", "/commands", {
+      query: { root: Schema.NonEmptyString },
+      success: Schema.Array(SlashCommand),
+      error: [ProjectNotFound, WorkspaceError],
     }),
   )
   .prefix("/projects") {}

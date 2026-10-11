@@ -1,10 +1,14 @@
+import { MessageCard } from "./MessageCard";
+
+// A slash command the developer ran, as their turn in the transcript: the command in pixel type,
+// then its arguments.
 export function CommandCard({ name, args }: { name: string; args: string }) {
   return (
-    <div className="mt-10 mb-6 flex items-baseline gap-3 rounded-2xl border border-hairline bg-white/[0.035] px-5 py-4">
-      <span className="shrink-0 font-mono text-sm whitespace-nowrap text-ice">
+    <MessageCard>
+      <span className="rounded bg-white/10 px-1.5 py-0.5 font-pixel text-[13px] text-ink">
         {name}
       </span>
-      <span className="truncate text-sm text-muted">{args}</span>
-    </div>
+      {args && <span className="ml-2 text-muted">{args}</span>}
+    </MessageCard>
   );
 }

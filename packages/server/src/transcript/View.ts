@@ -54,6 +54,16 @@ const textOf = (
         .flatMap((part) => (part.type === "text" ? [part.text] : []))
         .join("\n");
 
+// Base64 images in a user message, as data URLs.
+const imagesOf = (content: MessageParam["content"]) =>
+  Predicate.isString(content)
+    ? []
+    : content.flatMap((part) =>
+        part.type === "image" && part.source.type === "base64"
+          ? [`data:${part.source.media_type};base64,${part.source.data}`]
+          : [],
+      );
+
 const tag = (text: string, name: string) =>
   new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim();
 
@@ -124,6 +134,7 @@ const toolCall = (
 const fromUser = (
   m: StoredMessage,
   text: string,
+  images: ReadonlyArray<string>,
 ): TranscriptItem | undefined => {
   const id = m.uuid;
   if (m.is_meta) {
@@ -149,9 +160,14 @@ const fromUser = (
       args: tag(text, "command-args") ?? "",
     };
   const prompt = stripReminders(text);
-  return prompt && !prompt.startsWith("<local-command-")
-    ? { _tag: "Prompt", id, text: prompt }
-    : undefined;
+  if (prompt.startsWith("<local-command-")) return undefined;
+  if (!prompt && images.length === 0) return undefined;
+  return {
+    _tag: "Prompt",
+    id,
+    text: prompt,
+    images: images.length > 0 ? images : undefined,
+  };
 };
 
 export const buildView = (
@@ -183,8 +199,11 @@ export const buildView = (
 
   for (const m of messages) {
     if (m.type === "user") {
-      const text = textOf(userMessage(m).content);
-      const item = text ? fromUser(m, text) : undefined;
+      const { content } = userMessage(m);
+      const text = textOf(content);
+      const images = imagesOf(content);
+      const item =
+        text || images.length > 0 ? fromUser(m, text, images) : undefined;
       if (item) items.push(item);
     } else if (m.type === "assistant") {
       const message = assistantMessage(m);

@@ -1,7 +1,8 @@
-import { FernApi } from "@repo/api";
+import { FernApi, SessionRef } from "@repo/api";
 import { Effect, Layer } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 import { NodeServices } from "@effect/platform-node";
+import { Commands } from "./commands/Commands";
 import { Transcripts } from "./transcript/Transcripts";
 import { Turns } from "./turn/Turns";
 import { Workspace } from "./workspace/Workspace";
@@ -22,7 +23,11 @@ export const SessionsHandlers = HttpApiBuilder.group(
       current: () => transcripts.current,
       projects: () => Effect.succeed(transcripts.projects),
       running: () => turns.running,
-      send: ({ params, payload }) => turns.send(params.id, payload.text),
+      send: ({ params, payload }) => turns.send(params.id, payload),
+      start: ({ payload }) =>
+        turns
+          .start(payload.cwd, payload.message)
+          .pipe(Effect.map((id) => new SessionRef({ id }))),
       interrupt: ({ params }) => turns.interrupt(params.id),
       live: ({ params }) => transcripts.live(params.id),
     });
@@ -34,9 +39,11 @@ export const ProjectsHandlers = HttpApiBuilder.group(
   "projects",
   Effect.fn(function* (handlers) {
     const workspace = yield* Workspace;
+    const commands = yield* Commands;
     return handlers.handleAll({
       files: ({ query }) => workspace.files(query.root),
       file: ({ query }) => workspace.file(query.root, query.path),
+      commands: ({ query }) => commands.list(query.root),
     });
   }),
 );
@@ -50,6 +57,6 @@ export const HandlersNoDeps = Layer.mergeAll(
 
 export const Handlers = HandlersNoDeps.pipe(
   Layer.provide(Transcripts.layer),
-  Layer.provide([Turns.layer, Workspace.layer]),
+  Layer.provide([Turns.layer, Workspace.layer, Commands.layer]),
   Layer.provide(NodeServices.layer),
 );

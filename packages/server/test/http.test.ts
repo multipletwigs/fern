@@ -4,6 +4,7 @@ import { Effect, Layer, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { HandlersNoDeps } from "../src/http";
+import { Commands } from "../src/commands/Commands";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { Turns } from "../src/turn/Turns";
 import { Workspace } from "../src/workspace/Workspace";
@@ -23,11 +24,13 @@ const Unused = Layer.mergeAll(
     Turns,
     Turns.of({
       send: () => Effect.die("unused"),
+      start: () => Effect.die("unused"),
       interrupt: () => Effect.die("unused"),
       turn: () => Effect.die("unused"),
       running: Effect.die("unused"),
     }),
   ),
+  Layer.succeed(Commands, Commands.of({ list: () => Effect.die("unused") })),
   Layer.succeed(
     Workspace,
     Workspace.of({

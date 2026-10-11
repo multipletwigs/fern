@@ -1,12 +1,16 @@
 import {
   getSessionInfo,
+  type Options,
   query,
   type Query,
   type SDKMessage,
+  type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
   type HostedTurn,
   isInUseElsewhere,
+  type OutgoingMessage,
+  ProjectNotFound,
   SessionBusy,
   SessionInUse,
   SessionNotFound,
@@ -27,7 +31,7 @@ import {
   Ref,
   Stream,
 } from "effect";
-import { sdk } from "../agentSdk";
+import { isProject, sdk } from "../agentSdk";
 
 type TurnMap = Map<string, HostedTurn>;
 
@@ -53,18 +57,46 @@ const resultError = (message: SDKMessage) => {
     : message.errors.join("\n") || message.subtype;
 };
 
-// Turns Fern runs on a Session itself, by resuming it through the Agent SDK. One turn at a time
-// per Session; tool permissions go through Claude Code's auto mode.
+// The message as the one user turn Claude Code resumes the Session with: images first, then text.
+async function* userTurn({ text, images = [] }: OutgoingMessage) {
+  const message: SDKUserMessage = {
+    type: "user",
+    parent_tool_use_id: null,
+    message: {
+      role: "user",
+      content: [
+        ...images.map((image) => ({
+          type: "image" as const,
+          source: {
+            type: "base64" as const,
+            media_type: image.mediaType,
+            data: image.data,
+          },
+        })),
+        ...(text.trim() ? [{ type: "text" as const, text: text.trim() }] : []),
+      ],
+    },
+  };
+  yield message;
+}
+
+// Turns Fern runs on a Session itself, by resuming it through the Agent SDK, or by starting a new
+// Session. One turn at a time per Session; tool permissions go through Claude Code's auto mode.
 export class Turns extends Context.Service<
   Turns,
   {
     send(
       id: string,
-      text: string,
+      message: OutgoingMessage,
     ): Effect.Effect<
       void,
       SessionNotFound | SessionBusy | SessionInUse | TranscriptError
     >;
+    // Starts a new Session in a Project's folder with this message, and returns its id.
+    start(
+      cwd: string,
+      message: OutgoingMessage,
+    ): Effect.Effect<string, ProjectNotFound | TranscriptError>;
     // Stops the running turn the way Esc does in Claude Code, or forcibly if it doesn't stop.
     interrupt(id: string): Effect.Effect<void>;
     // The latest turn Fern ran on the Session, if any.
@@ -84,12 +116,17 @@ export class Turns extends Context.Service<
       const setTurn = (id: string, turn: HostedTurn) =>
         Ref.update(turns, (all) => new Map(all).set(id, turn));
 
-      const run = (id: string, text: string, cwd: string | undefined) =>
+      // `session` either resumes the Session or names the new one.
+      const run = (
+        id: string,
+        message: OutgoingMessage,
+        session: Pick<Options, "resume" | "sessionId" | "cwd">,
+      ) =>
         Effect.acquireUseRelease(
           Effect.sync(() => {
             const turn = query({
-              prompt: text,
-              options: { resume: id, cwd, permissionMode: "auto" },
+              prompt: userTurn(message),
+              options: { ...session, permissionMode: "auto" },
             });
             queries.set(id, turn);
             return turn;
@@ -101,7 +138,7 @@ export class Turns extends Context.Service<
             ).pipe(
               Stream.runFold(
                 (): string | undefined => undefined,
-                (error, message) => resultError(message) ?? error,
+                (error, event) => resultError(event) ?? error,
               ),
             ),
           (turn) =>
@@ -125,7 +162,7 @@ export class Turns extends Context.Service<
 
       const send = Effect.fn("Turns.send")(function* (
         id: string,
-        text: string,
+        message: OutgoingMessage,
       ) {
         const info = yield* sdk("getSessionInfo", () =>
           getSessionInfo(id),
@@ -141,9 +178,27 @@ export class Turns extends Context.Service<
           claim(all, id, info.lastModified, now),
         );
         if (refused) return yield* refused;
-        return yield* FiberMap.run(fibers, id, run(id, text, info.cwd)).pipe(
-          Effect.asVoid,
+        return yield* FiberMap.run(
+          fibers,
+          id,
+          run(id, message, { resume: id, cwd: info.cwd }),
+        ).pipe(Effect.asVoid);
+      });
+
+      const start = Effect.fn("Turns.start")(function* (
+        cwd: string,
+        message: OutgoingMessage,
+      ) {
+        if (!(yield* isProject(cwd)))
+          return yield* new ProjectNotFound({ root: cwd });
+        const id = crypto.randomUUID();
+        yield* setTurn(id, { running: true });
+        yield* FiberMap.run(
+          fibers,
+          id,
+          run(id, message, { sessionId: id, cwd }),
         );
+        return id;
       });
 
       const interrupt = Effect.fn("Turns.interrupt")(function* (id: string) {
@@ -164,6 +219,7 @@ export class Turns extends Context.Service<
 
       return Turns.of({
         send,
+        start,
         interrupt,
         turn: (id) => Ref.get(turns).pipe(Effect.map((all) => all.get(id))),
         running: Ref.get(turns).pipe(

@@ -10,6 +10,21 @@ import { ApiClient } from "../ApiClient";
 export const currentSessionAtom = ApiClient.query("sessions", "current", {});
 
 export const sendMessageAtom = ApiClient.mutation("sessions", "send");
+
+// A message the developer just sent, shown in the transcript before Claude Code records it. It
+// stands in until a developer turn newer than `after` (the latest one when it was sent) arrives.
+export interface PendingPrompt {
+  readonly id: string;
+  // The slash command, without its slash, when the message is one; `text` is then its arguments.
+  readonly command: string | undefined;
+  readonly text: string;
+  readonly images: ReadonlyArray<string>;
+  readonly after: string | undefined;
+}
+export const pendingPromptAtom = Atom.family((_sessionId: string) =>
+  Atom.make<PendingPrompt | undefined>(undefined),
+);
+export const startSessionAtom = ApiClient.mutation("sessions", "start");
 export const interruptAtom = ApiClient.mutation("sessions", "interrupt");
 
 // The Session picked in the sidebar; until one is picked, the screen follows the current Session.
@@ -27,8 +42,20 @@ export const projectsAtom = ApiClient.runtime.atom(
   ).pipe(Stream.retry(Schedule.spaced("1 second"))),
 );
 
-// The Session on screen: the one picked in the sidebar, else the current one.
+// The folder of a blank Session on screen, opened by /clear, until its first message starts it.
+export const newSessionAtom = Atom.make<string | undefined>(undefined).pipe(
+  Atom.keepAlive,
+);
+
+// The slash commands Claude Code offers in a Project's folder.
+export const commandsAtom = Atom.family((root: string) =>
+  ApiClient.query("projects", "commands", { query: { root } }),
+);
+
+// The Session on screen: none while a new one is open, else the one picked in the sidebar, else
+// the current one.
 export const activeSessionIdAtom = Atom.make((get) => {
+  if (get(newSessionAtom) !== undefined) return undefined;
   const selected = get(selectedSessionAtom);
   if (selected) return selected;
   const current = get(currentSessionAtom);
@@ -38,10 +65,13 @@ export const activeSessionIdAtom = Atom.make((get) => {
 // The Project the Session on screen ran in.
 export const activeProjectAtom = Atom.make((get) => {
   const id = get(activeSessionIdAtom);
+  const root = get(newSessionAtom);
   const projects = get(projectsAtom);
-  if (id === undefined || !AsyncResult.isSuccess(projects)) return undefined;
+  if (!AsyncResult.isSuccess(projects)) return undefined;
   return projects.value.find((project) =>
-    project.sessions.some((session) => session.id === id),
+    root !== undefined
+      ? project.path === root
+      : project.sessions.some((session) => session.id === id),
   );
 });
 

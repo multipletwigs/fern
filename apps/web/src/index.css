@@ -23,6 +23,26 @@
   --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-pixel: "Geist Pixel Square", "Geist Mono", ui-monospace, monospace;
+
+  /* New transcript rows fade in out of a soft blur, in place, so nothing around them moves. */
+  --animate-fade-in: fade-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      filter: blur(3px);
+    }
+  }
+
+  /* A light passing over text that is waiting on something. */
+  --animate-shimmer: shimmer 2.2s linear infinite;
+  @keyframes shimmer {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: -100% 0;
+    }
+  }
 }
 
 /* Geist Mono and Geist Pixel by Vercel (SIL OFL 1.1, see fonts/LICENSE.txt). Manrope (SIL OFL 1.1)
@@ -64,6 +84,11 @@ body,
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Selected text gets a neutral grey wash instead of the system accent. */
+::selection {
+  background: rgb(255 255 255 / 0.2);
 }
 
 /* The window is frameless; these regions drag it, and anything interactive inside opts out. */

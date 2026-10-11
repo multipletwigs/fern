@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HandlersNoDeps } from "../src/http";
+import { Commands } from "../src/commands/Commands";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { Turns } from "../src/turn/Turns";
 import { Workspace } from "../src/workspace/Workspace";
@@ -57,7 +58,7 @@ layer(
   Layer.mergeAll(
     HandlersNoDeps.pipe(
       Layer.provide(Transcripts.layer),
-      Layer.provide([Turns.layer, Workspace.layer]),
+      Layer.provide([Turns.layer, Workspace.layer, Commands.layer]),
       Layer.provide(NodeServices.layer),
     ),
     HttpServer.layerServices,
@@ -112,6 +113,16 @@ layer(
       const client = yield* makeClient;
       const error = yield* client.projects
         .files({ query: { root: tmpdir() } })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "ProjectNotFound");
+    }),
+  );
+
+  it.effect("won't list commands for folders no Session ran in", () =>
+    Effect.gen(function* () {
+      const client = yield* makeClient;
+      const error = yield* client.projects
+        .commands({ query: { root: tmpdir() } })
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "ProjectNotFound");
     }),

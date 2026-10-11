@@ -15,7 +15,7 @@ export function ItemView({ item }: { item: TranscriptItem }) {
   const opener = useFileOpener();
   switch (item._tag) {
     case "Prompt":
-      return <MessageCard>{item.text}</MessageCard>;
+      return <MessageCard images={item.images}>{item.text}</MessageCard>;
     case "Command":
       return <CommandCard name={item.name} args={item.args} />;
     case "Text":

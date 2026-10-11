@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HandlersNoDeps } from "../src/http";
+import { Commands } from "../src/commands/Commands";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { Turns } from "../src/turn/Turns";
 import { Workspace } from "../src/workspace/Workspace";
@@ -69,6 +70,16 @@ const transcript = [
     role: "user",
     content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }],
   }),
+  line("user", {
+    role: "user",
+    content: [
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "iVBORw0K" },
+      },
+      { type: "text", text: "Like this" },
+    ],
+  }),
   line("user", { role: "user", content: "[Request interrupted by user]" }),
 ];
 
@@ -87,7 +98,7 @@ layer(
   Layer.mergeAll(
     HandlersNoDeps.pipe(
       Layer.provide(Transcripts.layer),
-      Layer.provide([Turns.layer, Workspace.layer]),
+      Layer.provide([Turns.layer, Workspace.layer, Commands.layer]),
       Layer.provide(NodeServices.layer),
     ),
     HttpServer.layerServices,
@@ -130,8 +141,15 @@ layer(
 
       assert.deepStrictEqual(
         update.upserts.map((item) => item._tag),
-        ["Prompt", "Text", "ToolCall", "Interrupt"],
+        ["Prompt", "Text", "ToolCall", "Prompt", "Interrupt"],
       );
+      const withImage = update.upserts[3];
+      assert.strictEqual(withImage?._tag, "Prompt");
+      if (withImage?._tag !== "Prompt") return;
+      assert.strictEqual(withImage.text, "Like this");
+      assert.deepStrictEqual(withImage.images, [
+        "data:image/png;base64,iVBORw0K",
+      ]);
       const call = update.upserts[2];
       assert.strictEqual(call?._tag, "ToolCall");
       if (call?._tag !== "ToolCall") return;
@@ -158,6 +176,26 @@ layer(
         .send({ params: { id: SESSION }, payload: { text: "hello" } })
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "SessionInUse");
+    }),
+  );
+
+  it.effect("won't send a message with neither text nor images", () =>
+    Effect.gen(function* () {
+      const client = yield* makeClient;
+      const exit = yield* client.sessions
+        .send({ params: { id: SESSION }, payload: { text: " ", images: [] } })
+        .pipe(Effect.exit);
+      assert.isTrue(exit._tag === "Failure");
+    }),
+  );
+
+  it.effect("won't start a session outside a known project", () =>
+    Effect.gen(function* () {
+      const client = yield* makeClient;
+      const error = yield* client.sessions
+        .start({ payload: { cwd: "/nowhere", message: { text: "hello" } } })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "ProjectNotFound");
     }),
   );
 
