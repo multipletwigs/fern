@@ -9,7 +9,6 @@
     "./server": "./src/server.ts"
   },
   "scripts": {
-    "lint": "eslint . --max-warnings 0",
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
@@ -17,10 +16,8 @@
     "effect": "4.0.2"
   },
   "devDependencies": {
-    "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "26.4.1",
-    "eslint": "10.9.1",
     "typescript": "7.0.2"
   }
 }
