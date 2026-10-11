@@ -23,6 +23,7 @@ import {
   Stream,
 } from "effect";
 import { sdk } from "../agentSdk";
+import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { buildView } from "./View";
 
@@ -97,6 +98,7 @@ export class Transcripts extends Context.Service<
     Transcripts,
     Effect.gen(function* () {
       const turns = yield* Turns;
+      const sessions = yield* HostedSessions;
       return Transcripts.of({
         current: sdk("listSessions", () => listSessions({ limit: 1 })).pipe(
           Effect.map(([newest]) => newest),
@@ -108,14 +110,12 @@ export class Transcripts extends Context.Service<
           Effect.withSpan("Transcripts.current"),
         ),
 
-        // Headless SDK sessions are left out, matching Claude Code's own /resume picker.
+        // Other scripts' headless Sessions are left out, matching Claude Code's own /resume picker.
         // Each Session goes with the latest turn Fern ran on it, so a stopped turn stops showing as
         // live without waiting out the live window.
         projects: Stream.fromEffectSchedule(
           Effect.gen(function* () {
-            const infos = yield* sdk("listSessions", () =>
-              listSessions({ includeProgrammatic: false }),
-            );
+            const infos = yield* sessions.listed;
             const hosted = yield* Effect.forEach(infos, (info) =>
               turns
                 .turn(info.sessionId)

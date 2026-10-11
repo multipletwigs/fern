@@ -1,5 +1,5 @@
 import { NodeHttpServer } from "@effect/platform-node";
-import { ApiLive } from "@repo/server";
+import { ApiLive, DatabaseLive } from "@repo/server";
 import { app } from "electron";
 import { Context, Effect, Layer } from "effect";
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/http";
@@ -12,6 +12,18 @@ import path from "node:path";
 // Dev serves the API on a fixed port because Vite's proxy (apps/web/vite.config.ts) points at it.
 const DEV_API_PORT = Number(process.env.FERN_API_PORT ?? 7420);
 const DEV_WEB_URL = "http://localhost:5173";
+
+// The API with Fern's database, kept with the app's other data (ADR 0004). Built once the app is
+// ready, which is when Electron can say where that is.
+const Api = Layer.unwrap(
+  Effect.sync(() =>
+    ApiLive.pipe(
+      Layer.provide(
+        DatabaseLive(path.join(app.getPath("userData"), "fern.db")),
+      ),
+    ),
+  ),
+);
 
 const serve = <E, R>(port: number, routes: Layer.Layer<never, E, R>) =>
   HttpRouter.serve(routes).pipe(
@@ -29,7 +41,7 @@ export class AppServer extends Context.Service<
   static readonly layerDev = Layer.succeed(
     AppServer,
     AppServer.of({ url: DEV_WEB_URL }),
-  ).pipe(Layer.provideMerge(serve(DEV_API_PORT, ApiLive)));
+  ).pipe(Layer.provideMerge(serve(DEV_API_PORT, Api)));
 
   // Production: the API and the built web app from one server on a free port.
   static readonly layer = Layer.effect(
@@ -45,7 +57,7 @@ export class AppServer extends Context.Service<
       serve(
         0,
         Layer.mergeAll(
-          ApiLive,
+          Api,
           HttpStaticServer.layer({
             root: app.isPackaged
               ? path.join(process.resourcesPath, "web")

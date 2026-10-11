@@ -1,4 +1,3 @@
-import { NodeServices } from "@effect/platform-node";
 import { assert, layer } from "@effect/vitest";
 import { FernApi } from "@repo/api";
 import { Effect, Layer, Stream } from "effect";
@@ -8,11 +7,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HandlersNoDeps } from "../src/http";
-import { Commands } from "../src/commands/Commands";
-import { Transcripts } from "../src/transcript/Transcripts";
-import { Turns } from "../src/turn/Turns";
-import { Workspace } from "../src/workspace/Workspace";
+import { DatabaseLive } from "../src/database/Database";
+import { handlersWith } from "../src/http";
+import { NoWriter } from "./stubs";
 
 // A git repo a Session ran in, with a tracked file, an ignored file, and a binary one.
 const repo = realpathSync(mkdtempSync(join(tmpdir(), "fern-repo-")));
@@ -56,11 +53,7 @@ const first = <A, E>(stream: Stream.Stream<A, E>) =>
 
 layer(
   Layer.mergeAll(
-    HandlersNoDeps.pipe(
-      Layer.provide(Transcripts.layer),
-      Layer.provide([Turns.layer, Workspace.layer, Commands.layer]),
-      Layer.provide(NodeServices.layer),
-    ),
+    handlersWith(NoWriter).pipe(Layer.provide(DatabaseLive(":memory:"))),
     HttpServer.layerServices,
   ),
 )("Projects API", (it) => {

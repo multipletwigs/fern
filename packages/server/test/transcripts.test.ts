@@ -6,12 +6,9 @@ import { HttpApiTest } from "effect/http-api";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HandlersNoDeps } from "../src/http";
-import { Commands } from "../src/commands/Commands";
-import { Transcripts } from "../src/transcript/Transcripts";
-import { Turns } from "../src/turn/Turns";
-import { Workspace } from "../src/workspace/Workspace";
-import { NodeServices } from "@effect/platform-node";
+import { DatabaseLive } from "../src/database/Database";
+import { handlersWith } from "../src/http";
+import { NoWriter } from "./stubs";
 
 const SESSION = "4b01f026-4f24-41ef-b407-1e7e05c2684c";
 
@@ -96,11 +93,7 @@ const makeClient = HttpApiTest.groups(FernApi, ["sessions"]);
 
 layer(
   Layer.mergeAll(
-    HandlersNoDeps.pipe(
-      Layer.provide(Transcripts.layer),
-      Layer.provide([Turns.layer, Workspace.layer, Commands.layer]),
-      Layer.provide(NodeServices.layer),
-    ),
+    handlersWith(NoWriter).pipe(Layer.provide(DatabaseLive(":memory:"))),
     HttpServer.layerServices,
   ),
 )("Sessions API", (it) => {

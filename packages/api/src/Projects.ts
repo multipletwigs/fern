@@ -39,6 +39,24 @@ export class SlashCommand extends Schema.Class<SlashCommand>("SlashCommand")({
   argumentHint: Schema.String,
 }) {}
 
+// A file a Session changed, with its net line counts from git.
+export class ChangedFile extends Schema.Class<ChangedFile>("ChangedFile")({
+  // Relative to the Project's folder.
+  path: Schema.String,
+  added: Schema.Int,
+  removed: Schema.Int,
+  binary: Schema.Boolean,
+}) {}
+
+// What a Session changed in its Project: the working tree against the snapshot Fern took when the
+// Session started, or, for a Session Fern never ran, against the last commit.
+export class SessionChanges extends Schema.Class<SessionChanges>(
+  "SessionChanges",
+)({
+  since: Schema.Literals(["start", "head"]),
+  files: Schema.Array(ChangedFile),
+}) {}
+
 export class ProjectsApi extends HttpApiGroup.make("projects")
   .add(
     // Every file git doesn't ignore, as paths relative to the folder, re-sent when the set changes.
@@ -60,6 +78,20 @@ export class ProjectsApi extends HttpApiGroup.make("projects")
         error: WorkspaceError,
       }),
       error: [ProjectNotFound, FileNotFound, WorkspaceError],
+    }),
+  )
+  .add(
+    // A Session's net change in the folder, re-sent when it changes.
+    HttpApiEndpoint.get("changes", "/changes", {
+      query: {
+        root: Schema.NonEmptyString,
+        session: Schema.NonEmptyString,
+      },
+      success: HttpApiSchema.StreamSse({
+        data: SessionChanges,
+        error: WorkspaceError,
+      }),
+      error: [ProjectNotFound, WorkspaceError],
     }),
   )
   .add(

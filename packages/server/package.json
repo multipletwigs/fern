@@ -14,6 +14,7 @@
     "@anthropic-ai/claude-agent-sdk": "0.3.296",
     "@anthropic-ai/sdk": "0.133.0",
     "@effect/platform-node": "4.0.2",
+    "@effect/sql-sqlite-node": "4.0.2",
     "@repo/api": "workspace:*",
     "effect": "4.0.2"
   },

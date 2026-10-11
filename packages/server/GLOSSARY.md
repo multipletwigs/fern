@@ -68,6 +68,14 @@ _Avoid_: Gem, badge, achievement, streak
 A Session Fern drives itself, so its Redirects, Checkpoints, and Phases are recorded exactly.
 _Avoid_: Fern session, managed session
 
+**Subagent**:
+A conversation that Claude Code delegates to through its Agent tool, shown inside its Session and never counted as a Session of its own.
+_Avoid_: Worker (the Verifier's term), child session, task
+
+**Fork**:
+A conversation Fern branches off a Session for its own purposes, such as writing a Walkthrough. Like a Subagent, it is never counted as a Session.
+_Avoid_: Branch (git), clone, side session
+
 **External Session**:
 A Session the developer ran outside Fern, observed after the fact and benchmarked less precisely.
 _Avoid_: Terminal session, imported session
@@ -79,6 +87,40 @@ _Avoid_: Retrospective, postmortem
 **Finding**:
 A proposed change to the Setup surfaced by a Retro. Accepting a Finding is the only way the Setup version changes.
 _Avoid_: Suggestion, improvement, action item
+
+### Review
+
+**Walkthrough**:
+The developer-facing explanation of what a Session changed since its previous Walkthrough (or since it started): ordered Sections, in natural language, that together account for every changed line of the net change. The developer reviews a Walkthrough instead of the raw diff. Fern produces one whenever a Session's work completes; it is not a Phase, so no Flow can leave it out.
+_Avoid_: Diff, summary, changelog, report
+
+**Section**:
+One semantic change within a Walkthrough, explained in prose and claiming the hunks that implement it, across as many files as it touches. It notes in one line any approach tried and dropped on the way. The developer approves or rejects each Section on its own.
+_Avoid_: Step (Phase avoids it), chunk, file group
+
+**Decision**:
+A question settled with the developer, usually during Grill, recorded so later Sections can cite it. A Decision belongs to the Project, so a Section can cite one settled in an earlier Session.
+_Avoid_: Answer, choice, requirement
+
+**Brief**:
+The outcomes a Session is meant to deliver, agreed with the developer when a Grill ends, each citing the Decisions behind it. Fern judges that a Session's work is complete against its Brief.
+_Avoid_: Plan (Claude Code's plan mode), ticket, spec, task list
+
+**Reviewed**:
+Said of a Walkthrough once the developer has approved or rejected every Section. Sections cannot be skipped.
+_Avoid_: Done, signed off
+
+**Unplanned**:
+Said of a Section that cites no Decision: the agent changed something the developer never agreed to.
+_Avoid_: Scope creep, extra
+
+**Unexplained change**:
+A changed hunk that no Section claims. A Walkthrough shows every Unexplained change, and the developer cannot skip them.
+_Avoid_: Orphan, leftover
+
+**Rejection**:
+The developer turning down a Section, with a note. The note goes back to the Session as a Redirect, and the reason becomes material for a Retro.
+_Avoid_: Decline, revert
 
 ### Workflow
 

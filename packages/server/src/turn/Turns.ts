@@ -28,12 +28,31 @@ import {
   Layer,
   Option,
   Predicate,
+  PubSub,
   Ref,
   Stream,
 } from "effect";
-import { isProject, sdk } from "../agentSdk";
+import { sdk } from "../agentSdk";
+import { Snapshots } from "../snapshot/Snapshots";
+import { HostedSessions } from "./HostedSessions";
 
 type TurnMap = Map<string, HostedTurn>;
+
+// When a turn ran, and where. Kept so a Walkthrough can warn about other Sessions that worked in the
+// same repository at the same time.
+interface TurnWindow {
+  readonly id: string;
+  readonly cwd: string;
+  readonly startedAt: number;
+  endedAt: number | undefined;
+}
+const MAX_WINDOWS = 500;
+
+// A turn Fern ran that finished on its own: not stopped by the developer, and without an error.
+export interface FinishedTurn {
+  readonly id: string;
+  readonly cwd: string;
+}
 
 // Marks a turn as running on the Session unless one already is, or another process is writing it.
 const claim = (
@@ -111,13 +130,25 @@ export class Turns extends Context.Service<
     turn(id: string): Effect.Effect<HostedTurn | undefined>;
     // Sessions with a turn running right now.
     readonly running: Effect.Effect<ReadonlyArray<string>>;
+    // Other Sessions whose turns ran in the repository at or after `sinceMs`.
+    overlapping(
+      repo: string,
+      sinceMs: number,
+      except: string,
+    ): Effect.Effect<ReadonlyArray<string>>;
+    // Every turn that finishes on its own from now on.
+    readonly finished: Stream.Stream<FinishedTurn>;
   }
 >()("@repo/server/turn/Turns") {
   static readonly layer = Layer.effect(
     Turns,
     Effect.gen(function* () {
+      const snapshots = yield* Snapshots;
+      const hosted = yield* HostedSessions;
       const fibers = yield* FiberMap.make<string, void, TranscriptError>();
       const turns = yield* Ref.make<TurnMap>(new Map());
+      const windows: Array<TurnWindow> = [];
+      const finished = yield* PubSub.unbounded<FinishedTurn>();
       // The live query per Session, so an interrupt can reach it.
       const queries = new Map<string, Query>();
       // Sessions whose running turn the developer asked to stop.
@@ -126,14 +157,31 @@ export class Turns extends Context.Service<
       const setTurn = (id: string, turn: HostedTurn) =>
         Ref.update(turns, (all) => new Map(all).set(id, turn));
 
+      // The working tree before Fern's first turn on a Session, which its Walkthroughs start from.
+      // A folder outside git just has no Walkthroughs.
+      const markStart = (cwd: string, id: string) =>
+        snapshots.repo(cwd).pipe(
+          Effect.flatMap((repo) => snapshots.markStart(repo, id)),
+          Effect.catch((error) =>
+            Effect.logDebug("No start snapshot", error.message),
+          ),
+        );
+
       // `session` either resumes the Session or names the new one.
       const run = (
         id: string,
         message: OutgoingMessage,
-        session: Pick<Options, "resume" | "sessionId" | "cwd">,
+        session: Pick<Options, "resume" | "sessionId"> & { cwd: string },
       ) =>
         Effect.acquireUseRelease(
           Effect.sync(() => {
+            windows.push({
+              id,
+              cwd: session.cwd,
+              startedAt: Date.now(),
+              endedAt: undefined,
+            });
+            if (windows.length > MAX_WINDOWS) windows.shift();
             const ended = new AbortController();
             const turn = query({
               prompt: userTurn(message, ended.signal),
@@ -174,6 +222,12 @@ export class Turns extends Context.Service<
                     ? undefined
                     : Cause.pretty(exit.cause);
               yield* setTurn(id, { running: false, endedAt, error });
+              const window = windows.findLast((w) => w.id === id);
+              if (window) window.endedAt = DateTime.toEpochMillis(endedAt);
+              const completed =
+                !stopped && Exit.isSuccess(exit) && exit.value === undefined;
+              if (completed)
+                yield* PubSub.publish(finished, { id, cwd: session.cwd });
             }),
           ),
         );
@@ -196,10 +250,11 @@ export class Turns extends Context.Service<
           claim(all, id, info.lastModified, now),
         );
         if (refused) return yield* refused;
+        yield* markStart(info.cwd ?? "", id);
         return yield* FiberMap.run(
           fibers,
           id,
-          run(id, message, { resume: id, cwd: info.cwd }),
+          run(id, message, { resume: id, cwd: info.cwd ?? "" }),
         ).pipe(Effect.asVoid);
       });
 
@@ -207,10 +262,12 @@ export class Turns extends Context.Service<
         cwd: string,
         message: OutgoingMessage,
       ) {
-        if (!(yield* isProject(cwd)))
+        if (!(yield* hosted.isProject(cwd)))
           return yield* new ProjectNotFound({ root: cwd });
         const id = crypto.randomUUID();
+        yield* hosted.record(id, cwd);
         yield* setTurn(id, { running: true });
+        yield* markStart(cwd, id);
         yield* FiberMap.run(
           fibers,
           id,
@@ -246,6 +303,20 @@ export class Turns extends Context.Service<
             Array.from(all).flatMap(([id, turn]) => (turn.running ? [id] : [])),
           ),
         ),
+        overlapping: (repo, sinceMs, except) =>
+          Effect.sync(() => [
+            ...new Set(
+              windows
+                .filter(
+                  (w) =>
+                    w.id !== except &&
+                    (w.cwd === repo || w.cwd.startsWith(`${repo}/`)) &&
+                    (w.endedAt === undefined || w.endedAt >= sinceMs),
+                )
+                .map((w) => w.id),
+            ),
+          ]),
+        finished: Stream.fromPubSub(finished),
       });
     }),
   );

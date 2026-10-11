@@ -38,8 +38,29 @@ export const fileAtom = Atom.family((root: string) =>
   ),
 );
 
-// The file the developer opened for a Session, as an absolute path. Until they open one, the code
-// panel follows the file Claude last touched.
-export const openFileAtom = Atom.family((_sessionId: string) =>
-  Atom.make<string | undefined>(undefined).pipe(Atom.keepAlive),
+// A Session's net change in the Project, from git, kept current by the server.
+export const sessionChangesAtom = Atom.family((root: string) =>
+  Atom.family((sessionId: string) =>
+    ApiClient.runtime.atom(
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const client = yield* ApiClient;
+          return yield* client.projects.changes({
+            query: { root, session: sessionId },
+          });
+        }),
+      ).pipe(Stream.retry(reconnect)),
+    ),
+  ),
+);
+
+// What the code panel shows: a file, as an absolute path, or a Walkthrough.
+export type OpenItem =
+  | { readonly kind: "file"; readonly path: string }
+  | { readonly kind: "walkthrough"; readonly id: string };
+
+// What the developer opened in a Session's code panel. Until they open something, the panel
+// follows Claude: a Walkthrough waiting on the developer, else the file Claude last changed.
+export const openAtom = Atom.family((_sessionId: string) =>
+  Atom.make<OpenItem | undefined>(undefined).pipe(Atom.keepAlive),
 );

@@ -1,7 +1,8 @@
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ProjectNotFound, SlashCommand, WorkspaceError } from "@repo/api";
 import { Cache, Context, Effect, Layer } from "effect";
-import { isProject, sdk } from "../agentSdk";
+import { sdk } from "../agentSdk";
+import { HostedSessions } from "../turn/HostedSessions";
 
 // Input that never arrives, so Claude Code starts up and reports its commands without a turn.
 const idle: AsyncIterable<SDKUserMessage> = {
@@ -45,6 +46,7 @@ export class Commands extends Context.Service<
   static readonly layer = Layer.effect(
     Commands,
     Effect.gen(function* () {
+      const hosted = yield* HostedSessions;
       // Starting Claude Code takes a moment, and skills rarely change between keystrokes.
       const cache = yield* Cache.make({
         lookup: read,
@@ -53,9 +55,11 @@ export class Commands extends Context.Service<
       });
 
       const list = Effect.fn("Commands.list")(function* (root: string) {
-        const known = yield* isProject(root).pipe(
-          Effect.mapError((e) => new WorkspaceError({ message: e.message })),
-        );
+        const known = yield* hosted
+          .isProject(root)
+          .pipe(
+            Effect.mapError((e) => new WorkspaceError({ message: e.message })),
+          );
         if (!known) return yield* new ProjectNotFound({ root });
         return yield* Cache.get(cache, root);
       });

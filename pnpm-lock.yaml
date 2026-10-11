@@ -149,6 +149,9 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.2
         version: 4.0.2(effect@4.0.2)(redis@6.3.0)
+      '@effect/sql-sqlite-node':
+        specifier: 4.0.2
+        version: 4.0.2(effect@4.0.2)
       '@repo/api':
         specifier: workspace:*
         version: link:../api
@@ -345,6 +348,11 @@ packages:
     peerDependencies:
       effect: ^4.0.2
       redis: '>=5.0.0 <7.0.0'
+
+  '@effect/sql-sqlite-node@4.0.2':
+    resolution: {integrity: sha512-QjhQ6yetczGE08ZV/05Y4Cj7GNGswloRZuk2cZ4tl84C91398Ho0PhDLexihO2RHBTE1YjpUW8Mdl4KH41I/LQ==}
+    peerDependencies:
+      effect: ^4.0.2
 
   '@effect/tsgo-darwin-arm64@0.51.1':
     resolution: {integrity: sha512-Jx+1RB3pz1B2zYs1EmxybwDOq9KRpfdu/rn1XTULNMZmqUJZuvTQU9CRqB0g/ZgIa6MeNBZEYvmAu4Dq2/QVWA==}
@@ -3864,6 +3872,10 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@effect/sql-sqlite-node@4.0.2(effect@4.0.2)':
+    dependencies:
+      effect: 4.0.2
 
   '@effect/tsgo-darwin-arm64@0.51.1':
     optional: true

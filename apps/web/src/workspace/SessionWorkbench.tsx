@@ -1,14 +1,23 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { SessionChanges } from "@repo/api";
 import { Workbench } from "@repo/ui/Workbench";
-import { AsyncResult } from "effect/reactivity";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { useMemo, useState } from "react";
+import { sessionChangesAtom } from "../code/atoms";
 import { sessionCommits } from "../code/commits";
 import { changedFiles, followedFile, readFiles } from "../code/paths";
 import { ProjectCode } from "../code/ProjectCode";
 import { transcriptAtom } from "../session/atoms";
 import { Session } from "../session/Session";
+import { walkthroughsAtom } from "../walkthrough/atoms";
 
-// One Session's chat, joined by its code once Claude has changed a file in the Project.
+// Stands in for a Session's changes while its Project isn't known yet.
+const noChangesAtom: Atom.Atom<
+  AsyncResult.AsyncResult<SessionChanges, unknown>
+> = Atom.make(AsyncResult.initial());
+
+// One Session's chat, joined by its code once the Session has changed a file in the Project or has
+// a Walkthrough.
 export function SessionWorkbench({
   sessionId,
   root,
@@ -18,13 +27,26 @@ export function SessionWorkbench({
 }) {
   const result = useAtomValue(transcriptAtom(sessionId));
   const items = AsyncResult.isSuccess(result) ? result.value.items : undefined;
+  const changesResult = useAtomValue(
+    root ? sessionChangesAtom(root)(sessionId) : noChangesAtom,
+  );
+  const changes = AsyncResult.isSuccess(changesResult)
+    ? changesResult.value
+    : undefined;
+  const walkthroughsResult = useAtomValue(walkthroughsAtom(sessionId));
+  const walkthroughs = useMemo(
+    () =>
+      AsyncResult.isSuccess(walkthroughsResult) ? walkthroughsResult.value : [],
+    [walkthroughsResult],
+  );
   const changed = useMemo(
-    () => (items && root ? changedFiles(items, root) : undefined),
-    [items, root],
+    () => (items && root ? changedFiles(items, root, changes) : undefined),
+    [items, root, changes],
   );
   const read = useMemo(
-    () => (items && root ? readFiles(items, root) : undefined),
-    [items, root],
+    () =>
+      items && root && changed ? readFiles(items, root, changed) : undefined,
+    [items, root, changed],
   );
   const commits = useMemo(() => (items ? sessionCommits(items) : []), [items]);
   const followed = useMemo(
@@ -35,8 +57,11 @@ export function SessionWorkbench({
   // While a Session's transcript loads, keep the last layout rather than flashing the chat to full
   // width and back.
   const [split, setSplit] = useState(false);
-  const hasChanges = changed && changed.length > 0;
-  if (hasChanges !== undefined && hasChanges !== split) setSplit(hasChanges);
+  const hasCode =
+    changed === undefined
+      ? undefined
+      : changed.length > 0 || walkthroughs.length > 0;
+  if (hasCode !== undefined && hasCode !== split) setSplit(hasCode);
 
   return (
     <Workbench
@@ -52,6 +77,11 @@ export function SessionWorkbench({
             commits={commits}
             read={read ?? []}
             followed={followed}
+            walkthroughs={walkthroughs}
+            working={
+              AsyncResult.isSuccess(result) &&
+              result.value.header?.hostedTurn?.running === true
+            }
           />
         ) : undefined
       }

@@ -1,8 +1,9 @@
-import { listSessions } from "@anthropic-ai/claude-agent-sdk";
 import {
+  ChangedFile,
   FileContent,
   FileNotFound,
   ProjectNotFound,
+  SessionChanges,
   WorkspaceError,
 } from "@repo/api";
 import {
@@ -17,7 +18,9 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { sdk } from "../agentSdk";
+import type { GitError } from "../git/Git";
+import { Snapshots } from "../snapshot/Snapshots";
+import { HostedSessions } from "../turn/HostedSessions";
 
 // Files above this size are listed but not sent.
 const MAX_FILE_BYTES = 1_000_000;
@@ -29,6 +32,9 @@ const decoder = new TextDecoder();
 const mtimeMs = (info: FileSystem.File.Info) =>
   Option.getOrUndefined(info.mtime)?.getTime();
 
+const gitFailed = (error: GitError) =>
+  new WorkspaceError({ message: error.message });
+
 // Reads a Project's code from the folder its Sessions ran in. Only those folders can be read, and
 // only paths inside them, symlinks included.
 export class Workspace extends Context.Service<
@@ -39,6 +45,14 @@ export class Workspace extends Context.Service<
       root: string,
     ): Effect.Effect<
       Stream.Stream<ReadonlyArray<string>, WorkspaceError>,
+      ProjectNotFound | WorkspaceError
+    >;
+    // What a Session changed in the folder, from git, re-sent when it changes.
+    changes(
+      root: string,
+      sessionId: string,
+    ): Effect.Effect<
+      Stream.Stream<SessionChanges, WorkspaceError>,
       ProjectNotFound | WorkspaceError
     >;
     // One file, re-sent whenever it changes on disk. Ends if the file is deleted.
@@ -55,17 +69,18 @@ export class Workspace extends Context.Service<
     Workspace,
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const snapshots = yield* Snapshots;
+      const hosted = yield* HostedSessions;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
 
       const project = Effect.fn("Workspace.project")(function* (root: string) {
-        const sessions = yield* sdk("listSessions", () =>
-          listSessions({ includeProgrammatic: false }),
-        ).pipe(
-          Effect.mapError((e) => new WorkspaceError({ message: e.message })),
-        );
-        if (!sessions.some((session) => session.cwd === root))
-          return yield* new ProjectNotFound({ root });
+        const known = yield* hosted
+          .isProject(root)
+          .pipe(
+            Effect.mapError((e) => new WorkspaceError({ message: e.message })),
+          );
+        if (!known) return yield* new ProjectNotFound({ root });
         return yield* fs
           .realPath(root)
           .pipe(Effect.mapError(() => new ProjectNotFound({ root })));
@@ -182,7 +197,50 @@ export class Workspace extends Context.Service<
         );
       });
 
-      return Workspace.of({ files, file });
+      // Against the Session's start snapshot, so a commit, a rollback, or a change made through Bash
+      // all count as the net change they are. Without one, the uncommitted change stands in.
+      const changes = Effect.fn("Workspace.changes")(function* (
+        root: string,
+        sessionId: string,
+      ) {
+        const real = yield* project(root);
+        const repo = yield* snapshots
+          .repo(real)
+          .pipe(Effect.mapError(gitFailed));
+        // Paths from git are relative to the repository; the panel's are relative to the folder.
+        const prefix = path.relative(repo, real);
+        const read = Effect.gen(function* () {
+          const start = yield* snapshots.start(repo, sessionId);
+          const base = Option.isSome(start)
+            ? start.value.tree
+            : yield* snapshots.head(repo);
+          const entries = yield* snapshots.numstat(
+            repo,
+            base,
+            yield* snapshots.tree(repo),
+          );
+          return SessionChanges.make({
+            since: Option.isSome(start) ? "start" : "head",
+            files: entries.flatMap((entry) => {
+              const within = prefix
+                ? path.relative(prefix, entry.path)
+                : entry.path;
+              return within.startsWith("..")
+                ? []
+                : [ChangedFile.make({ ...entry, path: within })];
+            }),
+          });
+        }).pipe(Effect.mapError(gitFailed));
+
+        return Stream.fromEffectSchedule(
+          read,
+          Schedule.spaced("2 seconds"),
+        ).pipe(
+          Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+        );
+      });
+
+      return Workspace.of({ files, file, changes });
     }),
   );
 }

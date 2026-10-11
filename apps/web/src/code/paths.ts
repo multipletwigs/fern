@@ -1,4 +1,4 @@
-import type { TranscriptItem } from "@repo/api";
+import type { SessionChanges, TranscriptItem } from "@repo/api";
 
 // A path relative to the Project's folder, or undefined when it's outside it.
 export const relativeTo = (root: string, path: string) =>
@@ -29,28 +29,48 @@ export interface ChangedFile {
   // Absolute, and inside the Project.
   readonly path: string;
   readonly relative: string;
-  // Lines added and removed across Claude's edits.
+  // The net lines added and removed, from git; both 0 until git answers.
   readonly added: number;
   readonly removed: number;
 }
 
-// Every file inside the Project that Claude changed, in the order it first changed them.
+const touchedFile = (root: string, path: string): ChangedFile => ({
+  path,
+  relative: path.slice(root.length + 1),
+  added: 0,
+  removed: 0,
+});
+
+// Every file inside the Project that the Session changed, with its net line counts from git, in
+// the order Claude first changed them; changes it made some other way, such as through Bash, come
+// after. A Session Fern never ran is compared with the last commit, which can hold other
+// uncommitted work, so only the files its own Edit and Write calls touched are kept.
 export const changedFiles = (
   items: ReadonlyArray<TranscriptItem>,
   root: string,
-) => {
-  const byPath = new Map<string, ChangedFile>();
-  for (const { path, diff } of edits(items, root)) {
-    const seen = byPath.get(path);
-    const added = diff.filter((line) => line.startsWith("+")).length;
-    byPath.set(path, {
-      path,
-      relative: path.slice(root.length + 1),
-      added: (seen?.added ?? 0) + added,
-      removed: (seen?.removed ?? 0) + diff.length - added,
-    });
-  }
-  return [...byPath.values()];
+  changes: SessionChanges | undefined,
+): ReadonlyArray<ChangedFile> => {
+  const touched = [...new Set(edits(items, root).map((edit) => edit.path))];
+  if (changes === undefined)
+    return touched.map((path) => touchedFile(root, path));
+  const counted = new Map(
+    changes.files.map((file) => {
+      const path = `${root}/${file.path}`;
+      return [
+        path,
+        { path, relative: file.path, added: file.added, removed: file.removed },
+      ] as const;
+    }),
+  );
+  const first = touched.map(
+    (path) => counted.get(path) ?? touchedFile(root, path),
+  );
+  if (changes.since === "head") return first;
+  const seen = new Set(touched);
+  return [
+    ...first,
+    ...[...counted.values()].filter((file) => !seen.has(file.path)),
+  ];
 };
 
 export interface ReadFile {
@@ -63,8 +83,9 @@ export interface ReadFile {
 export const readFiles = (
   items: ReadonlyArray<TranscriptItem>,
   root: string,
+  changes: ReadonlyArray<ChangedFile>,
 ) => {
-  const changed = new Set(edits(items, root).map((edit) => edit.path));
+  const changed = new Set(changes.map((file) => file.path));
   const byPath = new Map<string, ReadFile>();
   for (const item of items) {
     if (item._tag !== "ToolCall" || item.path === undefined) continue;

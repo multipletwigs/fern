@@ -1,0 +1,92 @@
+import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-node";
+import { Effect, Layer, String } from "effect";
+import { SqlClient } from "effect/sql";
+
+// Fern's records in one local SQLite file (ADR 0004). Migrations only run up, at startup, in id
+// order; add new ones at the end and never edit one that has shipped.
+const migrations = {
+  "0001_walkthroughs": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE walkthroughs (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        error TEXT,
+        since TEXT NOT NULL,
+        base_tree TEXT NOT NULL,
+        head_commit TEXT NOT NULL,
+        head_tree TEXT NOT NULL,
+        overlapping TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        reviewed_at INTEGER,
+        redirect_sent_at INTEGER,
+        redirect_error TEXT,
+        UNIQUE (session_id, number)
+      )
+    `;
+    yield* sql`
+      CREATE TABLE walkthrough_sections (
+        walkthrough_id TEXT NOT NULL REFERENCES walkthroughs (id),
+        id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        explanation TEXT NOT NULL,
+        dropped TEXT,
+        fixes_walkthrough_id TEXT,
+        fixes_item_id TEXT,
+        verdict TEXT,
+        note TEXT,
+        decided_at INTEGER,
+        PRIMARY KEY (walkthrough_id, id)
+      )
+    `;
+    // A hunk with no section_id once the Walkthrough is written is an Unexplained change, and takes
+    // its own verdict.
+    yield* sql`
+      CREATE TABLE walkthrough_hunks (
+        walkthrough_id TEXT NOT NULL REFERENCES walkthroughs (id),
+        id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        header TEXT NOT NULL,
+        lines TEXT NOT NULL,
+        added INTEGER NOT NULL,
+        removed INTEGER NOT NULL,
+        section_id TEXT,
+        not_from_session INTEGER NOT NULL DEFAULT 0,
+        verdict TEXT,
+        note TEXT,
+        decided_at INTEGER,
+        PRIMARY KEY (walkthrough_id, id)
+      )
+    `;
+  }),
+  // Sessions Fern started, which Claude Code records as headless and its own listing leaves out.
+  "0002_hosted_sessions": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE hosted_sessions (
+        id TEXT PRIMARY KEY,
+        cwd TEXT NOT NULL,
+        started_at INTEGER NOT NULL
+      )
+    `;
+  }),
+};
+
+// The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.
+export const DatabaseLive = (filename: string) =>
+  SqliteMigrator.layer({
+    loader: SqliteMigrator.fromRecord(migrations),
+  }).pipe(
+    Layer.provideMerge(
+      SqliteClient.layer({
+        filename,
+        transformResultNames: String.snakeToCamel,
+        transformQueryNames: String.camelToSnake,
+      }),
+    ),
+  );
