@@ -4,15 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/Api.ts",
-    "./client": "./src/client.ts",
-    "./server": "./src/server.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/platform-node": "4.0.2",
     "effect": "4.0.2"
   },
   "devDependencies": {

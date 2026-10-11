@@ -1,21 +1,32 @@
 "use client";
 
-import { makeClient } from "@repo/api/client";
-import { Effect } from "effect";
-import { useEffect, useState } from "react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { Cause } from "effect";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { ApiClient } from "./ApiClient";
+
+// Server rendering and hydration both see "Loading…"; the request runs in the browser. Without this,
+// the query runs during SSR in Node, where the relative /api URL can't resolve, and hydration fails.
+const greetingAtom = ApiClient.query("greetings", "hello", {
+  query: { name: "Fern" },
+}).pipe(Atom.withServerValueInitial);
 
 export function Greeting() {
-  const [message, setMessage] = useState("Loading…");
+  const result = useAtomValue(greetingAtom);
+  const refresh = useAtomRefresh(greetingAtom);
 
-  useEffect(() => {
-    const program = Effect.gen(function* () {
-      const client = yield* makeClient(window.location.origin);
-      const greeting = yield* client.greetings.hello({ query: { name: "Fern" } });
-      return `${greeting.message} (from ${greeting.runtime})`;
-    }).pipe(Effect.catch((error) => Effect.succeed(`Error: ${String(error)}`)));
+  const text = AsyncResult.match(result, {
+    onInitial: () => "Loading…",
+    onFailure: ({ cause }) => `Error: ${Cause.pretty(cause)}`,
+    onSuccess: ({ value }) => `${value.message} (#${value.count})`,
+  });
 
-    Effect.runPromise(program).then(setMessage);
-  }, []);
-
-  return <p>{message}</p>;
+  return (
+    <div>
+      <p>{text}</p>
+      <button type="button" onClick={refresh}>
+        Greet again
+      </button>
+    </div>
+  );
 }

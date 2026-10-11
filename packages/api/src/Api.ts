@@ -1,17 +1,11 @@
-import { Schema } from "effect";
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+import { HttpApi, OpenApi } from "effect/http-api";
+import { GreetingsApi } from "./Greetings";
+import { SystemApi } from "./System";
 
-export class Greeting extends Schema.Class<Greeting>("Greeting")({
-  message: Schema.String,
-  runtime: Schema.String,
-}) {}
-
-export class GreetingsGroup extends HttpApiGroup.make("greetings").add(
-  HttpApiEndpoint.get("hello", "/hello", {
-    query: { name: Schema.optional(Schema.String) },
-    success: Greeting,
-  }),
-) {}
-
-// Mounted under /api so it lines up with Next's app/api/[[...path]] route.
-export class FernApi extends HttpApi.make("fern").add(GreetingsGroup).prefix("/api") {}
+// Client-safe contract shared by @repo/server and the frontend. Keep server code out of this package.
+// Mounted under /api to line up with Next's app/api/[[...path]] route.
+export class FernApi extends HttpApi.make("fern")
+  .add(GreetingsApi)
+  .add(SystemApi)
+  .prefix("/api")
+  .annotateMerge(OpenApi.annotations({ title: "Fern API" })) {}

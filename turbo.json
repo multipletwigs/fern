@@ -20,6 +20,7 @@
     "package": {
       "dependsOn": ["build"],
       "cache": false
-    }
+    },
+    "test": {}
   }
 }

@@ -2,10 +2,11 @@
   "extends": "@repo/typescript-config/base.json",
   "compilerOptions": {
     "lib": ["es2023"],
-    "outDir": "dist",
-    "rootDir": "src",
     "declaration": false,
-    "declarationMap": false
+    "declarationMap": false,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true
   },
-  "include": ["src"]
+  "include": ["src", "tsdown.config.ts"]
 }

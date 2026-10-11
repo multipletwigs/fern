@@ -1,81 +1,47 @@
-import { app, BrowserWindow, shell, utilityProcess, type UtilityProcess } from "electron";
-import { existsSync } from "node:fs";
-import { createServer } from "node:net";
-import path from "node:path";
+import { NodeRuntime, NodeServices } from "@effect/platform-node";
+import { app } from "electron";
+import { Effect, Layer, Runtime } from "effect";
+import { runMainWindow } from "./MainWindow";
+import { NextServer } from "./NextServer";
 
-const DEV_URL = "http://localhost:3000";
 const isDev = process.argv.includes("--dev");
 
-let nextServer: UtilityProcess | undefined;
+const onAllClosed = () =>
+  process.platform === "darwin" ? undefined : app.quit();
 
-// Packaged: copied into Resources by electron-builder. Unpackaged: the web app's build output.
-const standaloneDir = app.isPackaged
-  ? path.join(process.resourcesPath, "web")
-  : path.join(import.meta.dirname, "../../web/.next/standalone");
-
-const freePort = () =>
-  new Promise<number>((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address() as { port: number };
-      server.close(() => resolve(port));
-    });
+// Resolves when the user quits (Cmd+Q, or the last window closing on Windows/Linux). Quitting is
+// deferred so the program's scope can close first, which tears down windows and the Next server.
+const waitForQuit = Effect.callback<void>((resume) => {
+  const onWillQuit = (event: Electron.Event) => {
+    event.preventDefault();
+    resume(Effect.void);
+  };
+  app.once("will-quit", onWillQuit);
+  app.on("window-all-closed", onAllClosed);
+  return Effect.sync(() => {
+    app.off("will-quit", onWillQuit);
+    app.off("window-all-closed", onAllClosed);
   });
-
-const waitForServer = async (url: string, timeoutMs = 20_000) => {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      await fetch(url);
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 100));
-    }
-  }
-  throw new Error(`Next.js server did not start at ${url}`);
-};
-
-const startNextServer = async () => {
-  const serverPath = path.join(standaloneDir, "apps/web/server.js");
-  if (!existsSync(serverPath)) {
-    throw new Error(`Missing ${serverPath}. Run \`pnpm build\` first.`);
-  }
-  const port = await freePort();
-  nextServer = utilityProcess.fork(serverPath, [], {
-    env: { ...process.env, NODE_ENV: "production", PORT: String(port), HOSTNAME: "127.0.0.1" },
-    stdio: "inherit",
-  });
-  const url = `http://127.0.0.1:${port}`;
-  await waitForServer(url);
-  return url;
-};
-
-const createWindow = async () => {
-  const url = isDev ? DEV_URL : await startNextServer();
-  const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    webPreferences: { contextIsolation: true, sandbox: true },
-  });
-
-  // Keep external links in the user's browser instead of inside the app.
-  win.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (!target.startsWith(url)) void shell.openExternal(target);
-    return { action: "deny" };
-  });
-
-  await win.loadURL(url);
-};
-
-app.whenReady().then(createWindow);
-
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) void createWindow();
 });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+const AppLayer = (isDev ? NextServer.layerDev : NextServer.layer).pipe(
+  Layer.provide(NodeServices.layer),
+);
 
-app.on("before-quit", () => nextServer?.kill());
+const program = Effect.gen(function* () {
+  yield* runMainWindow;
+  yield* waitForQuit;
+}).pipe(
+  Effect.scoped,
+  // oxlint-disable-next-line effecttsgo/strict-effect-provide -- this is the entry point
+  Effect.provide(AppLayer),
+);
+
+// Electron APIs like utilityProcess need the app to be ready before any layer is built.
+NodeRuntime.runMain(
+  Effect.promise(() => app.whenReady()).pipe(Effect.andThen(program)),
+  {
+    teardown: (exit, onExit) =>
+      Runtime.defaultTeardown(exit, (code) => (onExit(code), app.exit(code))),
+  },
+);

@@ -5,18 +5,20 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port 3000",
-    "dev:ready": "wait-on --timeout 60000 http-get://localhost:3000/api/hello",
+    "dev:ready": "wait-on --timeout 60000 http-get://localhost:3000/api/health",
     "build": "next build && node scripts/stage-standalone.mjs",
     "start": "next start",
     "check-types": "next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@effect/atom-react": "4.0.2",
     "@repo/api": "workspace:*",
+    "@repo/server": "workspace:*",
     "@repo/ui": "workspace:*",
-    "next": "16.3.8",
+    "effect": "4.0.2",
+    "next": "16.4.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "effect": "4.0.2"
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",

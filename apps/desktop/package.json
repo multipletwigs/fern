@@ -3,19 +3,23 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "dist/main.js",
+  "main": "dist/main.mjs",
   "scripts": {
-    "dev": "tsc && electron . --dev",
-    "build": "tsc",
+    "dev": "tsdown && electron . --dev",
+    "build": "tsdown",
     "start": "electron .",
     "package": "electron-builder",
     "check-types": "tsc --noEmit"
   },
   "devDependencies": {
+    "@effect/platform-node": "4.0.2",
+    "@repo/api": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "26.4.1",
+    "effect": "4.0.2",
     "electron": "44.7.0",
     "electron-builder": "26.15.3",
+    "tsdown": "0.23.1",
     "typescript": "7.0.2",
     "web": "workspace:*"
   }

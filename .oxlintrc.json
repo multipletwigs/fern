@@ -1,5 +1,5 @@
 {
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "$schema": "./node_modules/@effect/tsgo/oxlint-schema.json",
   "plugins": ["typescript", "react", "nextjs", "import", "unicorn", "oxc"],
   "categories": {
     "correctness": "error",
@@ -17,12 +17,14 @@
       {
         "allow": ["**/*.css"]
       }
-    ]
+    ],
+    "effecttsgo/unstable-api-usage": "off"
   },
   "ignorePatterns": [
     "**/.next/**",
     "**/dist/**",
     "**/release/**",
     "**/next-env.d.ts"
-  ]
+  ],
+  "extends": ["./node_modules/@effect/tsgo/oxlint-presets/recommended.json"]
 }
