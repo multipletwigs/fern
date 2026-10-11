@@ -16,6 +16,7 @@
     "@repo/server": "workspace:*",
     "@repo/ui": "workspace:*",
     "effect": "4.0.2",
+    "geist": "1.7.2",
     "next": "16.4.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"

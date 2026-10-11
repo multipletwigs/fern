@@ -25,7 +25,7 @@ export function Greeting() {
     <div>
       <p>{text}</p>
       <button type="button" onClick={refresh}>
-        Greet again
+        Something
       </button>
     </div>
   );
