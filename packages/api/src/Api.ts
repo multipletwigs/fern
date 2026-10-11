@@ -1,5 +1,6 @@
 import { HttpApi, OpenApi } from "effect/http-api";
 import { GreetingsApi } from "./Greetings";
+import { SessionsApi } from "./Sessions";
 import { SystemApi } from "./System";
 
 // Client-safe contract shared by @repo/server and the frontend. Keep server code out of this package.
@@ -7,5 +8,6 @@ import { SystemApi } from "./System";
 export class FernApi extends HttpApi.make("fern")
   .add(GreetingsApi)
   .add(SystemApi)
+  .add(SessionsApi)
   .prefix("/api")
   .annotateMerge(OpenApi.annotations({ title: "Fern API" })) {}

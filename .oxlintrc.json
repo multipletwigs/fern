@@ -7,7 +7,7 @@
   },
   "settings": {
     "next": {
-      "rootDir": ["apps/web/", "apps/docs/"]
+      "rootDir": ["apps/docs/"]
     }
   },
   "rules": {
@@ -18,7 +18,8 @@
         "allow": ["**/*.css"]
       }
     ],
-    "effecttsgo/unstable-api-usage": "off"
+    "effecttsgo/unstable-api-usage": "off",
+    "no-underscore-dangle": ["warn", { "allow": ["_tag"] }]
   },
   "ignorePatterns": [
     "**/.next/**",

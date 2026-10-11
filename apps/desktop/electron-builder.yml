@@ -5,7 +5,9 @@ directories:
 files:
   - dist/**
   - package.json
-# Copies the Next.js standalone server into Resources/web.
-afterPack: scripts/after-pack.cjs
+# The built web app, served by the main process from Resources/web.
+extraResources:
+  - from: ../web/dist
+    to: web
 mac:
   target: dmg

@@ -4,29 +4,35 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3000",
-    "dev:ready": "wait-on --timeout 60000 http-get://localhost:3000/api/health",
-    "build": "next build && node scripts/stage-standalone.mjs",
-    "start": "next start",
-    "check-types": "next typegen && tsc --noEmit"
+    "dev": "vite",
+    "dev:ready": "wait-on --timeout 60000 http-get://localhost:5173",
+    "build": "vite build",
+    "check-types": "tsc --noEmit"
   },
   "dependencies": {
+    "@base-ui/react": "1.9.0",
     "@effect/atom-react": "4.0.2",
     "@repo/api": "workspace:*",
-    "@repo/server": "workspace:*",
     "@repo/ui": "workspace:*",
+    "@streamdown/code": "2.0.0",
+    "@streamdown/mermaid": "1.0.3",
+    "clsx": "2.1.1",
     "effect": "4.0.2",
-    "geist": "1.7.2",
-    "next": "16.4.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "react-virtuoso": "4.18.16",
+    "streamdown": "2.7.0"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
+    "@tailwindcss/vite": "4.3.3",
     "@types/node": "26.4.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.2",
+    "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
+    "vite": "8.3.4",
     "wait-on": "9.5.1"
   }
 }

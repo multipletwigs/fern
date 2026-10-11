@@ -5,12 +5,18 @@ import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { Greeter } from "../src/Greeter";
 import { HandlersNoDeps } from "../src/http";
+import { Transcripts } from "../src/transcript/Transcripts";
 
 const makeClient = HttpApiTest.groups(FernApi, ["greetings", "system"]);
 
+const Unused = Layer.succeed(Transcripts, {
+  current: Effect.die("unused"),
+  live: () => Effect.die("unused"),
+});
+
 layer(
   Layer.mergeAll(
-    HandlersNoDeps.pipe(Layer.provide(Greeter.layer)),
+    HandlersNoDeps.pipe(Layer.provide([Greeter.layer, Unused])),
     HttpServer.layerServices,
   ),
 )("FernApi", (it) => {

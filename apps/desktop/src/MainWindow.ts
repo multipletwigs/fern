@@ -1,6 +1,6 @@
 import { app, BrowserWindow, shell } from "electron";
 import { Effect, Queue, Stream } from "effect";
-import { NextServer } from "./NextServer";
+import { AppServer } from "./AppServer";
 
 const openWindow = Effect.fn("MainWindow.open")(function* (url: string) {
   const win = yield* Effect.acquireRelease(
@@ -9,6 +9,11 @@ const openWindow = Effect.fn("MainWindow.open")(function* (url: string) {
         new BrowserWindow({
           width: 1200,
           height: 800,
+          // One continuous dark surface: no title bar, traffic lights inset into the canvas, and a
+          // background that matches the app so nothing flashes white while it loads.
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 18, y: 16 },
+          backgroundColor: "#050505",
           webPreferences: { contextIsolation: true, sandbox: true },
         }),
     ),
@@ -40,7 +45,7 @@ const activations = Stream.callback<void>(
 
 // Opens the main window and keeps one available until the surrounding scope closes.
 export const runMainWindow = Effect.gen(function* () {
-  const { url } = yield* NextServer;
+  const { url } = yield* AppServer;
   yield* openWindow(url);
   yield* activations.pipe(
     Stream.filter(() => BrowserWindow.getAllWindows().length === 0),

@@ -1,8 +1,8 @@
-import { NodeRuntime, NodeServices } from "@effect/platform-node";
+import { NodeRuntime } from "@effect/platform-node";
 import { app } from "electron";
-import { Effect, Layer, Runtime } from "effect";
+import { Effect, Runtime } from "effect";
+import { AppServer } from "./AppServer";
 import { runMainWindow } from "./MainWindow";
-import { NextServer } from "./NextServer";
 
 const isDev = process.argv.includes("--dev");
 
@@ -10,7 +10,7 @@ const onAllClosed = () =>
   process.platform === "darwin" ? undefined : app.quit();
 
 // Resolves when the user quits (Cmd+Q, or the last window closing on Windows/Linux). Quitting is
-// deferred so the program's scope can close first, which tears down windows and the Next server.
+// deferred so the program's scope can close first, which tears down windows and the server.
 const waitForQuit = Effect.callback<void>((resume) => {
   const onWillQuit = (event: Electron.Event) => {
     event.preventDefault();
@@ -24,9 +24,7 @@ const waitForQuit = Effect.callback<void>((resume) => {
   });
 });
 
-const AppLayer = (isDev ? NextServer.layerDev : NextServer.layer).pipe(
-  Layer.provide(NodeServices.layer),
-);
+const AppLayer = isDev ? AppServer.layerDev : AppServer.layer;
 
 const program = Effect.gen(function* () {
   yield* runMainWindow;
@@ -37,7 +35,7 @@ const program = Effect.gen(function* () {
   Effect.provide(AppLayer),
 );
 
-// Electron APIs like utilityProcess need the app to be ready before any layer is built.
+// Electron APIs need the app to be ready before any layer is built.
 NodeRuntime.runMain(
   Effect.promise(() => app.whenReady()).pipe(Effect.andThen(program)),
   {

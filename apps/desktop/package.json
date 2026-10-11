@@ -14,6 +14,7 @@
   "devDependencies": {
     "@effect/platform-node": "4.0.2",
     "@repo/api": "workspace:*",
+    "@repo/server": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "26.4.1",
     "effect": "4.0.2",
