@@ -12,15 +12,16 @@ import { flowAtom, skipPhaseAtom } from "./atoms";
 import { PHASE_TITLES } from "./phases";
 
 // Who passes the boundary at the end of a Phase: the developer, with the streak where Autonomy
-// can be earned (and why it was withdrawn, if it was), or Fern.
+// can be earned, or Fern. Once an Escape withdraws Autonomy, the boundary says so with the streak
+// started over, even where Fern approved it.
 const boundaryState = (at: BoundaryAutonomy | undefined): BoundaryState => {
   if (at === undefined) return { kind: "needsYou" };
+  const streak = { count: at.streak, threshold: at.threshold };
+  if (at.withdrawn && !at.granted)
+    return { kind: "withdrawn", reason: at.withdrawn.reason, streak };
   if (at.approvedByFern) return { kind: "approvedByFern" };
   if (at.granted) return { kind: "byFern" };
-  const streak = { count: at.streak, threshold: at.threshold };
-  return at.withdrawn
-    ? { kind: "withdrawn", reason: at.withdrawn.reason, streak }
-    : { kind: "needsYou", streak };
+  return { kind: "needsYou", streak };
 };
 
 // "Spec → Implement" for the boundary at the end of Spec.
