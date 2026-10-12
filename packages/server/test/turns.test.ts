@@ -73,6 +73,7 @@ const KnownSessions = Layer.succeed(
     listed: Effect.succeed([]),
     isProject: () => Effect.succeed(true),
     isHosted: (id) => Effect.sync(() => hostedIds.has(id)),
+    projectOf: () => Effect.succeed("/repo"),
   }),
 );
 // Makes a pretend worktree for each Session started, so starting needs no git.

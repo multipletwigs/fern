@@ -115,6 +115,38 @@ const migrations = {
       )
     `;
   }),
+  // Rounds the agent asks during Grill, and the Decisions settled by answering them. A Round is
+  // open until it's answered or the agent posts another in its place.
+  "0006_rounds": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE rounds (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        questions TEXT NOT NULL,
+        posted_at INTEGER NOT NULL,
+        answered_at INTEGER,
+        superseded_at INTEGER
+      )
+    `;
+    yield* sql`CREATE INDEX rounds_by_session ON rounds (session_id)`;
+    yield* sql`
+      CREATE TABLE decisions (
+        id TEXT PRIMARY KEY,
+        project TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        round_id TEXT NOT NULL REFERENCES rounds (id),
+        question_id TEXT NOT NULL,
+        question TEXT NOT NULL,
+        choice TEXT,
+        free_text TEXT,
+        recommended INTEGER NOT NULL,
+        decided_at INTEGER NOT NULL
+      )
+    `;
+    yield* sql`CREATE INDEX decisions_by_session ON decisions (session_id)`;
+    yield* sql`CREATE INDEX decisions_by_project ON decisions (project)`;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

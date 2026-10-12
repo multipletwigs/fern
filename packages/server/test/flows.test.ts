@@ -306,9 +306,8 @@ layer(server(freshDatabase()), { excludeTestServices: true })("Flows", (it) => {
         const id = yield* startSession("Add a dark mode toggle");
         const turn = yield* turnWhere(id);
 
-        assert.deepStrictEqual(turn.options.allowedTools, [
-          "mcp__fern__phase_done",
-        ]);
+        // Other services' tools (the Round tool) share the one `fern` server.
+        assert.include(turn.options.allowedTools, "mcp__fern__phase_done");
         const append = JSON.stringify(turn.options.systemPrompt);
         assert.match(append, /phase_done/);
         assert.match(append, /Never start the next Phase's skill yourself/);

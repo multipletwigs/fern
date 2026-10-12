@@ -42,10 +42,12 @@ const TestTranscripts = Transcripts.layer.pipe(
       HostedSessions,
       HostedSessions.of({
         record: () => Effect.void,
+        archive: () => Effect.die("unused"),
         worktrees: Effect.succeed([]),
         listed: Effect.succeed([]),
         isProject: () => Effect.succeed(true),
         isHosted: () => Effect.succeed(true),
+        projectOf: () => Effect.die("unused"),
       }),
     ),
   ]),

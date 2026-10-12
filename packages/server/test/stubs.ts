@@ -1,6 +1,7 @@
 import { Effect, Layer, Stream } from "effect";
 import { Commands } from "../src/commands/Commands";
 import { Flows } from "../src/flow/Flows";
+import { Rounds } from "../src/round/Rounds";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { Turns } from "../src/turn/Turns";
 import { Walkthroughs } from "../src/walkthrough/Walkthroughs";
@@ -88,5 +89,14 @@ export const UnusedFlows = Layer.succeed(
     phases: Stream.die("unused"),
     approve: () => Effect.die("unused"),
     decline: () => Effect.die("unused"),
+  }),
+);
+
+export const UnusedRounds = Layer.succeed(
+  Rounds,
+  Rounds.of({
+    post: () => Effect.die("unused"),
+    answer: () => Effect.die("unused"),
+    list: () => Stream.die("unused"),
   }),
 );

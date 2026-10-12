@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { isWorking, type SessionHeader } from "@repo/api";
 import { CacheCountdown } from "@repo/ui/CacheCountdown";
 import { Empty } from "@repo/ui/Empty";
@@ -20,6 +20,9 @@ import {
 import { type Components, Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { SessionChecklist } from "../flow/SessionChecklist";
 import { type PendingPrompt, pendingPromptAtom, transcriptAtom } from "./atoms";
+import { GrillToggle } from "../grill/GrillToggle";
+import { GrillView } from "../grill/GrillView";
+import { useGrillView } from "../grill/useGrillView";
 import { ItemView } from "./ItemView";
 import { type Row, toRows } from "./rows";
 import { SessionComposer } from "./SessionComposer";
@@ -81,6 +84,7 @@ export function Session({
   onPainted?: (id: string) => void;
 }) {
   const result = useAtomValue(transcriptAtom(id));
+  const grill = useGrillView(id);
   const now = useNow();
   const transcript = AsyncResult.isSuccess(result) ? result.value : undefined;
   const header = transcript?.header;
@@ -88,6 +92,7 @@ export function Session({
   const recorded = useMemo(() => (items ? toRows(items) : []), [items]);
   // A message just sent stands at the end until Claude Code records it.
   const pending = useAtomValue(pendingPromptAtom(id));
+  const setPending = useAtomSet(pendingPromptAtom(id));
   const lastTurnId = recorded.findLast(isDeveloperTurn)?.id;
   const endedAt = header?.hostedTurn?.endedAt;
   const waiting =
@@ -308,6 +313,13 @@ export function Session({
     <div className="relative flex h-full flex-col">
       <Glow live={live} />
       <TopBar>
+        {grill.available && (
+          <GrillToggle
+            view={grill.view}
+            waiting={grill.rounds?.open !== undefined}
+            onChange={grill.setView}
+          />
+        )}
         {header?.cacheExpiresAt && (
           <CacheCountdown
             remainingMs={DateTime.toEpochMillis(header.cacheExpiresAt) - now}
@@ -315,25 +327,46 @@ export function Session({
         )}
       </TopBar>
       <SessionChecklist sessionId={id} />
-      {context ? (
-        <Virtuoso
-          ref={list}
-          scrollerRef={(element) => {
-            scroller.current = element instanceof HTMLElement ? element : null;
-          }}
-          className="flex-1"
-          data={rows}
-          context={context}
-          totalListHeightChanged={measure}
-          computeItemKey={(_, row) => row.id}
-          initialTopMostItemIndex={{ index: "LAST", align: "end" }}
-          increaseViewportBy={800}
-          components={listComponents}
-          itemContent={renderItem}
-        />
-      ) : (
-        <Empty text="Opening transcript…" />
-      )}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {context ? (
+          <Virtuoso
+            ref={list}
+            scrollerRef={(element) => {
+              scroller.current =
+                element instanceof HTMLElement ? element : null;
+            }}
+            className="flex-1"
+            data={rows}
+            context={context}
+            totalListHeightChanged={measure}
+            computeItemKey={(_, row) => row.id}
+            initialTopMostItemIndex={{ index: "LAST", align: "end" }}
+            increaseViewportBy={800}
+            components={listComponents}
+            itemContent={renderItem}
+          />
+        ) : (
+          <Empty text="Opening transcript…" />
+        )}
+        {grill.view === "grill" && grill.rounds && (
+          <GrillView
+            rounds={grill.rounds}
+            active={visible}
+            // The answers stand in the transcript, risen to the top, until Claude Code records them.
+            onSending={(text) =>
+              setPending({
+                id: crypto.randomUUID(),
+                sentAt: Date.now(),
+                command: undefined,
+                text,
+                images: [],
+                after: lastTurnId,
+              })
+            }
+            onFailed={() => setPending(undefined)}
+          />
+        )}
+      </div>
       {header && (
         <SessionComposer header={header} now={now} lastTurnId={lastTurnId} />
       )}

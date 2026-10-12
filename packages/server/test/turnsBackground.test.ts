@@ -6,7 +6,7 @@ import { Snapshots } from "../src/snapshot/Snapshots";
 import { FernTools } from "../src/turn/FernTools";
 import { HostedSessions } from "../src/turn/HostedSessions";
 import { Turns } from "../src/turn/Turns";
-import { Worktrees } from "../src/worktree/Worktrees";
+import { UnusedWorktrees } from "./stubs";
 
 // Replays message sequences captured from the real Claude Code CLI (0.3.296, Haiku), trimmed to the
 // fields Turns reads. Each query Turns opens plays the next script; a `wait` step holds the script
@@ -148,23 +148,27 @@ const TestTurns = Turns.layer.pipe(
       HostedSessions,
       HostedSessions.of({
         record: () => Effect.void,
+        archive: () => Effect.die("unused"),
         worktrees: Effect.succeed([]),
         listed: Effect.succeed([]),
         isProject: () => Effect.succeed(true),
         isHosted: () => Effect.succeed(false),
+        projectOf: () => Effect.die("unused"),
       }),
     ),
     Layer.succeed(
       FernTools,
       FernTools.of({
+        register: () => Effect.void,
         options: () =>
-          Effect.succeed({ mcpServers: {}, appendSystemPrompt: "" }),
+          Effect.succeed({
+            mcpServers: {},
+            allowedTools: [],
+            appendSystemPrompt: "",
+          }),
       }),
     ),
-    Layer.succeed(
-      Worktrees,
-      Worktrees.of({ create: () => Effect.die("unused") }),
-    ),
+    UnusedWorktrees,
   ]),
 );
 

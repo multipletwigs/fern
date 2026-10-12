@@ -8,6 +8,7 @@ import {
   SessionChanges,
   WorkspaceError,
 } from "./Projects";
+import { SessionRounds } from "./Rounds";
 import {
   Project,
   SessionNotFound,
@@ -80,6 +81,12 @@ export class LiveRpcs extends RpcGroup.make(
   // Every Hosted Session's current Phase, re-sent whenever one moves on.
   Rpc.make("SessionPhases", {
     success: Schema.Array(SessionPhase),
+    stream: true,
+  }),
+  // A Session's open Round and its Decisions, re-sent whenever either changes.
+  Rpc.make("Rounds", {
+    payload: { session: Schema.NonEmptyString },
+    success: SessionRounds,
     stream: true,
   }),
 ) {}

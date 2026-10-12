@@ -8,6 +8,7 @@ import { Turns } from "../src/turn/Turns";
 import {
   UnusedCommands,
   UnusedFlows,
+  UnusedRounds,
   UnusedTranscripts,
   unusedTurns,
   UnusedWalkthroughs,
@@ -18,6 +19,7 @@ import {
 const makeClient = HttpApiTest.groups(FernApi, ["system"]);
 
 const Unused = Layer.mergeAll(
+  UnusedRounds,
   UnusedTranscripts,
   UnusedFlows,
   Layer.succeed(Turns, unusedTurns),

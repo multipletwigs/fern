@@ -2,6 +2,7 @@ import { Effect, Schedule, Stream } from "effect";
 import { Atom } from "effect/reactivity";
 import { ApiClient } from "../ApiClient";
 import { LiveClient } from "../LiveClient";
+import { resubscribe } from "../resubscribe";
 
 // A Session's Flow, kept current by the server; null for a Session outside the Flow.
 export const flowAtom = Atom.family((sessionId: string) =>
@@ -12,7 +13,7 @@ export const flowAtom = Atom.family((sessionId: string) =>
           const client = yield* LiveClient;
           return client("Flow", { session: sessionId });
         }),
-      ).pipe(Stream.retry(Schedule.spaced("2 seconds"))),
+      ).pipe(resubscribe(Schedule.spaced("2 seconds"))),
     )
     .pipe(Atom.setIdleTTL("1 minute")),
 );
@@ -24,7 +25,7 @@ export const checkpointsAtom = LiveClient.runtime.atom(
       const client = yield* LiveClient;
       return client("Checkpoints", undefined);
     }),
-  ).pipe(Stream.retry(Schedule.spaced("2 seconds"))),
+  ).pipe(resubscribe(Schedule.spaced("2 seconds"))),
 );
 
 // Every Hosted Session's current Phase.
@@ -34,7 +35,7 @@ export const sessionPhasesAtom = LiveClient.runtime.atom(
       const client = yield* LiveClient;
       return client("SessionPhases", undefined);
     }),
-  ).pipe(Stream.retry(Schedule.spaced("2 seconds"))),
+  ).pipe(resubscribe(Schedule.spaced("2 seconds"))),
 );
 
 export const approveCheckpointAtom = ApiClient.mutation("flows", "approve");
