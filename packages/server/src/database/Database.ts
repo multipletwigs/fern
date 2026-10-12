@@ -147,6 +147,36 @@ const migrations = {
     yield* sql`CREATE INDEX decisions_by_session ON decisions (session_id)`;
     yield* sql`CREATE INDEX decisions_by_project ON decisions (project)`;
   }),
+  // Autonomy each Project earns at the end of Spec and of Implement: what happened at each boundary,
+  // in order, from which its streak is counted, and the Milestones that offered Autonomy there.
+  "0007_autonomy": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE autonomy_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        project TEXT NOT NULL,
+        boundary TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        session_id TEXT,
+        reason TEXT,
+        at INTEGER NOT NULL
+      )
+    `;
+    yield* sql`CREATE INDEX autonomy_events_by_boundary ON autonomy_events (project, boundary)`;
+    yield* sql`CREATE INDEX autonomy_events_by_session ON autonomy_events (session_id)`;
+    yield* sql`
+      CREATE TABLE milestones (
+        id TEXT PRIMARY KEY,
+        project TEXT NOT NULL,
+        boundary TEXT NOT NULL,
+        status TEXT NOT NULL,
+        offered_at INTEGER NOT NULL,
+        decided_at INTEGER,
+        withdrawn_reason TEXT
+      )
+    `;
+    yield* sql`CREATE INDEX milestones_by_boundary ON milestones (project, boundary)`;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

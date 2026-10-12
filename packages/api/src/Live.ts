@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
+import { SessionAutonomy } from "./Autonomy";
 import { Checkpoint, Flow, SessionPhase } from "./Flows";
 import {
   FileContent,
@@ -87,6 +88,13 @@ export class LiveRpcs extends RpcGroup.make(
   Rpc.make("Rounds", {
     payload: { session: Schema.NonEmptyString },
     success: SessionRounds,
+    stream: true,
+  }),
+  // A Hosted Session's Project's streaks, Milestone offers and Autonomy at each earnable boundary,
+  // re-sent whenever they change. Null for a Session outside the Flow.
+  Rpc.make("Autonomy", {
+    payload: { session: Schema.NonEmptyString },
+    success: Schema.NullOr(SessionAutonomy),
     stream: true,
   }),
 ) {}

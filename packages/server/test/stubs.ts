@@ -1,4 +1,5 @@
 import { Effect, Layer, Stream } from "effect";
+import { Autonomy } from "../src/autonomy/Autonomy";
 import { Commands } from "../src/commands/Commands";
 import { Flows } from "../src/flow/Flows";
 import { Rounds } from "../src/round/Rounds";
@@ -98,5 +99,19 @@ export const UnusedRounds = Layer.succeed(
     post: () => Effect.die("unused"),
     answer: () => Effect.die("unused"),
     list: () => Stream.die("unused"),
+  }),
+);
+
+export const UnusedAutonomy = Layer.succeed(
+  Autonomy,
+  Autonomy.of({
+    covers: () => Effect.die("unused"),
+    approved: () => Effect.die("unused"),
+    declined: () => Effect.die("unused"),
+    approvedByFern: () => Effect.die("unused"),
+    withdraw: () => Effect.die("unused"),
+    autonomy: () => Stream.die("unused"),
+    accept: () => Effect.die("unused"),
+    decline: () => Effect.die("unused"),
   }),
 );

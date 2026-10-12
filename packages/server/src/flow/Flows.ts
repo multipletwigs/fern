@@ -26,6 +26,7 @@ import {
 } from "effect";
 import { SqlClient, SqlSchema } from "effect/sql";
 import { z } from "zod";
+import { Autonomy } from "../autonomy/Autonomy";
 import { FernTools } from "../turn/FernTools";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
@@ -160,6 +161,7 @@ export class Flows extends Context.Service<
       const hosted = yield* HostedSessions;
       const turns = yield* Turns;
       const tools = yield* FernTools;
+      const autonomy = yield* Autonomy;
       // Bumped after every write, so open streams reload.
       const version = yield* SubscriptionRef.make(0);
       const bump = SubscriptionRef.update(version, (n) => n + 1);
@@ -253,6 +255,35 @@ export class Flows extends Context.Service<
         ON CONFLICT (session_id) DO UPDATE SET
           phases = excluded.phases, updated_at = excluded.updated_at`;
 
+      // Marks the Phase done with the decision `decide` records, makes the next one current and sends
+      // its commands. The first is sent before anything is recorded, so a send that fails leaves the
+      // decision to retry.
+      const moveOn = <E, R>(
+        sessionId: string,
+        phase: Phase,
+        decide: (decidedAt: number) => Effect.Effect<unknown, E, R>,
+        after: Effect.Effect<void>,
+      ) =>
+        Effect.gen(function* () {
+          const phases = yield* phasesOf(sessionId);
+          const next = PHASES[PHASES.indexOf(phase) + 1];
+          const [first, ...rest] =
+            next && next !== "grill" ? COMMANDS[next] : [];
+          if (first) yield* turns.send(sessionId, { text: first });
+          const decidedAt = yield* Clock.currentTimeMillis;
+          yield* sql
+            .withTransaction(
+              Effect.all([
+                savePhases(sessionId, advance(phases, phase), decidedAt),
+                decide(decidedAt),
+              ]),
+            )
+            .pipe(Effect.orDie);
+          yield* after;
+          yield* bump;
+          for (const text of rest) yield* turns.send(sessionId, { text });
+        });
+
       // The agent says its Phase is done: raise a Checkpoint for the developer.
       const phaseDone = (
         sessionId: string,
@@ -279,6 +310,33 @@ export class Flows extends Context.Service<
               isError: false,
             };
           const raisedAt = yield* Clock.currentTimeMillis;
+          // Under Autonomy, Fern approves the end of the Phase itself; if the next command can't be
+          // sent, the developer gets the Checkpoint after all.
+          if (yield* autonomy.covers(sessionId, now)) {
+            const byFern = yield* moveOn(
+              sessionId,
+              now,
+              (decidedAt) =>
+                sql`INSERT INTO checkpoints ${sql.insert({
+                  id: crypto.randomUUID(),
+                  sessionId,
+                  phase: now,
+                  summary: report.summary,
+                  status: "approved",
+                  raisedAt,
+                  decidedAt,
+                })}`,
+              autonomy.approvedByFern(sessionId, now),
+            ).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+            if (byFern)
+              return {
+                text: `Fern approved the end of ${TITLES[now]} on the developer's behalf. End your turn now; the next Phase's command arrives as your next message.`,
+                isError: false,
+              };
+          }
           yield* sql`INSERT INTO checkpoints ${sql.insert({
             id: crypto.randomUUID(),
             sessionId,
@@ -306,28 +364,14 @@ export class Flows extends Context.Service<
 
       const approve = Effect.fn("Flows.approve")(function* (id: string) {
         const checkpoint = yield* open(id);
-        const phases = yield* phasesOf(checkpoint.sessionId);
-        const next = PHASES[PHASES.indexOf(checkpoint.phase) + 1];
-        const [first, ...rest] = next && next !== "grill" ? COMMANDS[next] : [];
-        // Sent before anything is recorded, so a send that fails leaves the Checkpoint to retry.
-        if (first) yield* turns.send(checkpoint.sessionId, { text: first });
-        const decidedAt = yield* Clock.currentTimeMillis;
-        yield* sql
-          .withTransaction(
-            Effect.all([
-              savePhases(
-                checkpoint.sessionId,
-                advance(phases, checkpoint.phase),
-                decidedAt,
-              ),
-              sql`UPDATE checkpoints SET status = 'approved', decided_at = ${decidedAt}
-                  WHERE id = ${id}`,
-            ]),
-          )
-          .pipe(Effect.orDie);
-        yield* bump;
-        for (const text of rest)
-          yield* turns.send(checkpoint.sessionId, { text });
+        yield* moveOn(
+          checkpoint.sessionId,
+          checkpoint.phase,
+          (decidedAt) =>
+            sql`UPDATE checkpoints SET status = 'approved', decided_at = ${decidedAt}
+                WHERE id = ${id}`,
+          autonomy.approved(checkpoint.sessionId, checkpoint.phase),
+        );
       }, deciding.withPermits(1));
 
       const decline = Effect.fn("Flows.decline")(function* (
@@ -343,6 +387,7 @@ export class Flows extends Context.Service<
         yield* sql`UPDATE checkpoints
             SET status = 'declined', note = ${note.trim()}, decided_at = ${decidedAt}
             WHERE id = ${id}`.pipe(Effect.orDie);
+        yield* autonomy.declined(checkpoint.sessionId, checkpoint.phase);
         yield* bump;
       }, deciding.withPermits(1));
 

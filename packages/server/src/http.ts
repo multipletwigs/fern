@@ -2,6 +2,7 @@ import { FernApi, SessionRef } from "@repo/api";
 import { Effect, Layer } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 import { NodeServices } from "@effect/platform-node";
+import { Autonomy } from "./autonomy/Autonomy";
 import { Commands } from "./commands/Commands";
 import { Flows } from "./flow/Flows";
 import { Transcripts } from "./transcript/Transcripts";
@@ -95,6 +96,18 @@ export const RoundsHandlers = HttpApiBuilder.group(
   }),
 );
 
+export const AutonomyHandlers = HttpApiBuilder.group(
+  FernApi,
+  "autonomy",
+  Effect.fn(function* (handlers) {
+    const autonomy = yield* Autonomy;
+    return handlers.handleAll({
+      accept: ({ params }) => autonomy.accept(params.id),
+      decline: ({ params }) => autonomy.decline(params.id),
+    });
+  }),
+);
+
 // Handlers with their services still required, so tests can swap implementations.
 export const HandlersNoDeps = Layer.mergeAll(
   SystemHandlers,
@@ -103,6 +116,7 @@ export const HandlersNoDeps = Layer.mergeAll(
   WalkthroughsHandlers,
   FlowsHandlers,
   RoundsHandlers,
+  AutonomyHandlers,
 );
 
 // FernApi's handlers and the live streams', on one set of the real services, with a Walkthrough
@@ -117,7 +131,12 @@ export const handlersWith = (writer: Layer.Layer<WalkthroughWriter>) =>
       Flows.layer,
       Rounds.layer,
     ]),
-    Layer.provide([Turns.layer, Workspace.layer, Commands.layer]),
+    Layer.provide([
+      Turns.layer,
+      Workspace.layer,
+      Commands.layer,
+      Autonomy.layer,
+    ]),
     Layer.provide([
       Snapshots.layer,
       HostedSessions.layer,
