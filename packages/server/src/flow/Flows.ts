@@ -330,6 +330,11 @@ export class Flows extends Context.Service<
       const deciding = yield* Semaphore.make(1);
       // Held Checkpoints waiting on their Session's Walkthrough, by id.
       const holds = yield* FiberMap.make<string>();
+      // A Session started or archived changes the Flows and the queue too.
+      yield* hosted.changes.pipe(
+        Stream.runForEach(() => bump),
+        Effect.forkScoped,
+      );
 
       const flowRows = SqlSchema.findAll({
         Request: Schema.Void,
@@ -453,12 +458,9 @@ export class Flows extends Context.Service<
           });
         });
 
-      // Reloads after every write, and every few seconds for Sessions started meanwhile.
+      // Reloads after every write, Fern's own and each Session recorded or archived.
       const reloading = <A>(read: Effect.Effect<A>) =>
-        Stream.merge(
-          SubscriptionRef.changes(version),
-          Stream.tick("2 seconds"),
-        ).pipe(
+        SubscriptionRef.changes(version).pipe(
           Stream.mapEffect(() => read),
           Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
         );

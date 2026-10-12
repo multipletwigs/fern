@@ -1,6 +1,6 @@
 import { assert, it as test, layer } from "@effect/vitest";
 import { FernApi, type Flow, LiveRpcs } from "@repo/api";
-import { Effect, Layer, Schedule, Stream } from "effect";
+import { Effect, Fiber, Layer, Schedule, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { RpcTest } from "effect/rpc";
@@ -557,6 +557,60 @@ layer(server(freshDatabase()), { excludeTestServices: true })("Flows", (it) => {
         assert.isUndefined(flow?.checkpoint);
       }),
   );
+  it.effect(
+    "shows a Session started meanwhile in the Phases, and an archived Session's Checkpoint leaving the queue, at once",
+    () =>
+      Effect.gen(function* () {
+        const live = yield* makeLive;
+        // The latest value of a live stream, kept as it changes.
+        const watch = <A, E>(stream: Stream.Stream<A, E>) =>
+          Effect.gen(function* () {
+            let latest: A | undefined;
+            const fiber = yield* stream.pipe(
+              Stream.runForEach((a) => Effect.sync(() => (latest = a))),
+              Effect.forkChild,
+            );
+            yield* Effect.suspend(() => Effect.fromNullishOr(latest)).pipe(
+              Effect.retry({ schedule: Schedule.spaced("5 millis") }),
+            );
+            return { latest: () => latest, fiber };
+          });
+        // Holds within a second, well before any two-second poll.
+        const soon = (holds: () => boolean) =>
+          Effect.suspend(() =>
+            holds() ? Effect.void : Effect.fail("not yet"),
+          ).pipe(
+            Effect.retry({ schedule: Schedule.spaced("10 millis") }),
+            Effect.timeout("1 second"),
+          );
+
+        agent = () => Promise.resolve();
+        const phases = yield* watch(live.SessionPhases());
+        const id = yield* startSession("Show me at once");
+        yield* soon(
+          () => phases.latest()?.some((p) => p.sessionId === id) === true,
+        );
+        yield* Fiber.interrupt(phases.fiber);
+
+        const waiting = yield* atGrillCheckpoint;
+        const queue = yield* watch(live.Checkpoints());
+        yield* soon(
+          () =>
+            queue.latest()?.some((c) => c.sessionId === waiting.id) === true,
+        );
+        const client = yield* makeClient;
+        yield* client.sessions.archive({
+          params: { id: waiting.id },
+          payload: { force: true },
+        });
+        yield* soon(
+          () =>
+            queue.latest()?.some((c) => c.sessionId === waiting.id) === false,
+        );
+        yield* Fiber.interrupt(queue.fiber);
+      }),
+  );
+
   it.effect(
     "refuses to approve, decline or skip at an archived Session",
     () =>

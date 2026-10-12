@@ -1,5 +1,5 @@
 import { assert, layer } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stream } from "effect";
 import { vi } from "vitest";
 import { GitError } from "../src/git/Git";
 import { Snapshots } from "../src/snapshot/Snapshots";
@@ -151,6 +151,7 @@ const TestTurns = Turns.layer.pipe(
         archive: () => Effect.die("unused"),
         worktrees: Effect.succeed([]),
         session: () => Effect.succeed(undefined),
+        changes: Stream.never,
         listed: Effect.succeed([]),
         isProject: () => Effect.succeed(true),
         isHosted: () => Effect.succeed(false),

@@ -3,7 +3,17 @@ import {
   type SDKSessionInfo,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { TranscriptError } from "@repo/api";
-import { Clock, Context, Effect, Layer, Option, Ref, Schema } from "effect";
+import {
+  Clock,
+  Context,
+  Effect,
+  Layer,
+  Option,
+  PubSub,
+  Ref,
+  Schema,
+  Stream,
+} from "effect";
 import { SqlClient, SqlSchema } from "effect/sql";
 import { sdk } from "../agentSdk";
 import type { Worktree } from "../worktree/Worktrees";
@@ -46,6 +56,8 @@ export class HostedSessions extends Context.Service<
     record(id: string, worktree: Worktree): Effect.Effect<void>;
     // Leaves the Session out of every listing from now on.
     archive(id: string): Effect.Effect<void>;
+    // Each time a Session is recorded or archived from now on.
+    readonly changes: Stream.Stream<void>;
     // Every Session Fern started in a worktree, archived or not.
     readonly worktrees: Effect.Effect<ReadonlyArray<HostedWorktree>>;
     // The Session following the Flow with the id, archived or not.
@@ -69,6 +81,7 @@ export class HostedSessions extends Context.Service<
     HostedSessions,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      const changed = yield* PubSub.unbounded<void>();
       const startedIds = SqlSchema.findAll({
         Request: Schema.Void,
         Result: Schema.Struct({ id: Schema.String }),
@@ -133,6 +146,7 @@ export class HostedSessions extends Context.Service<
           baseCommit: base,
           worktree: path,
         })}`;
+        yield* PubSub.publish(changed, undefined);
       }, Effect.orDie);
 
       const archive = Effect.fn("HostedSessions.archive")(function* (
@@ -140,6 +154,7 @@ export class HostedSessions extends Context.Service<
       ) {
         const archivedAt = yield* Clock.currentTimeMillis;
         yield* sql`UPDATE hosted_sessions SET archived_at = ${archivedAt} WHERE id = ${id}`;
+        yield* PubSub.publish(changed, undefined);
       }, Effect.orDie);
 
       const listed = Effect.gen(function* () {
@@ -211,6 +226,7 @@ export class HostedSessions extends Context.Service<
       return HostedSessions.of({
         record,
         archive,
+        changes: Stream.fromPubSub(changed),
         worktrees,
         session,
         listed,
