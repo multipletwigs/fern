@@ -1,6 +1,7 @@
 import { LiveRpcs } from "@repo/api";
 import { Effect, Layer, Stream } from "effect";
 import { RpcSerialization, RpcServer } from "effect/rpc";
+import { Flows } from "./flow/Flows";
 import { Transcripts } from "./transcript/Transcripts";
 import { Walkthroughs } from "./walkthrough/Walkthroughs";
 import { Workspace } from "./workspace/Workspace";
@@ -11,6 +12,7 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
     const transcripts = yield* Transcripts;
     const workspace = yield* Workspace;
     const walkthroughs = yield* Walkthroughs;
+    const flows = yield* Flows;
     return LiveRpcs.of({
       Projects: () => transcripts.projects,
       Transcript: ({ id }) => Stream.unwrap(transcripts.live(id)),
@@ -19,6 +21,9 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
       Changes: ({ root, session }) =>
         Stream.unwrap(workspace.changes(root, session)),
       Walkthroughs: ({ session }) => walkthroughs.list(session),
+      Flow: ({ session }) => flows.flow(session),
+      Checkpoints: () => flows.checkpoints,
+      SessionPhases: () => flows.phases,
     });
   }),
 );

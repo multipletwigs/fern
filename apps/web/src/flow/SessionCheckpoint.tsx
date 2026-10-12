@@ -1,0 +1,49 @@
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { CheckpointCard } from "@repo/ui/CheckpointCard";
+import { Exit } from "effect";
+import { AsyncResult } from "effect/reactivity";
+import { useState } from "react";
+import {
+  approveCheckpointAtom,
+  declineCheckpointAtom,
+  flowAtom,
+} from "./atoms";
+import { CHECKPOINT_QUESTIONS, PHASE_TITLES } from "./phases";
+
+// The Checkpoint the Session is waiting at, if any, above its composer.
+export function SessionCheckpoint({ sessionId }: { sessionId: string }) {
+  const result = useAtomValue(flowAtom(sessionId));
+  const approve = useAtomSet(approveCheckpointAtom, { mode: "promiseExit" });
+  const decline = useAtomSet(declineCheckpointAtom, { mode: "promiseExit" });
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const checkpoint = AsyncResult.isSuccess(result)
+    ? result.value?.checkpoint
+    : undefined;
+  if (!checkpoint) return null;
+
+  const decide = async (run: () => Promise<Exit.Exit<unknown, unknown>>) => {
+    setPending(true);
+    const exit = await run();
+    setPending(false);
+    setFailed(Exit.isFailure(exit));
+  };
+  return (
+    <CheckpointCard
+      key={checkpoint.id}
+      eyebrow={`End of ${PHASE_TITLES[checkpoint.phase]}`}
+      question={CHECKPOINT_QUESTIONS[checkpoint.phase]}
+      summary={checkpoint.summary}
+      pending={pending}
+      failed={failed}
+      onApprove={() =>
+        void decide(() => approve({ params: { id: checkpoint.id } }))
+      }
+      onDecline={(note) =>
+        void decide(() =>
+          decline({ params: { id: checkpoint.id }, payload: { note } }),
+        )
+      }
+    />
+  );
+}

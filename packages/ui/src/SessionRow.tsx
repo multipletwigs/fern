@@ -3,14 +3,17 @@ import type { ReactNode } from "react";
 import { Loader } from "./Loader";
 
 // An Arc-style tab, text only: the active one is lifted off the sidebar, the rest only light up on
-// hover. A live Session shows a loader where the others show time-ago on hover. Pointing at it
-// calls `onPreload`, so the Session can start loading before it's clicked. An `action`, such as
+// hover. A live Session shows a loader where the others show time-ago on hover. A Session in the
+// Flow shows its current Phase, and a dot while it waits at a Checkpoint. Pointing at it calls
+// `onPreload`, so the Session can start loading before it's clicked. An `action`, such as
 // archiving, shows at its end on hover.
 export function SessionRow({
   title,
   active,
   live,
   lastActive,
+  phase,
+  waiting = false,
   onSelect,
   onPreload,
   action,
@@ -20,6 +23,10 @@ export function SessionRow({
   live: boolean;
   // Shown on hover when not live, e.g. "5m".
   lastActive: string;
+  // The current Phase's name, for a Session in the Flow.
+  phase?: string | undefined;
+  // Waiting at a Checkpoint for the developer.
+  waiting?: boolean;
   onSelect: () => void;
   onPreload?: () => void;
   action?: ReactNode;
@@ -42,6 +49,18 @@ export function SessionRow({
         className="flex h-full min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-left"
       >
         <span className="min-w-0 flex-1 truncate">{title}</span>
+        {phase && (
+          <span className="shrink-0 font-mono text-[10px] tracking-wide text-faint uppercase">
+            {phase}
+          </span>
+        )}
+        {waiting && (
+          <span
+            role="status"
+            aria-label="Waiting at a Checkpoint"
+            className="size-1.5 shrink-0 rounded-full bg-amber"
+          />
+        )}
         {live ? (
           <Loader label="Live" className="shrink-0 text-base text-ink" />
         ) : (

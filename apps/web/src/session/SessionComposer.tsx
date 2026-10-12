@@ -14,6 +14,7 @@ import {
 } from "./atoms";
 import { outgoing, useCommands } from "./commands";
 import { SessionTools } from "./SessionTools";
+import { SessionCheckpoint } from "../flow/SessionCheckpoint";
 import { SessionWalkthrough } from "../walkthrough/SessionWalkthrough";
 
 const failureNotice = (tag: string | undefined) => {
@@ -72,6 +73,7 @@ export function SessionComposer({
       tools={<SessionTools header={header} disabled={inUse} />}
       above={
         <>
+          <SessionCheckpoint sessionId={header.id} />
           <SessionWalkthrough sessionId={header.id} />
           <QueuedMessages
             items={queued}

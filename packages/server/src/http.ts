@@ -3,6 +3,7 @@ import { Effect, Layer } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 import { NodeServices } from "@effect/platform-node";
 import { Commands } from "./commands/Commands";
+import { Flows } from "./flow/Flows";
 import { Transcripts } from "./transcript/Transcripts";
 import { Snapshots } from "./snapshot/Snapshots";
 import { LiveHandlersNoDeps } from "./live";
@@ -69,12 +70,25 @@ export const WalkthroughsHandlers = HttpApiBuilder.group(
   }),
 );
 
+export const FlowsHandlers = HttpApiBuilder.group(
+  FernApi,
+  "flows",
+  Effect.fn(function* (handlers) {
+    const flows = yield* Flows;
+    return handlers.handleAll({
+      approve: ({ params }) => flows.approve(params.id),
+      decline: ({ params, payload }) => flows.decline(params.id, payload.note),
+    });
+  }),
+);
+
 // Handlers with their services still required, so tests can swap implementations.
 export const HandlersNoDeps = Layer.mergeAll(
   SystemHandlers,
   SessionsHandlers,
   ProjectsHandlers,
   WalkthroughsHandlers,
+  FlowsHandlers,
 );
 
 // FernApi's handlers and the live streams', on one set of the real services, with a Walkthrough
@@ -86,6 +100,7 @@ export const handlersWith = (writer: Layer.Layer<WalkthroughWriter>) =>
       Transcripts.layer,
       Walkthroughs.layer,
       WorktreeCleanup.layer,
+      Flows.layer,
     ]),
     Layer.provide([Turns.layer, Workspace.layer, Commands.layer]),
     Layer.provide([

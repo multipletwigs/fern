@@ -96,9 +96,11 @@ const FakeWorktrees = Layer.succeed(
 const TestTools = Layer.succeed(
   FernTools,
   FernTools.of({
+    register: () => Effect.void,
     options: (id) =>
       Effect.succeed({
         mcpServers: { fern: { command: `fern-tools-${id}` } },
+        allowedTools: [`mcp__fern__tool_${id}`],
         appendSystemPrompt: `Follow the Flow in ${id}.`,
       }),
   }),
@@ -110,6 +112,7 @@ const TestTurns = Turns.layer.pipe(
 // What a Hosted Session's turns are run with besides the message.
 const hostedOptions = (id: string) => ({
   mcpServers: { fern: { command: `fern-tools-${id}` } },
+  allowedTools: [`mcp__fern__tool_${id}`],
   systemPrompt: {
     type: "preset",
     preset: "claude_code",

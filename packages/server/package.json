@@ -16,7 +16,8 @@
     "@effect/platform-node": "4.0.2",
     "@effect/sql-sqlite-node": "4.0.2",
     "@repo/api": "workspace:*",
-    "effect": "4.0.2"
+    "effect": "4.0.2",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@effect/vitest": "4.0.2",

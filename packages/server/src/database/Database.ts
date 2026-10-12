@@ -91,6 +91,30 @@ const migrations = {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE hosted_sessions ADD COLUMN archived_at INTEGER`;
   }),
+  // Each Hosted Session's Flow: its Phases' statuses, written once the Flow first moves on (a
+  // Session with no row is in the Grill), and the Checkpoints raised at the end of each Phase.
+  "0005_flows": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE flows (
+        session_id TEXT PRIMARY KEY,
+        phases TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `;
+    yield* sql`
+      CREATE TABLE checkpoints (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        status TEXT NOT NULL,
+        note TEXT,
+        raised_at INTEGER NOT NULL,
+        decided_at INTEGER
+      )
+    `;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

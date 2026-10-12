@@ -18,6 +18,7 @@ import {
   useState,
 } from "react";
 import { type Components, Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { SessionChecklist } from "../flow/SessionChecklist";
 import { type PendingPrompt, pendingPromptAtom, transcriptAtom } from "./atoms";
 import { ItemView } from "./ItemView";
 import { type Row, toRows } from "./rows";
@@ -313,6 +314,7 @@ export function Session({
           />
         )}
       </TopBar>
+      <SessionChecklist sessionId={id} />
       {context ? (
         <Virtuoso
           ref={list}

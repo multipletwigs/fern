@@ -1,5 +1,6 @@
 import { Effect, Layer, Stream } from "effect";
 import { Commands } from "../src/commands/Commands";
+import { Flows } from "../src/flow/Flows";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { Turns } from "../src/turn/Turns";
 import { Walkthroughs } from "../src/walkthrough/Walkthroughs";
@@ -77,4 +78,15 @@ export const UnusedWorktrees = Layer.succeed(
 export const UnusedWorktreeCleanup = Layer.succeed(
   WorktreeCleanup,
   WorktreeCleanup.of({ archive: () => Effect.die("unused") }),
+);
+
+export const UnusedFlows = Layer.succeed(
+  Flows,
+  Flows.of({
+    flow: () => Stream.die("unused"),
+    checkpoints: Stream.die("unused"),
+    phases: Stream.die("unused"),
+    approve: () => Effect.die("unused"),
+    decline: () => Effect.die("unused"),
+  }),
 );
