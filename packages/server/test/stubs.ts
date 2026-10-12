@@ -5,6 +5,7 @@ import { Turns } from "../src/turn/Turns";
 import { Walkthroughs } from "../src/walkthrough/Walkthroughs";
 import { WalkthroughWriter } from "../src/walkthrough/WalkthroughWriter";
 import { Workspace } from "../src/workspace/Workspace";
+import { Worktrees, WorktreesDir } from "../src/worktree/Worktrees";
 
 // Services a test doesn't exercise; using one fails the test.
 
@@ -55,4 +56,14 @@ export const UnusedWalkthroughs = Layer.succeed(
     verdict: () => Effect.die("unused"),
     redirect: () => Effect.die("unused"),
   }),
+);
+
+// Somewhere no worktree can be made.
+export const NoWorktreesDir = Layer.succeed(WorktreesDir, {
+  dir: "/nonexistent/fern-worktrees",
+});
+
+export const UnusedWorktrees = Layer.succeed(
+  Worktrees,
+  Worktrees.of({ create: () => Effect.die("unused") }),
 );

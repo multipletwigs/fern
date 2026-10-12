@@ -91,6 +91,15 @@ export const activeProjectAtom = Atom.make((get) => {
   );
 });
 
+// The folder the code on screen is read from: the worktree Fern made for the Session, else its
+// Project's folder.
+export const activeCodeRootAtom = Atom.make((get) => {
+  const id = get(activeSessionIdAtom);
+  const project = get(activeProjectAtom);
+  const session = project?.sessions.find((s) => s.id === id);
+  return session?.worktree ?? project?.path;
+});
+
 export interface Transcript {
   readonly header: SessionHeader | undefined;
   readonly items: ReadonlyArray<TranscriptItem>;

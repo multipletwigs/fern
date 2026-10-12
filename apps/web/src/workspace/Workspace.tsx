@@ -3,7 +3,7 @@ import { Empty } from "@repo/ui/Empty";
 import { Workbench } from "@repo/ui/Workbench";
 import { AsyncResult } from "effect/reactivity";
 import {
-  activeProjectAtom,
+  activeCodeRootAtom,
   activeSessionIdAtom,
   currentSessionAtom,
   newSessionAtom,
@@ -15,7 +15,7 @@ import { SessionWorkbench } from "./SessionWorkbench";
 // isn't one.
 export function Workspace() {
   const sessionId = useAtomValue(activeSessionIdAtom);
-  const project = useAtomValue(activeProjectAtom);
+  const root = useAtomValue(activeCodeRootAtom);
   const current = useAtomValue(currentSessionAtom);
   const newRoot = useAtomValue(newSessionAtom);
   if (newRoot !== undefined)
@@ -26,7 +26,7 @@ export function Workspace() {
       />
     );
   if (sessionId !== undefined)
-    return <SessionWorkbench sessionId={sessionId} root={project?.path} />;
+    return <SessionWorkbench sessionId={sessionId} root={root} />;
   return (
     <Workbench
       chat={

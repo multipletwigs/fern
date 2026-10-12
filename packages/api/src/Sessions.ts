@@ -113,11 +113,15 @@ export class SessionSummary extends Schema.Class<SessionSummary>(
   id: Schema.String,
   title: Schema.String,
   gitBranch: Schema.optional(Schema.String),
+  // The Project's folder in the git worktree Fern made for the Session, where it runs. Its code and
+  // changes are read from there.
+  worktree: Schema.optional(Schema.String),
   lastActivityAt: Schema.DateTimeUtcFromMillis,
   hostedTurn: Schema.optional(HostedTurn),
 }) {}
 
-// The Sessions that ran in one working directory, newest first.
+// The Sessions that ran in one repository, newest first: in its folder, or in a worktree Fern made
+// for them.
 export class Project extends Schema.Class<Project>("Project")({
   path: Schema.String,
   sessions: Schema.Array(SessionSummary),
@@ -217,6 +221,14 @@ export class SessionInUse extends Schema.TaggedError<SessionInUse>()(
   { httpApiStatus: 409 },
 ) {}
 
+// Fern couldn't make a branch and worktree for a new Session, e.g. because the folder isn't a git
+// repository with a commit to start from.
+export class WorktreeError extends Schema.TaggedError<WorktreeError>()(
+  "WorktreeError",
+  { message: Schema.String },
+  { httpApiStatus: 422 },
+) {}
+
 export class TranscriptError extends Schema.TaggedError<TranscriptError>()(
   "TranscriptError",
   { message: Schema.String },
@@ -247,14 +259,18 @@ export class SessionsApi extends HttpApiGroup.make("sessions")
     }),
   )
   .add(
-    // Starts a new Session in a Project's folder with this message, as /clear does in Claude Code.
+    // Starts a Hosted Session on a piece of work in a Project (ADR 0005): a branch from the tip of
+    // `main`, named after the opening prompt, checked out in its own worktree, where the Session
+    // runs. Its first message takes the opening prompt into the Grill: `/grill-with-docs <text>`.
     HttpApiEndpoint.post("start", "/", {
       payload: Schema.Struct({
-        cwd: Schema.NonEmptyString,
+        // The Project's folder, in the repository the branch is made in.
+        root: Schema.NonEmptyString,
+        // The opening prompt.
         message: OutgoingMessage,
       }),
       success: SessionRef,
-      error: [ProjectNotFound, TranscriptError],
+      error: [ProjectNotFound, WorktreeError, TranscriptError],
     }),
   )
   .add(

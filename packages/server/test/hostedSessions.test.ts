@@ -68,11 +68,17 @@ layer(HostedSessions.layer.pipe(Layer.provide(DatabaseLive(":memory:"))))(
     );
 
     it.effect(
-      "lists a Session Fern started, newest first, and its folder as a Project",
+      "lists a Session Fern started, newest first, and its worktree as part of a Project",
       () =>
         Effect.gen(function* () {
           const sessions = yield* HostedSessions;
-          yield* sessions.record(FERN, "/work/new");
+          yield* sessions.record(FERN, {
+            projectRoot: "/work/app",
+            branch: "new-thing-a1b2c3",
+            base: "0000000000000000000000000000000000000000",
+            path: "/work/new",
+            cwd: "/work/new",
+          });
           const ids = (yield* sessions.listed).map((info) => info.sessionId);
           assert.deepStrictEqual(ids, [MOVED, FERN, TERMINAL]);
           assert.isTrue(yield* sessions.isProject("/work/new"));

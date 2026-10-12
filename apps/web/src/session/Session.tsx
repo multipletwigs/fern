@@ -339,10 +339,15 @@ export function Session({
   );
 }
 
+// A worktree Fern made is named after its branch, so the two are shown once.
 const titleMeta = (header: SessionHeader) =>
-  [header.cwd?.split("/").at(-1), header.gitBranch, header.model]
-    .filter(Boolean)
-    .join("  ·  ");
+  [
+    ...new Set(
+      [header.cwd?.split("/").at(-1), header.gitBranch, header.model].filter(
+        Boolean,
+      ),
+    ),
+  ].join("  ·  ");
 
 const listComponents: Components<Row, ListContext> = {
   Header: ({ context }) => (

@@ -14,6 +14,7 @@ import {
   SessionInUse,
   SessionNotFound,
   TranscriptError,
+  type WorktreeError,
 } from "@repo/api";
 import {
   Cause,
@@ -33,6 +34,7 @@ import {
 } from "effect";
 import { sdk } from "../agentSdk";
 import { Snapshots } from "../snapshot/Snapshots";
+import { Worktrees } from "../worktree/Worktrees";
 import { HostedSessions } from "./HostedSessions";
 
 type TurnMap = Map<string, HostedTurn>;
@@ -160,11 +162,13 @@ export class Turns extends Context.Service<
     ): Effect.Effect<void, SessionNotFound | SessionInUse | TranscriptError>;
     // Takes a message out of the Session's queue, if it's still there.
     unqueue(id: string, item: string): Effect.Effect<void>;
-    // Starts a new Session in a Project's folder with this message, and returns its id.
+    // Starts a Hosted Session on a piece of work in a Project, and returns its id. It runs on a
+    // branch of its own from `main`, in its own worktree, and its opening prompt goes into the
+    // Grill.
     start(
-      cwd: string,
-      message: OutgoingMessage,
-    ): Effect.Effect<string, ProjectNotFound | TranscriptError>;
+      root: string,
+      openingPrompt: OutgoingMessage,
+    ): Effect.Effect<string, ProjectNotFound | WorktreeError | TranscriptError>;
     // Stops the running turn the way Esc does in Claude Code, or forcibly if it doesn't stop, and
     // empties the Session's queue.
     interrupt(id: string): Effect.Effect<void>;
@@ -187,6 +191,7 @@ export class Turns extends Context.Service<
     Effect.gen(function* () {
       const snapshots = yield* Snapshots;
       const hosted = yield* HostedSessions;
+      const worktrees = yield* Worktrees;
       const fibers = yield* FiberMap.make<string, void, TranscriptError>();
       const turns = yield* Ref.make<TurnMap>(new Map());
       const windows: Array<TurnWindow> = [];
@@ -384,19 +389,29 @@ export class Turns extends Context.Service<
       });
 
       const start = Effect.fn("Turns.start")(function* (
-        cwd: string,
-        message: OutgoingMessage,
+        root: string,
+        openingPrompt: OutgoingMessage,
       ) {
-        if (!(yield* hosted.isProject(cwd)))
-          return yield* new ProjectNotFound({ root: cwd });
+        if (!(yield* hosted.isProject(root)))
+          return yield* new ProjectNotFound({ root });
+        // From a Session's worktree, as /clear there does, the work is still the Project's.
+        const project =
+          (yield* hosted.worktrees).find((w) => w.cwd === root)?.projectRoot ??
+          root;
+        const worktree = yield* worktrees.create(project, openingPrompt.text);
         const id = crypto.randomUUID();
-        yield* hosted.record(id, cwd);
+        yield* hosted.record(id, worktree);
         yield* setTurn(id, { running: true });
-        yield* markStart(cwd, id);
+        yield* markStart(worktree.cwd, id);
+        // Only the developer can start a skill, so Fern sends the Grill's for them.
+        const message = {
+          ...openingPrompt,
+          text: `/grill-with-docs ${openingPrompt.text.trim()}`.trim(),
+        };
         yield* FiberMap.run(
           fibers,
           id,
-          serve(id, message, { sessionId: id, cwd }),
+          serve(id, message, { sessionId: id, cwd: worktree.cwd }),
         );
         return id;
       });

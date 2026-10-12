@@ -5,6 +5,7 @@ import { GitError } from "../src/git/Git";
 import { Snapshots } from "../src/snapshot/Snapshots";
 import { HostedSessions } from "../src/turn/HostedSessions";
 import { Turns } from "../src/turn/Turns";
+import { UnusedWorktrees } from "./stubs";
 
 const SESSION = "6f0c4a52-7d2e-4f0e-9a36-1f8b2c9d4e11";
 
@@ -60,11 +61,14 @@ const KnownSessions = Layer.succeed(
   HostedSessions,
   HostedSessions.of({
     record: () => Effect.void,
+    worktrees: Effect.succeed([]),
     listed: Effect.succeed([]),
     isProject: () => Effect.succeed(true),
   }),
 );
-const TestTurns = Turns.layer.pipe(Layer.provide([NoSnapshots, KnownSessions]));
+const TestTurns = Turns.layer.pipe(
+  Layer.provide([NoSnapshots, KnownSessions, UnusedWorktrees]),
+);
 
 const tick = Effect.promise(
   () => new Promise((resolve) => setTimeout(resolve, 5)),
