@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { SessionInUse, SessionNotFound, TranscriptError } from "./Sessions";
+import { CheckpointStatus, FindingVerdictKind, PhaseStatus } from "./States";
 
 // Every Hosted Session follows the Flow: Grill, Spec, Implement, then Retro. The agent reports its
 // Phase done through a tool Fern gives it; Fern then raises a Checkpoint for the developer, and
@@ -17,14 +18,6 @@ export const PHASES: ReadonlyArray<Phase> = [
   "retro",
 ];
 
-export const PhaseStatus = Schema.Literals([
-  "notStarted",
-  "current",
-  "done",
-  "skipped",
-]);
-export type PhaseStatus = typeof PhaseStatus.Type;
-
 export const FlowPhase = Schema.Struct({
   phase: Phase,
   status: PhaseStatus,
@@ -32,13 +25,6 @@ export const FlowPhase = Schema.Struct({
   reason: Schema.optional(Schema.String),
 });
 export type FlowPhase = typeof FlowPhase.Type;
-
-export const CheckpointStatus = Schema.Literals([
-  "pending",
-  "approved",
-  "declined",
-]);
-export type CheckpointStatus = typeof CheckpointStatus.Type;
 
 // An issue on the Project's issue tracker.
 export const Issue = Schema.Struct({
@@ -64,7 +50,7 @@ export const CheckpointWalkthrough = Schema.Struct({
 export type CheckpointWalkthrough = typeof CheckpointWalkthrough.Type;
 // The developer's call on a Finding. Declining may carry a note.
 export const FindingVerdict = Schema.Struct({
-  kind: Schema.Literals(["accepted", "declined"]),
+  kind: FindingVerdictKind,
   note: Schema.optional(Schema.String),
 });
 export type FindingVerdict = typeof FindingVerdict.Type;

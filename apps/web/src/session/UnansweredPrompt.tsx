@@ -1,5 +1,9 @@
 import { useAtomSet } from "@effect/atom-react";
-import { type ImageAttachment, ImageMediaType } from "@repo/api";
+import {
+  type ImageAttachment,
+  ImageMediaType,
+  type ResendState,
+} from "@repo/api";
 import { MessageCard } from "@repo/ui/MessageCard";
 import { UnansweredNotice } from "@repo/ui/UnansweredNotice";
 import { Exit, Option, Schema } from "effect";
@@ -29,9 +33,7 @@ export function UnansweredPrompt({
   images: ReadonlyArray<string> | undefined;
 }) {
   const send = useAtomSet(sendMessageAtom, { mode: "promiseExit" });
-  const [state, setState] = useState<"idle" | "sending" | "sent" | "failed">(
-    "idle",
-  );
+  const [state, setState] = useState<ResendState>("idle");
 
   const resend = async () => {
     setState("sending");

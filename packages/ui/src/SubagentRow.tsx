@@ -1,4 +1,5 @@
 import { RobotIcon } from "@phosphor-icons/react";
+import type { SubagentStatus } from "@repo/api";
 import { clsx } from "clsx";
 import { Loader } from "./Loader";
 
@@ -13,7 +14,7 @@ export function SubagentRow({
 }: {
   agentType: string;
   description: string;
-  status: "running" | "done" | "failed" | "stopped";
+  status: SubagentStatus;
   onOpen?: () => void;
 }) {
   const content = (

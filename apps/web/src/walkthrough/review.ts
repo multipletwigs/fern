@@ -1,4 +1,5 @@
 import type { Hunk, Walkthrough, WalkthroughSince } from "@repo/api";
+import type { WalkthroughTone } from "@repo/ui/WalkthroughRow";
 
 // Items in a Walkthrough still waiting on a verdict.
 export const openItems = (walkthrough: Walkthrough) =>
@@ -8,7 +9,7 @@ export const openItems = (walkthrough: Walkthrough) =>
 // Where a Walkthrough's review stands, as its row in a list shows it.
 export const rowStatus = (
   walkthrough: Walkthrough,
-): { status: string; tone: "amber" | "writing" | "danger" | "muted" } => {
+): { status: string; tone: WalkthroughTone } => {
   if (walkthrough.status === "writing")
     return { status: "Writing", tone: "writing" };
   if (walkthrough.status === "failed")

@@ -1,4 +1,5 @@
 import { ArrowSquareOutIcon } from "@phosphor-icons/react";
+import type { ToolCallStatus } from "@repo/api";
 import { clsx } from "clsx";
 import type { ReactNode } from "react";
 import { Expandable } from "./Expandable";
@@ -15,7 +16,7 @@ export function ToolCallRow({
 }: {
   name: string;
   summary: string;
-  status: "running" | "failed" | "done";
+  status: ToolCallStatus;
   // Opens the file the call touched, e.g. in the code panel.
   onOpen?: () => void;
   children: ReactNode;

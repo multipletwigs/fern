@@ -1,6 +1,7 @@
 import { DateTime, Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { ProjectNotFound } from "./Projects";
+import { SubagentStatus } from "./States";
 
 // The renderable shape of a Claude Code Session. Long tool output is truncated server-side so a
 // live update stays small. Times travel as epoch millis because SSE data is plain JSON.
@@ -187,16 +188,6 @@ export const ToolCall = Schema.TaggedStruct("ToolCall", {
   diff: Schema.optional(Schema.Array(Schema.String)),
   questions: Schema.optional(Schema.Array(Question)),
 });
-
-// Where a Subagent stands: still working, handed back, ended in an error, or ended without a
-// Hand-back, such as when it was cut off.
-export const SubagentStatus = Schema.Literals([
-  "running",
-  "done",
-  "failed",
-  "stopped",
-]);
-export type SubagentStatus = typeof SubagentStatus.Type;
 
 // An Agent call: the Subagent it started, in place of a ToolCall. Its type and description come
 // from the metadata Claude Code keeps beside the Subagent's transcript, else from the call's input.

@@ -1,3 +1,4 @@
+import type { SubagentStatus } from "@repo/api";
 import { clsx } from "clsx";
 import { Loader } from "./Loader";
 
@@ -28,7 +29,7 @@ export function SubagentHeading({
 }: {
   agentType: string;
   description: string;
-  status: "running" | "done" | "failed" | "stopped";
+  status: SubagentStatus;
   durationMs: number;
   toolCalls: number;
   tokens: number;

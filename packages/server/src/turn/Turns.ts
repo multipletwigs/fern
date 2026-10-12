@@ -15,6 +15,7 @@ import {
   SessionInUse,
   SessionNotFound,
   TranscriptError,
+  type TurnOutcome,
   type WorktreeError,
 } from "@repo/api";
 import {
@@ -383,7 +384,7 @@ export class Turns extends Context.Service<
           const endedAt = yield* DateTime.now;
           // A context window reported afresh, kept from the result that reports it on.
           let reported: number | undefined;
-          const outcome = yield* Effect.sync(() => {
+          const outcome = yield* Effect.sync((): TurnOutcome => {
             const taken = takenIn(message);
             if (taken.length > 0) {
               process.sent = process.sent.filter((s) => !taken.includes(s.id));
@@ -394,12 +395,12 @@ export class Turns extends Context.Service<
               const starts =
                 message.type === "assistant" ||
                 (message.type === "system" && message.subtype === "init");
-              if (!starts) return "idle" as const;
+              if (!starts) return "idle";
               begin(process);
             }
             process.progress = progress(process.progress, message);
             process.report = report(process.report, message);
-            if (message.type !== "result") return "running" as const;
+            if (message.type !== "result") return "running";
             const turn = turns.get(process.id);
             const window = process.report.contextWindow;
             if (turn && window !== undefined && window !== turn.contextWindow) {
@@ -408,7 +409,7 @@ export class Turns extends Context.Service<
               reported = window;
             }
             const stopped = process.stopping !== undefined;
-            if (!stopped && !process.progress.over) return "running" as const;
+            if (!stopped && !process.progress.over) return "running";
             // Claude Code still has messages to take in, as turns of their own.
             if (process.sent.length > 0) {
               // What the developer stopped is over; what follows starts afresh.
@@ -418,11 +419,9 @@ export class Turns extends Context.Service<
                 process.progress = startProgress();
                 process.report = { ...process.report, error: undefined };
               }
-              return "running" as const;
+              return "running";
             }
-            return end(process, endedAt)
-              ? ("finished" as const)
-              : ("ended" as const);
+            return end(process, endedAt) ? "finished" : "ended";
           });
           if (reported !== undefined)
             yield* saveContextWindow(process.id, reported);

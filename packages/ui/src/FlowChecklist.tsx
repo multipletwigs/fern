@@ -1,4 +1,5 @@
 import { Tooltip } from "@base-ui/react/tooltip";
+import type { PhaseStatus } from "@repo/api";
 import {
   CheckCircleIcon,
   CircleDashedIcon,
@@ -9,8 +10,6 @@ import { clsx } from "clsx";
 import { Fragment, type ReactNode } from "react";
 import { type BoundaryState, FlowBoundary } from "./FlowBoundary";
 import { TooltipPanel } from "./TooltipPanel";
-
-export type ChecklistStatus = "notStarted" | "current" | "done" | "skipped";
 
 const ICONS = {
   notStarted: CircleDashedIcon,
@@ -38,7 +37,7 @@ export function FlowChecklist({
 }: {
   steps: ReadonlyArray<{
     title: string;
-    status: ChecklistStatus;
+    status: PhaseStatus;
     reason?: string | undefined;
   }>;
   boundaries?: ReadonlyArray<BoundaryState>;

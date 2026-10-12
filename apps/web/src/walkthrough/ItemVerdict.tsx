@@ -1,5 +1,5 @@
 import { useAtomSet } from "@effect/atom-react";
-import type { Verdict } from "@repo/api";
+import type { Verdict, VerdictKind } from "@repo/api";
 import { VerdictControls } from "@repo/ui/VerdictControls";
 import { Exit } from "effect";
 import { useState } from "react";
@@ -20,7 +20,7 @@ export function ItemVerdict({
   const send = useAtomSet(verdictAtom, { mode: "promiseExit" });
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
-  const decide = async (kind: "approved" | "rejected", note?: string) => {
+  const decide = async (kind: VerdictKind, note?: string) => {
     setPending(true);
     const exit = await send({
       params: { id: walkthroughId, item },

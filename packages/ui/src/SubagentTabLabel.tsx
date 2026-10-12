@@ -1,4 +1,5 @@
 import { CheckIcon, StopIcon, XIcon } from "@phosphor-icons/react";
+import type { SubagentStatus } from "@repo/api";
 import { clsx } from "clsx";
 
 // A Subagent's tab: what it was asked to do, trailing a quiet dot while it runs, then a small mark
@@ -8,7 +9,7 @@ export function SubagentTabLabel({
   status,
 }: {
   description: string;
-  status: "running" | "done" | "failed" | "stopped";
+  status: SubagentStatus;
 }) {
   return (
     <>

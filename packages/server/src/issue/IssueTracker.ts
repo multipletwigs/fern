@@ -1,3 +1,4 @@
+import { GhIssueState, IssueState } from "@repo/api";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -6,7 +7,7 @@ export const TrackedIssue = Schema.Struct({
   number: Schema.Int,
   title: Schema.String,
   url: Schema.String,
-  state: Schema.Literals(["open", "closed"]),
+  state: IssueState,
 });
 export type TrackedIssue = typeof TrackedIssue.Type;
 
@@ -21,7 +22,7 @@ const GhIssue = Schema.fromJsonString(
     number: Schema.Int,
     title: Schema.String,
     url: Schema.String,
-    state: Schema.Literals(["OPEN", "CLOSED"]),
+    state: GhIssueState,
   }),
 );
 const decodeGhIssue = Schema.decodeUnknownEffect(GhIssue);

@@ -1,6 +1,10 @@
 import { ListChecksIcon } from "@phosphor-icons/react";
 import { clsx } from "clsx";
 
+// How a Walkthrough's review status is tinted: amber when it waits on the developer, shimmering
+// while Claude writes it.
+export type WalkthroughTone = "amber" | "writing" | "danger" | "muted";
+
 // A Walkthrough in the code panel's list: its number and where its review stands. Lifted like a
 // sidebar tab while it's on screen.
 export function WalkthroughRow({
@@ -12,8 +16,7 @@ export function WalkthroughRow({
 }: {
   number: number;
   status: string;
-  // Amber when it waits on the developer; shimmering while Claude writes it.
-  tone: "amber" | "writing" | "danger" | "muted";
+  tone: WalkthroughTone;
   active: boolean;
   onSelect: () => void;
 }) {

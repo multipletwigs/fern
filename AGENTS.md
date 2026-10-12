@@ -14,6 +14,7 @@ This block is written and re-added by `turbo` before repository-scoped commands 
 Application logic is written with [Effect v4](https://effect.website/docs/v4/getting-started). Before writing Effect code, read `../effect/LLMS.md` and the matching example under `../effect/ai-docs/src/` (a local clone of Effect-TS/effect, if present); prefer it over web docs. Installed versions win if they differ from that checkout.
 
 - `packages/api`: client-safe `HttpApi` contract (schemas, endpoints). No server code.
+- States live in `packages/api/src/States.ts`, one `Schema.Literals` per state; import them instead of writing a string-literal union. `pnpm lint` flags a new one elsewhere.
 - `packages/server`: services (`Context.Service` + `Layer`) and handlers. Test with `@effect/vitest` and `HttpApiTest`.
 - `apps/desktop/src`: the Electron main process is an Effect program (`NodeRuntime.runMain`); resources use `Effect.acquireRelease`.
 - `apps/web`: talks to the API through `ApiClient` (`AtomHttpApi`) and `@effect/atom-react`.

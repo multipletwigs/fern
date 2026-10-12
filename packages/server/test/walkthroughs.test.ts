@@ -1,6 +1,12 @@
 import { NodeServices } from "@effect/platform-node";
 import { assert, layer } from "@effect/vitest";
-import { FernApi, LiveRpcs, SessionInUse, type Walkthrough } from "@repo/api";
+import {
+  FernApi,
+  LiveRpcs,
+  SessionInUse,
+  type VerdictKind,
+  type Walkthrough,
+} from "@repo/api";
 import { Effect, Layer, PubSub, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
@@ -275,11 +281,7 @@ layer(
         const client = yield* makeClient;
         const { id, unexplained } = latest(yield* written(1));
         const other = unexplained[0]?.hunk.id ?? "";
-        const verdict = (
-          item: string,
-          kind: "approved" | "rejected",
-          note?: string,
-        ) =>
+        const verdict = (item: string, kind: VerdictKind, note?: string) =>
           client.walkthroughs.verdict({
             params: { id, item },
             payload: { kind, note },

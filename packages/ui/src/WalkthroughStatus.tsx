@@ -1,3 +1,4 @@
+import type { WalkthroughStatus as Status } from "@repo/api";
 import { clsx } from "clsx";
 import { Loader } from "./Loader";
 
@@ -10,7 +11,7 @@ export function WalkthroughStatus({
   onOpen,
 }: {
   number: number;
-  status: "writing" | "ready" | "failed";
+  status: Status;
   // Items still waiting on a verdict.
   open: number;
   onOpen: () => void;

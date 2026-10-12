@@ -1,11 +1,7 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
-import {
-  SessionNotFound,
-  SubagentStatus,
-  TranscriptError,
-  TranscriptItem,
-} from "./Sessions";
+import { SessionNotFound, TranscriptError, TranscriptItem } from "./Sessions";
+import { SubagentStatus } from "./States";
 
 // A Session's Subagents, each shown in its own tab on the Session's chat column.
 

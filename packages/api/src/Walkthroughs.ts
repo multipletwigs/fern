@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { SessionBusy, SessionInUse, SessionNotFound } from "./Sessions";
+import { VerdictKind, WalkthroughStatus } from "./States";
 
 // A Walkthrough explains what a Session changed since its previous Walkthrough, or since it
 // started, in Sections the developer approves or rejects one by one. Fern takes the change from
@@ -9,7 +10,7 @@ import { SessionBusy, SessionInUse, SessionNotFound } from "./Sessions";
 
 // The developer's call on a Section or an Unexplained change. A Rejection always carries a note.
 export const Verdict = Schema.Struct({
-  kind: Schema.Literals(["approved", "rejected"]),
+  kind: VerdictKind,
   note: Schema.optional(Schema.String),
   at: Schema.DateTimeUtcFromMillis,
 });
@@ -53,13 +54,6 @@ export class UnexplainedChange extends Schema.Class<UnexplainedChange>(
   verdict: Schema.optional(Verdict),
 }) {}
 
-export const WalkthroughStatus = Schema.Literals([
-  "writing",
-  "ready",
-  "failed",
-]);
-export type WalkthroughStatus = typeof WalkthroughStatus.Type;
-
 // Where a Walkthrough's change starts: the previous Walkthrough, the snapshot Fern took when the
 // Session started, or, for a Session Fern never ran, the last commit.
 export const WalkthroughSince = Schema.Literals(["previous", "start", "head"]);
@@ -90,7 +84,7 @@ export class Walkthrough extends Schema.Class<Walkthrough>("Walkthrough")({
 
 // What the developer says about one Section or Unexplained change.
 export const VerdictInput = Schema.Struct({
-  kind: Schema.Literals(["approved", "rejected"]),
+  kind: VerdictKind,
   note: Schema.optional(Schema.String),
 }).check(
   Schema.makeFilter((v) =>

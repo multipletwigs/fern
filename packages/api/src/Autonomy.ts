@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+import { MilestoneStatus } from "./States";
 
 // Fern earns Autonomy per Project at two Phase boundaries: the end of Spec (Spec → Implement) and
 // the end of Implement (Implement → Retro). Each counts a streak of clean passes, approved with no
@@ -14,14 +15,6 @@ export const BOUNDARIES: ReadonlyArray<Boundary> = ["spec", "implement"];
 
 // Clean passes in a row that earn a Milestone.
 export const AUTONOMY_THRESHOLD = 5;
-
-export const MilestoneStatus = Schema.Literals([
-  "offered",
-  "accepted",
-  "declined",
-  "withdrawn",
-]);
-export type MilestoneStatus = typeof MilestoneStatus.Type;
 
 // An offer of Autonomy at one boundary of a Project, which the developer accepts or declines.
 export class Milestone extends Schema.Class<Milestone>("Milestone")({

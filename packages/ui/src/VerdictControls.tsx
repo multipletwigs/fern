@@ -1,3 +1,4 @@
+import type { VerdictKind, VerdictMode } from "@repo/api";
 import { useState } from "react";
 import { GhostButton } from "./GhostButton";
 
@@ -28,8 +29,7 @@ export function VerdictControls({
   noteOptional = false,
   notePlaceholder = "What should change? This goes back to the Session.",
 }: {
-  verdict:
-    { kind: "approved" | "rejected"; note?: string | undefined } | undefined;
+  verdict: { kind: VerdictKind; note?: string | undefined } | undefined;
   // The review is done; verdicts can no longer change.
   locked: boolean;
   pending: boolean;
@@ -40,7 +40,7 @@ export function VerdictControls({
   noteOptional?: boolean;
   notePlaceholder?: string;
 }) {
-  const [mode, setMode] = useState<"idle" | "noting" | "changing">("idle");
+  const [mode, setMode] = useState<VerdictMode>("idle");
   const [note, setNote] = useState("");
   const noted = noteOptional || note.trim() !== "";
   const reject = () => {

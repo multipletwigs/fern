@@ -1,9 +1,11 @@
 import {
   AUTONOMY_THRESHOLD,
+  type AutonomyEventKind,
   BOUNDARIES,
   Boundary,
   Milestone,
   MilestoneClosed,
+  type MilestoneDecision,
   MilestoneNotFound,
   MilestoneStatus,
   type Phase,
@@ -22,12 +24,6 @@ import {
 } from "effect";
 import { SqlClient, SqlSchema } from "effect/sql";
 import { HostedSessions } from "../turn/HostedSessions";
-
-// What happened at a boundary, in order. A `declined` Checkpoint, a `reset` (a Milestone decided)
-// or Autonomy `withdrawn` starts the streak over; `clean` passes count towards it; `approved` is a
-// pass after a declined Checkpoint, and `fern` one Fern approved itself, which count for nothing.
-type EventKind =
-  "clean" | "approved" | "declined" | "fern" | "reset" | "withdrawn";
 
 // How the developer redirected a Session.
 export type Redirect = "message" | "rejection";
@@ -191,7 +187,7 @@ export class Autonomy extends Context.Service<
       const record = (
         project: string,
         boundary: Boundary,
-        kind: EventKind,
+        kind: AutonomyEventKind,
         extra: { readonly sessionId?: string; readonly reason?: string } = {},
       ) =>
         Effect.gen(function* () {
@@ -339,7 +335,7 @@ export class Autonomy extends Context.Service<
           return row.value;
         });
 
-      const decide = (id: string, status: "accepted" | "declined") =>
+      const decide = (id: string, status: MilestoneDecision) =>
         Effect.gen(function* () {
           const milestone = yield* open(id);
           const decidedAt = yield* Clock.currentTimeMillis;

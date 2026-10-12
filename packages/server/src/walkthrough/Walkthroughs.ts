@@ -11,6 +11,7 @@ import {
   UnexplainedChange,
   type Verdict,
   type VerdictInput,
+  VerdictKind,
   Walkthrough,
   WalkthroughError,
   WalkthroughInProgress,
@@ -67,7 +68,7 @@ const WalkthroughRow = Schema.Struct({
 type WalkthroughRow = typeof WalkthroughRow.Type;
 
 const VerdictColumns = {
-  verdict: Schema.NullOr(Schema.Literals(["approved", "rejected"])),
+  verdict: Schema.NullOr(VerdictKind),
   note: Schema.NullOr(Schema.String),
   decidedAt: Schema.NullOr(Schema.Finite),
 };
@@ -107,7 +108,7 @@ interface SessionRows {
 const key = (walkthroughId: string, id: string) => `${walkthroughId}/${id}`;
 
 const verdictOf = (row: {
-  verdict: "approved" | "rejected" | null;
+  verdict: VerdictKind | null;
   note: string | null;
   decidedAt: number | null;
 }): Verdict | undefined =>

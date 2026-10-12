@@ -1,4 +1,5 @@
 import { WarningCircleIcon } from "@phosphor-icons/react";
+import type { ResendState } from "@repo/api";
 import { GhostButton } from "./GhostButton";
 
 // Inside a developer's message that Claude Code stopped before replying to, with a way to send it
@@ -7,7 +8,7 @@ export function UnansweredNotice({
   state,
   onResend,
 }: {
-  state: "idle" | "sending" | "sent" | "failed";
+  state: ResendState;
   onResend: () => void;
 }) {
   return (
