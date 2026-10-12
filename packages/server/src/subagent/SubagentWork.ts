@@ -43,6 +43,15 @@ export const handBackOf = (
     : undefined;
 };
 
+// Whether the Subagent's last reply called a tool whose result isn't written yet.
+export const awaitsTool = (messages: ReadonlyArray<StoredMessage>) => {
+  const last = messages.findLast((m) => !m.is_meta);
+  return (
+    last?.type === "assistant" &&
+    assistantMessage(last).content.some((block) => block.type === "tool_use")
+  );
+};
+
 export const statsOf = (messages: ReadonlyArray<StoredMessage>) => {
   const times = messages.flatMap((m) =>
     m.timestamp ? [Date.parse(m.timestamp)] : [],

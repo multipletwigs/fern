@@ -226,7 +226,8 @@ writeSubagent(TEXT, "toolu_text", [
 ]);
 quieten(TEXT);
 
-// Cut off mid-work: no Hand-back, and its file went quiet long ago.
+// Cut off mid-work, with no tool call left to wait on: no Hand-back, and its file went quiet long
+// ago. (One cut off in a tool call is in subagentAtWork.test.ts.)
 const cut = transcriptOf(CUT);
 writeSubagent(CUT, "toolu_cut", [
   cut(4, "user", user("Write a verify recipe.")),
@@ -235,6 +236,7 @@ writeSubagent(CUT, "toolu_cut", [
     "assistant",
     assistant([toolUse("toolu_bash", "Bash", { command: "ls" })]),
   ),
+  cut(6, "user", user([result("toolu_bash", "a.ts")])),
 ]);
 quieten(CUT);
 

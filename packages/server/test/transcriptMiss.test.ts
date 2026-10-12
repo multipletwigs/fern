@@ -61,6 +61,7 @@ const TestTranscripts = Transcripts.layer.pipe(
       Turns.of({
         ...unusedTurns,
         turn: () => Effect.sync(() => turn),
+        isOpen: () => Effect.succeed(true),
         contextWindow: () => Effect.undefined,
       }),
     ),

@@ -35,10 +35,11 @@ import { buildItems, promptText, type StoredMessage } from "../transcript/View";
 import { Turns } from "../turn/Turns";
 import {
   isJustWritten,
+  mayBeInToolCall,
   type SubagentMetadata,
   SubagentFiles,
 } from "./SubagentFiles";
-import { handBackOf, statsOf } from "./SubagentWork";
+import { awaitsTool, handBackOf, statsOf } from "./SubagentWork";
 
 // A Session's Subagents, read through the Agent SDK, which honours CLAUDE_CONFIG_DIR, with what
 // Claude Code keeps beside their transcripts. Each one's Agent call, in the transcript of the
@@ -300,11 +301,12 @@ export class Subagents extends Context.Service<
             latest: sdk("getSessionInfo", () => getSessionInfo(sessionId)),
             stamp: files.stamp(sessionId),
             turn: turns.turn(sessionId),
+            open: turns.isOpen(sessionId),
             now: Clock.currentTimeMillis,
           }).pipe(
-            Effect.map(({ latest, stamp, turn, now }) =>
+            Effect.map(({ latest, stamp, turn, open, now }) =>
               latest
-                ? `${latest.lastModified}:${latest.fileSize}:${isJustWritten(latest.lastModified, now)}:${turn?.running}:${stamp}`
+                ? `${latest.lastModified}:${latest.fileSize}:${isJustWritten(latest.lastModified, now)}:${mayBeInToolCall(latest.lastModified, now)}:${turn?.running}:${open}:${stamp}`
                 : undefined,
             ),
           ),
@@ -317,10 +319,11 @@ export class Subagents extends Context.Service<
         messages: ReadonlyArray<StoredMessage>,
       ): Effect.fn.Return<Census, TranscriptError> {
         const { sessionId } = info;
-        const { metadata, written, turn, now } = yield* Effect.all({
+        const { metadata, written, turn, open, now } = yield* Effect.all({
           metadata: files.metadata(sessionId),
           written: files.writtenAt(sessionId),
           turn: turns.turn(sessionId),
+          open: turns.isOpen(sessionId),
           now: Clock.currentTimeMillis,
         });
         const context = { cwd: info.cwd ?? "", subagents: metadata };
@@ -343,11 +346,24 @@ export class Subagents extends Context.Service<
           );
 
         const turnRunning = turn?.running === true;
+        // Whether a tool call a Subagent waits on may still run: for a Hosted Session, while
+        // Fern's turn runs or its process is open; for an External one, while one of the
+        // Session's files was written lately enough. Any of them being written means its Claude
+        // Code process is alive.
+        const alive =
+          turn === undefined
+            ? mayBeInToolCall(
+                Math.max(info.lastModified, ...written.values()),
+                now,
+              )
+            : turnRunning || open;
         const standings = new Map<string, Standing>();
         for (const t of started) {
           const said = callOf(t, calls)?.status ?? "running";
           const atWork =
-            turnRunning || isJustWritten(written.get(t.agentId), now);
+            turnRunning ||
+            isJustWritten(written.get(t.agentId), now) ||
+            (alive && awaitsTool(t.messages));
           // Text it ended on is only its Hand-back once it's done writing.
           const handBack = handBackOf(
             t.messages,

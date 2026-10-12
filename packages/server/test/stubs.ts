@@ -47,6 +47,7 @@ export const unusedTurns = Turns.of({
   interrupt: () => Effect.die("unused"),
   close: () => Effect.die("unused"),
   turn: () => Effect.die("unused"),
+  isOpen: () => Effect.die("unused"),
   contextWindow: () => Effect.die("unused"),
   running: Effect.die("unused"),
   overlapping: () => Effect.die("unused"),

@@ -54,6 +54,13 @@ const TRANSCRIPT = /^agent-(.+)\.jsonl$/;
 export const isJustWritten = (mtime: number | undefined, nowMs: number) =>
   mtime !== undefined && nowMs - mtime < LIVE_WINDOW_MS;
 
+// How long a tool call can keep a transcript quiet: Claude Code's Bash tool times out at 10 minutes.
+const TOOL_CALL_WINDOW_MS = 10 * 60_000;
+
+// Whether a transcript was written lately enough that a tool call made since may still run.
+export const mayBeInToolCall = (mtime: number | undefined, nowMs: number) =>
+  mtime !== undefined && nowMs - mtime < TOOL_CALL_WINDOW_MS;
+
 export class SubagentFiles extends Context.Service<
   SubagentFiles,
   {
@@ -64,7 +71,7 @@ export class SubagentFiles extends Context.Service<
     // When each of the Session's Subagent transcripts was last written, in epoch millis, by agent id.
     writtenAt(sessionId: string): Effect.Effect<ReadonlyMap<string, number>>;
     // A key that changes whenever one of the Session's Subagent files is written, added or removed,
-    // or a transcript stops counting as just written.
+    // or a transcript stops counting as just written, or as maybe in a tool call.
     stamp(sessionId: string): Effect.Effect<string>;
   }
 >()("@repo/server/subagent/SubagentFiles") {
@@ -173,7 +180,7 @@ export class SubagentFiles extends Context.Service<
         return (yield* files(sessionId))
           .map(
             ({ name, mtime, size }) =>
-              `${name}:${mtime}:${size}:${isJustWritten(mtime, now)}`,
+              `${name}:${mtime}:${size}:${isJustWritten(mtime, now)}:${mayBeInToolCall(mtime, now)}`,
           )
           .join("\n");
       });

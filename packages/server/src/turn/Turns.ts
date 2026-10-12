@@ -249,6 +249,8 @@ export class Turns extends Context.Service<
     close(id: string): Effect.Effect<void>;
     // The latest turn Fern ran on the Session, if any.
     turn(id: string): Effect.Effect<HostedTurn | undefined>;
+    // Whether the Session's Claude Code process is open, even with no turn running.
+    isOpen(id: string): Effect.Effect<boolean>;
     // The size of the Session's context window, as the latest turn Fern ran on it reported, even
     // one from before Fern last started.
     contextWindow(id: string): Effect.Effect<number | undefined>;
@@ -731,6 +733,7 @@ export class Turns extends Context.Service<
         interrupt,
         close,
         turn: (id) => Effect.sync(() => turns.get(id)),
+        isOpen: (id) => Effect.sync(() => processes.has(id)),
         contextWindow,
         running: Effect.sync(() =>
           Array.from(turns).flatMap(([id, turn]) => (turn.running ? [id] : [])),

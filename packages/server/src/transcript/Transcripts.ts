@@ -25,7 +25,11 @@ import {
   Stream,
 } from "effect";
 import { sdk } from "../agentSdk";
-import { isJustWritten, SubagentFiles } from "../subagent/SubagentFiles";
+import {
+  isJustWritten,
+  mayBeInToolCall,
+  SubagentFiles,
+} from "../subagent/SubagentFiles";
 import { Subagents } from "../subagent/Subagents";
 import { HostedSessions, type HostedWorktree } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
@@ -164,6 +168,7 @@ export class Transcripts extends Context.Service<
             Effect.all({
               latest: info,
               hostedTurn: turns.turn(id),
+              open: turns.isOpen(id),
               subagents: subagentFiles.stamp(id),
               now: Clock.currentTimeMillis,
             }).pipe(
@@ -184,7 +189,10 @@ export class Transcripts extends Context.Service<
                 a.latest.fileSize === b.latest.fileSize &&
                 isJustWritten(a.latest.lastModified, a.now) ===
                   isJustWritten(b.latest.lastModified, b.now) &&
+                mayBeInToolCall(a.latest.lastModified, a.now) ===
+                  mayBeInToolCall(b.latest.lastModified, b.now) &&
                 a.hostedTurn === b.hostedTurn &&
+                a.open === b.open &&
                 a.subagents === b.subagents,
             ),
             Stream.mapEffect(
@@ -203,9 +211,7 @@ export class Transcripts extends Context.Service<
                 const settled = yield* subagents
                   .settleRows(latest, messages, items)
                   .pipe(
-                    Effect.catchDefect((defect) =>
-                      Effect.fail(String(defect)),
-                    ),
+                    Effect.catchDefect((defect) => Effect.fail(String(defect))),
                     Effect.catch((error) =>
                       Effect.logWarning(
                         "Subagents unread; rows left unsettled",
