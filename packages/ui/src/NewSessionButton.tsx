@@ -18,7 +18,7 @@ export function NewSessionButton({
       aria-label={`New session in ${name}`}
       onClick={onClick}
       className={clsx(
-        "flex shrink-0 items-center justify-center text-muted transition-colors hover:bg-white/[0.06] hover:text-ink",
+        "flex shrink-0 items-center justify-center text-muted transition-colors hover:bg-side-field hover:text-ink",
         className,
       )}
     >

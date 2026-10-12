@@ -23,7 +23,7 @@ export function SessionFiles({
   onPick: (path: string) => void;
 }) {
   return (
-    <div className="h-full space-y-px overflow-y-auto p-2">
+    <div className="h-full space-y-0.5 overflow-y-auto p-2">
       {header}
       {changed.map((file) => (
         <FileRow

@@ -16,7 +16,7 @@ export function GrillView({
   onFailed: () => void;
 }) {
   return (
-    <div className="absolute inset-0 z-[1] bg-[#0a0a0a]">
+    <div className="absolute inset-0 z-[1] bg-panel">
       {rounds.open ? (
         <GrillRound
           key={rounds.open.id}

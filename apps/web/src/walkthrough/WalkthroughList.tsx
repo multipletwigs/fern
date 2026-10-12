@@ -18,7 +18,7 @@ export function WalkthroughList({
   onPick: (id: string) => void;
 }) {
   return (
-    <div className="mb-3 space-y-px border-b border-hairline pb-3">
+    <div className="mb-3 space-y-0.5 border-b border-hairline pb-3">
       {walkthroughs.toReversed().map((walkthrough) => (
         <WalkthroughRow
           key={walkthrough.id}

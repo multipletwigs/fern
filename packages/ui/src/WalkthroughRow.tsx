@@ -25,21 +25,17 @@ export function WalkthroughRow({
       type="button"
       onClick={onSelect}
       aria-current={active ? "true" : undefined}
-      className={clsx(
-        "flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors",
-        active
-          ? "bg-white/[0.09] text-ink shadow-[0_1px_2px_rgb(0_0_0/0.5),inset_0_1px_0_rgb(255_255_255/0.06)]"
-          : "text-ink/65 hover:bg-white/[0.04] hover:text-ink",
-      )}
+      data-active={active || undefined}
+      className="side-row gap-2 px-2.5 text-left"
     >
-      <ListChecksIcon className="size-3.5 shrink-0 text-faint" />
+      <ListChecksIcon className="size-3.5 shrink-0 text-muted/70" />
       <span className="min-w-0 flex-1 truncate">Walkthrough {number}</span>
       <span
         className={clsx(
           "shrink-0 text-[11px]",
           tone === "amber" && "text-amber/90",
           tone === "danger" && "text-danger/80",
-          tone === "muted" && "text-faint",
+          tone === "muted" && "text-muted/80",
           tone === "writing" &&
             "animate-shimmer bg-linear-to-r from-muted via-ink to-muted bg-[length:200%_100%] bg-clip-text text-transparent motion-reduce:animate-none",
         )}

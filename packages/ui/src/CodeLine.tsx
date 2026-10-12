@@ -15,7 +15,7 @@ export const CodeLine = memo(function CodeLine({
   return (
     <div className="flex h-5 hover:bg-white/[0.025]">
       <span
-        className="sticky left-0 shrink-0 bg-[#0a0a0a] pr-4 pl-4 text-right text-faint select-none"
+        className="sticky left-0 shrink-0 bg-panel pr-4 pl-4 text-right text-faint select-none"
         style={{ width: `${gutter + 3}ch` }}
       >
         {number}
