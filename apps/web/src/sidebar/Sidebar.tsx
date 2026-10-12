@@ -8,7 +8,7 @@ import { SidebarPanel } from "@repo/ui/SidebarPanel";
 import { isWorking } from "@repo/api";
 import { DateTime } from "effect";
 import { Atom, AsyncResult } from "effect/reactivity";
-import { useContext } from "react";
+import { useContext, useState } from "react";
 import {
   activeProjectAtom,
   activeSessionIdAtom,
@@ -19,6 +19,7 @@ import {
 } from "../session/atoms";
 import { ago, useNow } from "../session/time";
 import { screenAtoms } from "../workspace/screen";
+import { ArchiveSession } from "./ArchiveSession";
 
 const projectName = (path: string) => path.split("/").at(-1) || "Unknown";
 
@@ -31,6 +32,12 @@ export function Sidebar() {
   const select = (id: string) => {
     setSelected(id);
     setNew(undefined);
+  };
+  // Archived Sessions, hidden before the next listing leaves them out.
+  const [archived, setArchived] = useState<ReadonlySet<string>>(new Set());
+  const onArchived = (id: string) => {
+    setArchived((hidden) => new Set(hidden).add(id));
+    if (id === activeId) setSelected(undefined);
   };
   const now = useNow();
   // Subscribing for a moment starts a Session's streams; they stay open a while after.
@@ -87,24 +94,35 @@ export function Sidebar() {
           name={projectName(project.path)}
           path={project.path}
           onNew={() => setNew(project.path)}
-          rows={project.sessions.map((session) => {
-            const lastActivityMs = DateTime.toEpochMillis(
-              session.lastActivityAt,
-            );
-            return (
-              <SessionRow
-                key={session.id}
-                title={session.title}
-                active={session.id === activeId}
-                live={isWorking(lastActivityMs, session.hostedTurn, now)}
-                lastActive={ago(now - lastActivityMs)}
-                onSelect={() => select(session.id)}
-                onPreload={() =>
-                  preload(session.id, session.worktree ?? project.path)
-                }
-              />
-            );
-          })}
+          rows={project.sessions
+            .filter((session) => !archived.has(session.id))
+            .map((session) => {
+              const lastActivityMs = DateTime.toEpochMillis(
+                session.lastActivityAt,
+              );
+              return (
+                <SessionRow
+                  key={session.id}
+                  title={session.title}
+                  active={session.id === activeId}
+                  live={isWorking(lastActivityMs, session.hostedTurn, now)}
+                  lastActive={ago(now - lastActivityMs)}
+                  onSelect={() => select(session.id)}
+                  onPreload={() =>
+                    preload(session.id, session.worktree ?? project.path)
+                  }
+                  action={
+                    session.worktree !== undefined && (
+                      <ArchiveSession
+                        sessionId={session.id}
+                        title={session.title}
+                        onArchived={() => onArchived(session.id)}
+                      />
+                    )
+                  }
+                />
+              );
+            })}
         />
       ))}
     </SidebarPanel>

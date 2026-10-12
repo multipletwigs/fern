@@ -229,6 +229,13 @@ export class WorktreeError extends Schema.TaggedError<WorktreeError>()(
   { httpApiStatus: 422 },
 ) {}
 
+// The Session's worktree has changes not yet committed, which archiving it would throw away.
+export class UncommittedChanges extends Schema.TaggedError<UncommittedChanges>()(
+  "UncommittedChanges",
+  { id: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
 export class TranscriptError extends Schema.TaggedError<TranscriptError>()(
   "TranscriptError",
   { message: Schema.String },
@@ -284,6 +291,17 @@ export class SessionsApi extends HttpApiGroup.make("sessions")
     HttpApiEndpoint.delete("unqueue", "/:id/queue/:item", {
       params: { id: Schema.NonEmptyString, item: Schema.NonEmptyString },
       success: HttpApiSchema.NoContent,
+    }),
+  )
+  .add(
+    // Archives a Session Fern started in a worktree (ADR 0005): stops its turn, removes its
+    // worktree, and leaves it out of the sidebar from then on. Its branch is kept. A worktree with
+    // uncommitted changes is only removed with `force`.
+    HttpApiEndpoint.post("archive", "/:id/archive", {
+      params: { id: Schema.NonEmptyString },
+      payload: Schema.Struct({ force: Schema.optional(Schema.Boolean) }),
+      success: HttpApiSchema.NoContent,
+      error: [SessionNotFound, UncommittedChanges, WorktreeError],
     }),
   )
   .prefix("/sessions") {}

@@ -5,6 +5,7 @@ import { Turns } from "../src/turn/Turns";
 import { Walkthroughs } from "../src/walkthrough/Walkthroughs";
 import { WalkthroughWriter } from "../src/walkthrough/WalkthroughWriter";
 import { Workspace } from "../src/workspace/Workspace";
+import { WorktreeCleanup } from "../src/worktree/WorktreeCleanup";
 import { Worktrees, WorktreesDir } from "../src/worktree/Worktrees";
 
 // Services a test doesn't exercise; using one fails the test.
@@ -65,5 +66,15 @@ export const NoWorktreesDir = Layer.succeed(WorktreesDir, {
 
 export const UnusedWorktrees = Layer.succeed(
   Worktrees,
-  Worktrees.of({ create: () => Effect.die("unused") }),
+  Worktrees.of({
+    create: () => Effect.die("unused"),
+    isMerged: () => Effect.die("unused"),
+    isDirty: () => Effect.die("unused"),
+    remove: () => Effect.die("unused"),
+  }),
+);
+
+export const UnusedWorktreeCleanup = Layer.succeed(
+  WorktreeCleanup,
+  WorktreeCleanup.of({ archive: () => Effect.die("unused") }),
 );

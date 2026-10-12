@@ -68,6 +68,10 @@ _Avoid_: Gem, badge, achievement, streak
 A Session Fern drives itself, in its own git worktree, so its Redirects, Checkpoints, and Phases are recorded exactly. Each Hosted Session carries one piece of work through the whole Flow.
 _Avoid_: Fern session, managed session
 
+**Archived**:
+Said of a Hosted Session whose worktree Fern has removed, because the developer archived it or its branch merged into `main`. The sidebar no longer lists it; its branch is kept. Uncommitted changes are only thrown away when the developer confirms.
+_Avoid_: Closed, deleted
+
 **Subagent**:
 A conversation that Claude Code delegates to through its Agent tool, shown inside its Session and never counted as a Session of its own.
 _Avoid_: Worker (the Verifier's term), child session, task
