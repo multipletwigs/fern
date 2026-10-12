@@ -5,9 +5,11 @@ import { displayName, runSummary } from "./toolName";
 
 // Back-to-back calls to one tool folded into one row; expanding it lists each call.
 export function ToolRun({
+  sessionId,
   name,
   calls,
 }: {
+  sessionId: string;
   name: string;
   calls: ReadonlyArray<ToolCall>;
 }) {
@@ -23,7 +25,7 @@ export function ToolRun({
       status={status}
     >
       {calls.map((call) => (
-        <ItemView key={call.id} item={call} />
+        <ItemView key={call.id} sessionId={sessionId} item={call} />
       ))}
     </ToolCallRow>
   );

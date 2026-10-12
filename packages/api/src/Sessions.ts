@@ -141,6 +141,8 @@ export const Prompt = Schema.TaggedStruct("Prompt", {
   text: Schema.String,
   // Images sent with the message, as data URLs.
   images: Schema.optional(Schema.Array(Schema.String)),
+  // Claude Code stopped before replying, and recorded "No response requested." in its place.
+  unanswered: Schema.optional(Schema.Boolean),
 });
 
 export const Command = Schema.TaggedStruct("Command", {

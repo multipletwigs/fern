@@ -33,7 +33,15 @@ const assistantMessage = (m: SessionMessage) =>
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   m.message as Message;
 
-const decodeQuestions = Schema.decodeUnknownOption(
+// What Claude Code records in place of a reply when it resumes a Session whose last message never
+// got one. It isn't Claude replying, so it marks that message unanswered instead.
+const isNoResponsePlaceholder = (message: Message) =>
+  message.model === "<synthetic>" &&
+  message.content.length === 1 &&
+  message.content[0]?.type === "text" &&
+  message.content[0].text === "No response requested.";
+
+const decodeQuestions =Schema.decodeUnknownOption(
   Schema.Struct({
     questions: Schema.Array(
       Schema.Struct({
@@ -208,6 +216,12 @@ export const buildView = (
       if (item) items.push(item);
     } else if (m.type === "assistant") {
       const message = assistantMessage(m);
+      if (isNoResponsePlaceholder(message)) {
+        const last = items.at(-1);
+        if (last?._tag === "Prompt")
+          items[items.length - 1] = { ...last, unanswered: true };
+        continue;
+      }
       model = message.model;
       // Everything the request read, plus what it wrote: the context the next request starts from.
       // Synthetic messages, such as API errors Claude Code records, carry no usage worth reading.

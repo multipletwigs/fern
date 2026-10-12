@@ -405,9 +405,13 @@ const renderItem = (_: number, row: Row, context: ListContext) => (
     fresh={context.prior !== undefined && !context.prior.has(row.id)}
   >
     {row._tag === "ToolRun" ? (
-      <ToolRun name={row.name} calls={row.calls} />
+      <ToolRun
+        sessionId={context.header.id}
+        name={row.name}
+        calls={row.calls}
+      />
     ) : (
-      <ItemView item={row.item} />
+      <ItemView sessionId={context.header.id} item={row.item} />
     )}
   </TranscriptRow>
 );

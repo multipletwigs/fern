@@ -10,12 +10,27 @@ import { QuestionCard } from "@repo/ui/QuestionCard";
 import { ToolCallRow } from "@repo/ui/ToolCallRow";
 import { useFileOpener } from "../code/useFileOpener";
 import { displayName } from "./toolName";
+import { UnansweredPrompt } from "./UnansweredPrompt";
 
-export function ItemView({ item }: { item: TranscriptItem }) {
+export function ItemView({
+  sessionId,
+  item,
+}: {
+  sessionId: string;
+  item: TranscriptItem;
+}) {
   const opener = useFileOpener();
   switch (item._tag) {
     case "Prompt":
-      return <MessageCard images={item.images}>{item.text}</MessageCard>;
+      return item.unanswered ? (
+        <UnansweredPrompt
+          sessionId={sessionId}
+          text={item.text}
+          images={item.images}
+        />
+      ) : (
+        <MessageCard images={item.images}>{item.text}</MessageCard>
+      );
     case "Command":
       return <CommandCard name={item.name} args={item.args} />;
     case "Text":
