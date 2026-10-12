@@ -611,13 +611,14 @@ export class Flows extends Context.Service<
         ON CONFLICT (session_id) DO UPDATE SET
           phases = excluded.phases, updated_at = excluded.updated_at`;
 
-      // Marks the Phase done with the decision `decide` records, makes the next one current and sends
-      // its commands. The first is sent before anything is recorded, so a send that fails leaves the
-      // decision to retry.
+      // Leaves the Phase as `leave` marks it (done, or skipped), with the decision `decide` records,
+      // makes the next one current and sends its commands. The first is sent before anything is
+      // recorded, so a send that fails leaves the decision to retry.
       const moveOn = <E, R>(
         sessionId: string,
         phase: Phase,
         spec: SpecIssues | undefined,
+        leave: (phases: ReadonlyArray<FlowPhase>) => ReadonlyArray<FlowPhase>,
         decide: (decidedAt: number) => Effect.Effect<unknown, E, R>,
         after: Effect.Effect<void>,
       ) =>
@@ -629,7 +630,7 @@ export class Flows extends Context.Service<
           yield* sql
             .withTransaction(
               Effect.all([
-                savePhases(sessionId, advance(phases, phase), decidedAt),
+                savePhases(sessionId, leave(phases), decidedAt),
                 decide(decidedAt),
               ]),
             )
@@ -682,6 +683,7 @@ export class Flows extends Context.Service<
               sessionId,
               phase,
               spec ?? undefined,
+              (phases) => advance(phases, phase),
               (decidedAt) => record("approved", decidedAt),
               autonomy.approvedByFern(sessionId, phase),
             ).pipe(
@@ -864,6 +866,7 @@ export class Flows extends Context.Service<
           checkpoint.sessionId,
           checkpoint.phase,
           checkpoint.spec ?? undefined,
+          (phases) => advance(phases, checkpoint.phase),
           (decidedAt) =>
             sql`UPDATE checkpoints SET status = 'approved', decided_at = ${decidedAt}
                 WHERE id = ${id}`,
@@ -915,31 +918,22 @@ export class Flows extends Context.Service<
         phase: Phase,
         reason: string,
       ) {
-        const flow = yield* skippable(sessionId, phase);
-        const [first, ...rest] = commandsAfter(phase);
-        // Sent before anything is recorded, so a send that fails leaves the Phase to skip again.
-        if (first) yield* turns.send(sessionId, { text: first });
-        const skippedAt = yield* Clock.currentTimeMillis;
-        yield* sql
-          .withTransaction(
-            Effect.all([
-              savePhases(
-                sessionId,
-                skipped(flow.phases, phase, reason),
-                skippedAt,
-              ),
-              sql`INSERT INTO skips ${sql.insert({
-                id: crypto.randomUUID(),
-                sessionId,
-                phase,
-                reason,
-                skippedAt,
-              })}`,
-            ]),
-          )
-          .pipe(Effect.orDie);
-        yield* bump;
-        for (const text of rest) yield* turns.send(sessionId, { text });
+        yield* skippable(sessionId, phase);
+        yield* moveOn(
+          sessionId,
+          phase,
+          undefined,
+          (phases) => skipped(phases, phase, reason),
+          (skippedAt) =>
+            sql`INSERT INTO skips ${sql.insert({
+              id: crypto.randomUUID(),
+              sessionId,
+              phase,
+              reason,
+              skippedAt,
+            })}`,
+          Effect.void,
+        );
       }, deciding.withPermits(1));
 
       // The last Finding has its verdict: Retro is done, and the accepted Findings go back to the
