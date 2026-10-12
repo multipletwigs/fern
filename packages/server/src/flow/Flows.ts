@@ -145,7 +145,7 @@ const advance = (phases: ReadonlyArray<FlowPhase>, done: Phase) => {
 // What Fern sends the Session once Retro's Findings all have a verdict: the accepted ones to commit.
 const acceptedMessage = (accepted: ReadonlyArray<FindingRow>) =>
   [
-    `The developer accepted ${accepted.length === 1 ? "this Finding" : "these Findings"} from your Retro. Make the ${accepted.length === 1 ? "change" : "changes"} to the Setup and commit them on this Session's branch as a commit of their own, separate from the feature code:`,
+    `The developer accepted ${accepted.length === 1 ? "this Finding" : "these Findings"} from your Retro. Make ${accepted.length === 1 ? "its change" : "their changes"} to the Setup, then commit on this Session's branch in a commit of its own, separate from the feature code:`,
     ...accepted.map((f, i) =>
       [
         `${i + 1}. ${f.title}`,
