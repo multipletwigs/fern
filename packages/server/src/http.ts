@@ -26,6 +26,9 @@ export const SystemHandlers = HttpApiBuilder.group(
   (handlers) => handlers.handleAll({ health: () => Effect.void }),
 );
 
+// A developer message corrects the agent's course, unless it only says "continue".
+const isRedirect = (text: string) => !/^\s*continue[.!]*\s*$/i.test(text);
+
 export const SessionsHandlers = HttpApiBuilder.group(
   FernApi,
   "sessions",
@@ -33,10 +36,21 @@ export const SessionsHandlers = HttpApiBuilder.group(
     const transcripts = yield* Transcripts;
     const turns = yield* Turns;
     const cleanup = yield* WorktreeCleanup;
+    const autonomy = yield* Autonomy;
     return handlers.handleAll({
       current: () => transcripts.current,
       running: () => turns.running,
-      send: ({ params, payload }) => turns.send(params.id, payload),
+      // Only the developer sends through here; Fern's own messages go straight to Turns.
+      send: ({ params, payload }) =>
+        turns
+          .send(params.id, payload)
+          .pipe(
+            Effect.andThen(
+              isRedirect(payload.text)
+                ? autonomy.redirected(params.id, "message")
+                : Effect.void,
+            ),
+          ),
       start: ({ payload }) =>
         turns
           .start(payload.root, payload.message)

@@ -27,8 +27,8 @@ import {
   type WriteRequest,
 } from "../src/walkthrough/WalkthroughWriter";
 import {
+  NoEscapes,
   UnusedCommands,
-  UnusedAutonomy,
   UnusedFlows,
   UnusedRounds,
   UnusedTranscripts,
@@ -147,14 +147,14 @@ const hunkIn = (request: WriteRequest | undefined, path: string) =>
 const Services = Layer.mergeAll(
   UnusedRounds,
   UnusedTranscripts,
-  UnusedAutonomy,
+  NoEscapes,
   UnusedFlows,
   UnusedCommands,
   UnusedWorkspace,
   UnusedWorktreeCleanup,
   FakeTurns,
   Walkthroughs.layer.pipe(
-    Layer.provide([FakeTurns, Writer, DatabaseLive(":memory:")]),
+    Layer.provide([FakeTurns, Writer, NoEscapes, DatabaseLive(":memory:")]),
   ),
 ).pipe(Layer.provideMerge(Snapshots.layer), Layer.provide(NodeServices.layer));
 

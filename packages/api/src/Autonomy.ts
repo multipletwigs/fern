@@ -45,6 +45,14 @@ export const BoundaryAutonomy = Schema.Struct({
   offer: Schema.optional(Milestone),
   // Whether Fern approved this boundary in the Session.
   approvedByFern: Schema.Boolean,
+  // Why Autonomy here was last withdrawn (an Escape slipped past it), until a Milestone here is
+  // decided again.
+  withdrawn: Schema.optional(
+    Schema.Struct({
+      reason: Schema.String,
+      at: Schema.DateTimeUtcFromMillis,
+    }),
+  ),
 });
 export type BoundaryAutonomy = typeof BoundaryAutonomy.Type;
 

@@ -130,16 +130,22 @@ export const FakeIssues = Layer.succeed(
   }),
 );
 
-export const UnusedAutonomy = Layer.succeed(
+export const unusedAutonomy = Autonomy.of({
+  covers: () => Effect.die("unused"),
+  approved: () => Effect.die("unused"),
+  declined: () => Effect.die("unused"),
+  approvedByFern: () => Effect.die("unused"),
+  withdraw: () => Effect.die("unused"),
+  redirected: () => Effect.die("unused"),
+  autonomy: () => Stream.die("unused"),
+  accept: () => Effect.die("unused"),
+  decline: () => Effect.die("unused"),
+});
+
+export const UnusedAutonomy = Layer.succeed(Autonomy, unusedAutonomy);
+
+// Autonomy for Sessions outside the Flow: no Redirect is ever an Escape.
+export const NoEscapes = Layer.succeed(
   Autonomy,
-  Autonomy.of({
-    covers: () => Effect.die("unused"),
-    approved: () => Effect.die("unused"),
-    declined: () => Effect.die("unused"),
-    approvedByFern: () => Effect.die("unused"),
-    withdraw: () => Effect.die("unused"),
-    autonomy: () => Stream.die("unused"),
-    accept: () => Effect.die("unused"),
-    decline: () => Effect.die("unused"),
-  }),
+  Autonomy.of({ ...unusedAutonomy, redirected: () => Effect.void }),
 );
