@@ -7,6 +7,7 @@ import {
   MilestoneNotFound,
   MilestoneStatus,
   type Phase,
+  PHASES,
   SessionAutonomy,
 } from "@repo/api";
 import {
@@ -22,10 +23,20 @@ import {
 import { SqlClient, SqlSchema } from "effect/sql";
 import { HostedSessions } from "../turn/HostedSessions";
 
-// What happened at a boundary, in order. A `declined` Checkpoint or a `reset` (a Milestone decided
-// or Autonomy withdrawn) starts the streak over; `clean` passes count towards it; `approved` is a
+// What happened at a boundary, in order. A `declined` Checkpoint, a `reset` (a Milestone decided)
+// or Autonomy `withdrawn` starts the streak over; `clean` passes count towards it; `approved` is a
 // pass after a declined Checkpoint, and `fern` one Fern approved itself, which count for nothing.
-type EventKind = "clean" | "approved" | "declined" | "fern" | "reset";
+type EventKind =
+  "clean" | "approved" | "declined" | "fern" | "reset" | "withdrawn";
+
+// How the developer redirected a Session.
+export type Redirect = "message" | "rejection";
+
+// Why an Escape withdrew Autonomy, as the developer reads it after "Autonomy withdrawn at …: ".
+const ESCAPE_REASONS: Record<Redirect, string> = {
+  message: "you redirected the Session after Fern approved it",
+  rejection: "you rejected part of a Walkthrough after Fern approved it",
+};
 
 const MilestoneRow = Schema.Struct({
   id: Schema.String,
@@ -75,6 +86,11 @@ export class Autonomy extends Context.Service<
       boundary: Phase,
       reason: string,
     ): Effect.Effect<void>;
+    // The developer redirected the Session: a message of their own, or a Walkthrough's Rejections.
+    // Fern's own messages (Phase commands, Round answers, accepted Findings) are never Redirects.
+    // After Fern approved a boundary in the Session and before the next Phase reports done, it is
+    // an Escape there, which withdraws the boundary's Autonomy with why.
+    redirected(sessionId: string, redirect: Redirect): Effect.Effect<void>;
     // The Session's Project's streaks, offers and Autonomy, with what Fern approved in the
     // Session, re-sent whenever they change; null for a Session Fern didn't start.
     autonomy(sessionId: string): Stream.Stream<SessionAutonomy | null>;
@@ -106,7 +122,7 @@ export class Autonomy extends Context.Service<
             AND seq > COALESCE((
               SELECT MAX(seq) FROM autonomy_events
               WHERE project = ${project} AND boundary = ${boundary}
-                AND kind IN ('declined', 'reset')
+                AND kind IN ('declined', 'reset', 'withdrawn')
             ), 0)`,
       });
       const sessionEvents = SqlSchema.findAll({
@@ -127,6 +143,41 @@ export class Autonomy extends Context.Service<
           WHERE project = ${project} AND boundary = ${boundary}
             AND status IN ('offered', 'accepted')
           ORDER BY offered_at, rowid`,
+      });
+      // The latest withdrawal at the boundary, unless a Milestone was decided there since.
+      const withdrawalOf = SqlSchema.findOneOption({
+        Request: Schema.Struct({ project: Schema.String, boundary: Boundary }),
+        Result: Schema.Struct({ reason: Schema.String, at: Schema.Finite }),
+        execute: ({ project, boundary }) => sql`
+          SELECT reason, at FROM (
+            SELECT kind, reason, at FROM autonomy_events
+            WHERE project = ${project} AND boundary = ${boundary}
+              AND kind IN ('reset', 'withdrawn')
+            ORDER BY seq DESC LIMIT 1
+          ) WHERE kind = 'withdrawn'`,
+      });
+      // The Session's Project, while an Escape at the boundary is possible: Fern approved it in the
+      // Session, and since then the next Phase hasn't reported done (raising its Checkpoint) or been
+      // skipped, the Session hasn't been archived, and no Escape has been counted there yet.
+      const escapable = SqlSchema.findOneOption({
+        Request: Schema.Struct({
+          sessionId: Schema.String,
+          boundary: Boundary,
+          next: Schema.String,
+        }),
+        Result: Schema.Struct({ project: Schema.String }),
+        execute: ({ sessionId, boundary, next }) => sql`
+          SELECT e.project FROM autonomy_events e
+          JOIN hosted_sessions h ON h.id = e.session_id
+          WHERE e.session_id = ${sessionId} AND e.boundary = ${boundary} AND e.kind = 'fern'
+            AND h.archived_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM checkpoints
+              WHERE session_id = ${sessionId} AND phase = ${next})
+            AND NOT EXISTS (SELECT 1 FROM skips
+              WHERE session_id = ${sessionId} AND phase = ${next})
+            AND NOT EXISTS (SELECT 1 FROM autonomy_events
+              WHERE session_id = ${sessionId} AND boundary = ${boundary} AND kind = 'withdrawn')
+          LIMIT 1`,
       });
       const milestoneRow = SqlSchema.findOneOption({
         Request: Schema.String,
@@ -231,16 +282,47 @@ export class Autonomy extends Context.Service<
         yield* bump;
       }, Effect.orDie);
 
-      const withdraw = Effect.fn("Autonomy.withdraw")(
-        function* (project: string, boundary: Phase, reason: string) {
-          if (!isBoundary(boundary)) return;
+      const withdrawAt = (
+        project: string,
+        boundary: Boundary,
+        reason: string,
+        sessionId?: string,
+      ) =>
+        Effect.gen(function* () {
           const decidedAt = yield* Clock.currentTimeMillis;
           yield* sql`UPDATE milestones
             SET status = 'withdrawn', withdrawn_reason = ${reason}, decided_at = ${decidedAt}
             WHERE project = ${project} AND boundary = ${boundary}
               AND status IN ('offered', 'accepted')`;
-          yield* record(project, boundary, "reset", { reason });
+          yield* record(project, boundary, "withdrawn", { reason, sessionId });
+        });
+
+      const withdraw = Effect.fn("Autonomy.withdraw")(
+        function* (project: string, boundary: Phase, reason: string) {
+          if (!isBoundary(boundary)) return;
+          yield* withdrawAt(project, boundary, reason);
           yield* bump;
+        },
+        sql.withTransaction,
+        Effect.orDie,
+      );
+
+      const redirected = Effect.fn("Autonomy.redirected")(
+        function* (sessionId: string, redirect: Redirect) {
+          let escaped = false;
+          for (const boundary of BOUNDARIES) {
+            const next = PHASES[PHASES.indexOf(boundary) + 1] ?? "";
+            const open = yield* escapable({ sessionId, boundary, next });
+            if (Option.isNone(open)) continue;
+            yield* withdrawAt(
+              open.value.project,
+              boundary,
+              ESCAPE_REASONS[redirect],
+              sessionId,
+            );
+            escaped = true;
+          }
+          if (escaped) yield* bump;
         },
         sql.withTransaction,
         Effect.orDie,
@@ -287,6 +369,10 @@ export class Autonomy extends Context.Service<
               const events = yield* sessionEvents({ sessionId, boundary }).pipe(
                 Effect.orDie,
               );
+              const withdrawal = yield* withdrawalOf({
+                project,
+                boundary,
+              }).pipe(Effect.orDie);
               return {
                 boundary,
                 streak,
@@ -294,6 +380,13 @@ export class Autonomy extends Context.Service<
                 granted,
                 offer: offer && toMilestone(offer),
                 approvedByFern: events.some((e) => e.kind === "fern"),
+                withdrawn: Option.match(withdrawal, {
+                  onNone: () => undefined,
+                  onSome: ({ reason, at }) => ({
+                    reason,
+                    at: Schema.decodeSync(Schema.DateTimeUtcFromMillis)(at),
+                  }),
+                }),
               };
             }),
           );
@@ -306,6 +399,7 @@ export class Autonomy extends Context.Service<
         declined,
         approvedByFern,
         withdraw,
+        redirected,
         autonomy: (sessionId) =>
           SubscriptionRef.changes(version).pipe(
             Stream.mapEffect(() => load(sessionId)),

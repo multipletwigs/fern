@@ -39,6 +39,7 @@ import {
   type Statement as SqlStatement,
 } from "effect/sql";
 import { sdk } from "../agentSdk";
+import { Autonomy } from "../autonomy/Autonomy";
 import type { GitError } from "../git/Git";
 import { Snapshots, walkthroughRef } from "../snapshot/Snapshots";
 import { Turns } from "../turn/Turns";
@@ -330,6 +331,7 @@ export class Walkthroughs extends Context.Service<
       const snapshots = yield* Snapshots;
       const turns = yield* Turns;
       const writer = yield* WalkthroughWriter;
+      const autonomy = yield* Autonomy;
       // Bumped after every write, so open lists reload.
       const version = yield* SubscriptionRef.make(0);
       const bump = SubscriptionRef.update(version, (n) => n + 1);
@@ -635,6 +637,8 @@ export class Walkthroughs extends Context.Service<
               ),
             ),
           ),
+          // The Rejections are the developer's Redirect.
+          Effect.tap(() => autonomy.redirected(sessionId, "rejection")),
           Effect.tapError((error) =>
             record(sql`UPDATE walkthroughs SET redirect_error = ${redirectFailure(error)}
               WHERE id = ${walkthroughId}`),

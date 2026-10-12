@@ -17,7 +17,8 @@ import { vi } from "vitest";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
 import { WorktreesDir } from "../src/worktree/Worktrees";
-import { FakeIssues, NoWriter } from "./stubs";
+import { WalkthroughWriter } from "../src/walkthrough/WalkthroughWriter";
+import { FakeIssues } from "./stubs";
 
 const git = (cwd: string, ...args: Array<string>) =>
   execFileSync(
@@ -117,6 +118,8 @@ let specReport: { brief: number; tickets: Array<number> } = GOOD_SPEC;
 let retroFindings: Array<{ title: string; change: string; reasoning: string }> =
   [];
 let silent: ReadonlySet<string> = new Set();
+// Whether the agent changes code during Implement, which Fern then explains in a Walkthrough.
+let editing = false;
 // Fern's answers to the agent's Phase-done reports, by Session.
 const answers: Array<{ sessionId: string; text: string; isError: boolean }> =
   [];
@@ -127,6 +130,7 @@ const restoring = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       specReport = GOOD_SPEC;
       retroFindings = [];
       silent = new Set();
+      editing = false;
     }),
   );
 
@@ -147,8 +151,14 @@ const agent = async ({ sessionId, text, options }: StartedTurn) => {
   };
   if (text.startsWith("/grill-with-docs")) await report("grill");
   else if (text === "/to-tickets") await report("spec");
-  else if (text.startsWith("/implement-spec")) await report("implement");
-  else if (text === "/retro") await report("retro");
+  else if (text.startsWith("/implement-spec")) {
+    if (editing)
+      writeFileSync(
+        join(String(options.cwd), "theme.ts"),
+        "export const dark = true;\n",
+      );
+    await report("implement");
+  } else if (text === "/retro") await report("retro");
   else if (text.includes("declined the Checkpoint at the end of Spec"))
     await report("spec");
   else if (text.includes("declined the Checkpoint at the end of Implement"))
@@ -200,11 +210,33 @@ const makeClient = HttpApiTest.groups(FernApi, [
   "sessions",
   "flows",
   "autonomy",
+  "walkthroughs",
 ]);
+
+// The Walkthrough's Fork, faked: one Section explains every changed line.
+const Writer = Layer.succeed(
+  WalkthroughWriter,
+  WalkthroughWriter.of({
+    write: (request) =>
+      Effect.succeed({
+        draft: {
+          sections: [
+            {
+              title: "Add the dark theme",
+              explanation: "The theme the toggle switches to.",
+              hunks: request.hunks.map((h) => h.id),
+            },
+          ],
+          notFromSession: [],
+        },
+        revise: () => Effect.die("unused"),
+      }),
+  }),
+);
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
 const server = Layer.mergeAll(
-  handlersWith(NoWriter, FakeIssues).pipe(
+  handlersWith(Writer, FakeIssues).pipe(
     Layer.provide([
       DatabaseLive(join(mkdtempSync(join(tmpdir(), "fern-db-")), "fern.db")),
       Layer.succeed(WorktreesDir, { dir: dataDir }),
@@ -625,6 +657,200 @@ layer(server, { excludeTestServices: true })("Autonomy", (it) => {
           (a) => at(a, "spec")?.streak === 3,
         );
         assert.deepStrictEqual(streaks(after), ["spec:3/5", "implement:1/5"]);
+      }).pipe(restoring),
+  );
+});
+
+// A Project where the developer has accepted Autonomy at the end of Spec: five Sessions whose Spec
+// they approved with nothing declined, then the Milestone.
+const autonomousSpec = Effect.gen(function* () {
+  const root = project();
+  let last = "";
+  for (let i = 0; i < 5; i++) last = yield* cleanSpecPass(root);
+  const offer = at(
+    yield* autonomyOf(last, (a) => at(a, "spec")?.offer !== undefined),
+    "spec",
+  )?.offer;
+  const client = yield* makeClient;
+  yield* client.autonomy.accept({ params: { id: offer?.id ?? "" } });
+  yield* autonomyOf(last, (a) => at(a, "spec")?.granted === true);
+  return root;
+});
+
+// A Project where the developer has accepted Autonomy at the end of Implement, and declined it at
+// the end of Spec.
+const autonomousImplement = Effect.gen(function* () {
+  const root = project();
+  let last = "";
+  for (let i = 0; i < 5; i++) {
+    last = yield* cleanSpecPass(root);
+    yield* approveAt(last, "implement");
+  }
+  const offered = yield* autonomyOf(last, (a) =>
+    a.boundaries.every((b) => b.offer !== undefined),
+  );
+  const client = yield* makeClient;
+  yield* client.autonomy.accept({
+    params: { id: at(offered, "implement")?.offer?.id ?? "" },
+  });
+  yield* client.autonomy.decline({
+    params: { id: at(offered, "spec")?.offer?.id ?? "" },
+  });
+  yield* autonomyOf(last, (a) => at(a, "implement")?.granted === true);
+  return root;
+});
+
+layer(server, { excludeTestServices: true })("Escapes", (it) => {
+  it.effect(
+    "a Redirect after Fern approved the end of Spec, before Implement reports done, withdraws Autonomy there and says why",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* autonomousSpec;
+        silent = new Set(["implement"]);
+        const id = yield* startSession(root);
+        yield* approveAt(id, "grill");
+        yield* turnWhere(id, (t) => t.text === "/implement-spec #2");
+        // Fern's own command into the Session is no Redirect.
+        const approved = yield* autonomyOf(
+          id,
+          (a) => at(a, "spec")?.approvedByFern === true,
+        );
+        assert.isTrue(at(approved, "spec")?.granted);
+        assert.isUndefined(at(approved, "spec")?.withdrawn);
+
+        const client = yield* makeClient;
+        yield* client.sessions.send({
+          params: { id },
+          payload: { text: "Use the theme hook we already have" },
+        });
+        const withdrawn = yield* autonomyOf(
+          id,
+          (a) => at(a, "spec")?.granted === false,
+        );
+        assert.strictEqual(
+          at(withdrawn, "spec")?.withdrawn?.reason,
+          "you redirected the Session after Fern approved it",
+        );
+        assert.deepStrictEqual(streaks(withdrawn), [
+          "spec:0/5",
+          "implement:0/5",
+        ]);
+        assert.isUndefined(at(withdrawn, "implement")?.withdrawn);
+
+        // The next Session's Spec waits on the developer again, and their approval counts anew.
+        silent = new Set();
+        const next = yield* cleanSpecPass(root);
+        const after = yield* autonomyOf(
+          next,
+          (a) => at(a, "spec")?.streak === 1,
+        );
+        assert.isFalse(at(after, "spec")?.granted);
+      }).pipe(restoring),
+  );
+
+  it.effect(
+    "doesn't count Redirects at a boundary the developer approved, nor after the next Phase reports done, nor once the Session is archived",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* autonomousImplement;
+        const client = yield* makeClient;
+        const say = (id: string, text: string) =>
+          client.sessions.send({ params: { id }, payload: { text } });
+        silent = new Set(["implement", "retro"]);
+        const id = yield* startSession(root);
+        yield* approveAt(id, "grill");
+        yield* approveAt(id, "spec");
+        yield* turnWhere(id, (t) => t.text === "/implement-spec #2");
+        // The developer approved the end of Spec themselves.
+        yield* say(id, "Keep the old settings API");
+
+        const options = started.find((t) => t.sessionId === id)?.options ?? {};
+        const reportDone = (phase: string) =>
+          Effect.promise(() =>
+            call(options, "phase_done", { phase, summary: `${phase} done.` }),
+          );
+        assert.match((yield* reportDone("implement")).text, /Fern approved/);
+        yield* turnWhere(id, (t) => t.text === "/retro");
+        // "Continue" corrects nothing.
+        yield* say(id, "continue");
+        yield* reportDone("retro");
+        yield* checkpointAt(id, "retro");
+        // Retro has reported done.
+        yield* say(id, "Also mention the theme in the README");
+
+        // Another Session that Fern took past the end of Implement, then archived.
+        const archived = yield* startSession(root);
+        yield* approveAt(archived, "grill");
+        yield* approveAt(archived, "spec");
+        yield* turnWhere(archived, (t) => t.text === "/implement-spec #2");
+        const archivedOptions =
+          started.find((t) => t.sessionId === archived)?.options ?? {};
+        yield* Effect.promise(() =>
+          call(archivedOptions, "phase_done", {
+            phase: "implement",
+            summary: "implement done.",
+          }),
+        );
+        yield* turnWhere(archived, (t) => t.text === "/retro");
+        yield* client.sessions.archive({
+          params: { id: archived },
+          payload: { force: true },
+        });
+        yield* say(archived, "Actually, bring it back");
+
+        const after = yield* autonomyOf(
+          id,
+          (a) => at(a, "implement")?.approvedByFern === true,
+        );
+        assert.isTrue(at(after, "implement")?.granted);
+        assert.isUndefined(at(after, "implement")?.withdrawn);
+        assert.isUndefined(at(after, "spec")?.withdrawn);
+        assert.deepStrictEqual(streaks(after), ["spec:2/5", "implement:0/5"]);
+      }).pipe(restoring),
+  );
+
+  it.effect(
+    "a Walkthrough Rejection after Fern approved the end of Implement withdraws Autonomy there",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* autonomousImplement;
+        editing = true;
+        silent = new Set(["retro"]);
+        const id = yield* startSession(root);
+        yield* approveAt(id, "grill");
+        yield* approveAt(id, "spec");
+        yield* turnWhere(id, (t) => t.text === "/retro");
+
+        // Fern explains the Implement work once the turn ends, and the developer rejects it.
+        const live = yield* makeLive;
+        const walkthrough = (yield* firstWhere(
+          live.Walkthroughs({ session: id }),
+          (all) => all.some((w) => w.status === "ready"),
+        ))?.[0];
+        const section = walkthrough?.sections[0];
+        assert.isDefined(walkthrough);
+        assert.isDefined(section);
+        const approved = yield* autonomyOf(
+          id,
+          (a) => at(a, "implement")?.approvedByFern === true,
+        );
+        assert.isTrue(at(approved, "implement")?.granted);
+        const client = yield* makeClient;
+        yield* client.walkthroughs.verdict({
+          params: { id: walkthrough?.id ?? "", item: section?.id ?? "" },
+          payload: { kind: "rejected", note: "Dark should follow the OS" },
+        });
+
+        const withdrawn = yield* autonomyOf(
+          id,
+          (a) => at(a, "implement")?.granted === false,
+        );
+        assert.strictEqual(
+          at(withdrawn, "implement")?.withdrawn?.reason,
+          "you rejected part of a Walkthrough after Fern approved it",
+        );
+        assert.strictEqual(at(withdrawn, "implement")?.streak, 0);
+        assert.isUndefined(at(withdrawn, "spec")?.withdrawn);
       }).pipe(restoring),
   );
 });
