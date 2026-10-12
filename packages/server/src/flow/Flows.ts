@@ -8,8 +8,9 @@ import {
   FlowPhase,
   Phase,
   PHASES,
+  PhaseNotSkippable,
   type SessionInUse,
-  type SessionNotFound,
+  SessionNotFound,
   type SessionPhase,
   type TranscriptError,
 } from "@repo/api";
@@ -105,6 +106,28 @@ const advance = (phases: ReadonlyArray<FlowPhase>, done: Phase) => {
   );
 };
 
+// The Flow after the developer skips the Phase: the next one, if any, is current.
+const skipped = (
+  phases: ReadonlyArray<FlowPhase>,
+  phase: Phase,
+  reason: string,
+) => {
+  const next = PHASES[PHASES.indexOf(phase) + 1];
+  return phases.map((p): FlowPhase =>
+    p.phase === phase
+      ? { phase, status: "skipped", reason }
+      : p.phase === next
+        ? { phase: p.phase, status: "current" }
+        : p,
+  );
+};
+
+// The commands that start the Phase after this one, if there is one.
+const commandsAfter = (phase: Phase): ReadonlyArray<string> => {
+  const next = PHASES[PHASES.indexOf(phase) + 1];
+  return next && next !== "grill" ? COMMANDS[next] : [];
+};
+
 // What a Fern tool answers the agent.
 interface Answer {
   readonly text: string;
@@ -151,6 +174,16 @@ export class Flows extends Context.Service<
       | SessionInUse
       | TranscriptError
     >;
+    // Skips the Session's current Phase with the developer's reason, and starts the next one by
+    // sending its command. Skipped Phases count neither toward nor against Autonomy.
+    skip(
+      sessionId: string,
+      phase: Phase,
+      reason: string,
+    ): Effect.Effect<
+      void,
+      PhaseNotSkippable | SessionNotFound | SessionInUse | TranscriptError
+    >;
   }
 >()("@repo/server/flow/Flows") {
   static readonly layer = Layer.effect(
@@ -180,17 +213,23 @@ export class Flows extends Context.Service<
       const pendingOf = SqlSchema.findOneOption({
         Request: Schema.String,
         Result: CheckpointRow,
+        // An archived Session waits on nothing.
         execute: (sessionId) => sql`
-          SELECT * FROM checkpoints
-          WHERE session_id = ${sessionId} AND status = 'pending'
-          ORDER BY raised_at DESC LIMIT 1`,
+          SELECT checkpoints.* FROM checkpoints
+          JOIN hosted_sessions ON hosted_sessions.id = checkpoints.session_id
+          WHERE checkpoints.session_id = ${sessionId} AND checkpoints.status = 'pending'
+            AND hosted_sessions.archived_at IS NULL
+          ORDER BY checkpoints.raised_at DESC LIMIT 1`,
       });
       const pending = SqlSchema.findAll({
         Request: Schema.Void,
         Result: CheckpointRow,
+        // An archived Session waits on nothing, so its Checkpoints leave the queue.
         execute: () => sql`
-          SELECT * FROM checkpoints WHERE status = 'pending'
-          ORDER BY raised_at, rowid`,
+          SELECT checkpoints.* FROM checkpoints
+          JOIN hosted_sessions ON hosted_sessions.id = checkpoints.session_id
+          WHERE checkpoints.status = 'pending' AND hosted_sessions.archived_at IS NULL
+          ORDER BY checkpoints.raised_at, checkpoints.rowid`,
       });
       const checkpointRow = SqlSchema.findOneOption({
         Request: Schema.String,
@@ -307,8 +346,7 @@ export class Flows extends Context.Service<
       const approve = Effect.fn("Flows.approve")(function* (id: string) {
         const checkpoint = yield* open(id);
         const phases = yield* phasesOf(checkpoint.sessionId);
-        const next = PHASES[PHASES.indexOf(checkpoint.phase) + 1];
-        const [first, ...rest] = next && next !== "grill" ? COMMANDS[next] : [];
+        const [first, ...rest] = commandsAfter(checkpoint.phase);
         // Sent before anything is recorded, so a send that fails leaves the Checkpoint to retry.
         if (first) yield* turns.send(checkpoint.sessionId, { text: first });
         const decidedAt = yield* Clock.currentTimeMillis;
@@ -344,6 +382,59 @@ export class Flows extends Context.Service<
             SET status = 'declined', note = ${note.trim()}, decided_at = ${decidedAt}
             WHERE id = ${id}`.pipe(Effect.orDie);
         yield* bump;
+      }, deciding.withPermits(1));
+
+      // The Session's Flow, if the Phase is its current one and isn't waiting at a Checkpoint.
+      const skippable = (sessionId: string, phase: Phase) =>
+        Effect.gen(function* () {
+          const flow = yield* load(sessionId);
+          if (flow === null)
+            return yield* new SessionNotFound({ id: sessionId });
+          if (current(flow.phases) !== phase)
+            return yield* new PhaseNotSkippable({
+              session: sessionId,
+              phase,
+              why: "notCurrent",
+            });
+          if (flow.checkpoint)
+            return yield* new PhaseNotSkippable({
+              session: sessionId,
+              phase,
+              why: "checkpointPending",
+            });
+          return flow;
+        });
+
+      const skip = Effect.fn("Flows.skip")(function* (
+        sessionId: string,
+        phase: Phase,
+        reason: string,
+      ) {
+        const flow = yield* skippable(sessionId, phase);
+        const [first, ...rest] = commandsAfter(phase);
+        // Sent before anything is recorded, so a send that fails leaves the Phase to skip again.
+        if (first) yield* turns.send(sessionId, { text: first });
+        const skippedAt = yield* Clock.currentTimeMillis;
+        yield* sql
+          .withTransaction(
+            Effect.all([
+              savePhases(
+                sessionId,
+                skipped(flow.phases, phase, reason),
+                skippedAt,
+              ),
+              sql`INSERT INTO skips ${sql.insert({
+                id: crypto.randomUUID(),
+                sessionId,
+                phase,
+                reason,
+                skippedAt,
+              })}`,
+            ]),
+          )
+          .pipe(Effect.orDie);
+        yield* bump;
+        for (const text of rest) yield* turns.send(sessionId, { text });
       }, deciding.withPermits(1));
 
       const phases = Effect.gen(function* () {
@@ -389,6 +480,7 @@ export class Flows extends Context.Service<
         phases: reloading(phases),
         approve,
         decline,
+        skip,
       });
     }),
   );

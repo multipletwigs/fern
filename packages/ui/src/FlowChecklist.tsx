@@ -1,3 +1,4 @@
+import { Tooltip } from "@base-ui/react/tooltip";
 import {
   CheckCircleIcon,
   CircleDashedIcon,
@@ -6,7 +7,8 @@ import {
   MinusCircleIcon,
 } from "@phosphor-icons/react";
 import { clsx } from "clsx";
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
+import { TooltipPanel } from "./TooltipPanel";
 
 export type ChecklistStatus = "notStarted" | "current" | "done" | "skipped";
 
@@ -25,53 +27,80 @@ const LABELS = {
 } as const;
 
 // A Session's Phases in order, pinned at the top of the Session: each not started, current, done
-// or skipped, with a lock on every boundary between two Phases that needs the developer.
+// or skipped, with a lock on every boundary between two Phases that needs the developer. Resting
+// the pointer on a skipped Phase shows why it was skipped. `children` go at the end of the row.
 export function FlowChecklist({
   steps,
+  children,
 }: {
-  steps: ReadonlyArray<{ title: string; status: ChecklistStatus }>;
+  steps: ReadonlyArray<{
+    title: string;
+    status: ChecklistStatus;
+    reason?: string | undefined;
+  }>;
+  children?: ReactNode;
 }) {
   return (
-    <ol
-      aria-label="Flow"
-      className="flex items-center gap-2 px-5 pb-2 text-[12px]"
-    >
-      {steps.map(({ title, status }, i) => {
-        const Icon = ICONS[status];
-        return (
-          <Fragment key={title}>
-            {i > 0 && (
-              <li aria-hidden className="flex items-center gap-2 text-faint">
-                <span className="h-px w-4 bg-hairline" />
-                <LockSimpleIcon
-                  weight="bold"
-                  className="size-3"
-                  aria-label="Needs you"
-                />
-                <span className="h-px w-4 bg-hairline" />
-              </li>
-            )}
-            <li
-              aria-label={`${title}: ${LABELS[status]}`}
-              aria-current={status === "current" ? "step" : undefined}
-              className={clsx(
-                "flex items-center gap-1.5 rounded-full border px-2.5 py-1",
-                status === "current" && "border-ice/30 bg-ice/[0.06] text-ice",
-                status === "done" && "border-hairline text-mint/90",
-                status === "skipped" &&
-                  "border-hairline text-faint line-through",
-                status === "notStarted" && "border-hairline text-muted",
-              )}
-            >
+    <div className="flex items-center gap-2 px-5 pb-2 text-[12px]">
+      <ol aria-label="Flow" className="flex items-center gap-2">
+        {steps.map(({ title, status, reason }, i) => {
+          const Icon = ICONS[status];
+          const step = {
+            "aria-label": reason
+              ? `${title}: ${LABELS[status]}, ${reason}`
+              : `${title}: ${LABELS[status]}`,
+            "aria-current":
+              status === "current" ? ("step" as const) : undefined,
+            className: clsx(
+              "flex items-center gap-1.5 rounded-full border px-2.5 py-1",
+              status === "current" && "border-ice/30 bg-ice/[0.06] text-ice",
+              status === "done" && "border-hairline text-mint/90",
+              status === "skipped" && "border-hairline text-faint line-through",
+              status === "notStarted" && "border-hairline text-muted",
+            ),
+          };
+          const content = (
+            <>
               <Icon
                 weight={status === "current" ? "fill" : "regular"}
                 className="size-3.5 shrink-0"
               />
               {title}
-            </li>
-          </Fragment>
-        );
-      })}
-    </ol>
+            </>
+          );
+          return (
+            <Fragment key={title}>
+              {i > 0 && (
+                <li aria-hidden className="flex items-center gap-2 text-faint">
+                  <span className="h-px w-4 bg-hairline" />
+                  <LockSimpleIcon
+                    weight="bold"
+                    className="size-3"
+                    aria-label="Needs you"
+                  />
+                  <span className="h-px w-4 bg-hairline" />
+                </li>
+              )}
+              {reason ? (
+                <Tooltip.Root>
+                  <Tooltip.Trigger delay={150} render={<li {...step} />}>
+                    {content}
+                  </Tooltip.Trigger>
+                  <TooltipPanel>
+                    <p className="max-w-72 px-1.5 py-0.5 text-[12px] leading-5 text-ink">
+                      <span className="text-muted">Skipped: </span>
+                      {reason}
+                    </p>
+                  </TooltipPanel>
+                </Tooltip.Root>
+              ) : (
+                <li {...step}>{content}</li>
+              )}
+            </Fragment>
+          );
+        })}
+      </ol>
+      {children}
+    </div>
   );
 }
