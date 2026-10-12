@@ -21,6 +21,7 @@ import {
   type SessionPhase,
   type TranscriptError,
   type Walkthrough,
+  type WalkthroughError,
 } from "@repo/api";
 import {
   Clock,
@@ -212,11 +213,11 @@ const shown = ({ number, title, url }: TrackedIssue) => ({
   url,
 });
 
-// What the Implement Checkpoint links to: the latest written Walkthrough, or else the latest.
+// What the Implement Checkpoint links to: the latest written Walkthrough, if there is one.
 const linkOf = (
   all: ReadonlyArray<Walkthrough>,
 ): CheckpointWalkthrough | undefined => {
-  const linked = all.findLast((w) => w.status === "ready") ?? all.at(-1);
+  const linked = all.findLast((w) => w.status === "ready");
   return linked && { id: linked.id, number: linked.number };
 };
 
@@ -243,6 +244,14 @@ const reply = ({ text, isError }: Answer) => ({
   content: [{ type: "text" as const, text }],
   ...(isError ? { isError } : {}),
 });
+
+// What to tell the agent when Fern couldn't write the Walkthrough Implement's end waits on.
+const unwritten = (why: string): Answer => ({
+  text: `Fern couldn't write the Session's Walkthrough (${why}), so the developer has no Checkpoint for the end of Implement yet. Report Implement done again.`,
+  isError: true,
+});
+const whyUnwritten = (error: SessionNotFound | WalkthroughError) =>
+  error._tag === "SessionNotFound" ? "it can't find the Session" : error.message;
 
 // Each Hosted Session's Flow (Grill, Spec, Implement, Retro) and the Checkpoints between its
 // Phases. The agent reports a Phase done through the `phase_done` tool; Fern raises a Checkpoint,
@@ -569,35 +578,38 @@ export class Flows extends Context.Service<
           .list(sessionId)
           .pipe(Stream.runHead, Effect.map(Option.getOrElse(() => [])));
 
-      // Starts writing the Session's Walkthrough: "writing" while a Fork writes it, "nothing" when
-      // there's nothing to review.
-      const startWalkthrough = (sessionId: string) =>
+      // With nothing changed since it, the Session's latest written Walkthrough covers the working
+      // tree, so the Checkpoint links to it; none at all when the Session never changed anything.
+      const covering = (sessionId: string) =>
+        walkthroughsNow(sessionId).pipe(
+          Effect.map((all) => ({ link: linkOf(all) })),
+        );
+
+      // The Walkthrough a write just started, once its Fork is done: what the Checkpoint links to,
+      // or what to tell the agent if the Fork failed.
+      const written = (sessionId: string) =>
+        walkthroughs.list(sessionId).pipe(
+          Stream.filter((ws) => ws.at(-1)?.status !== "writing"),
+          Stream.runHead,
+          Effect.map((found) => {
+            const latest = Option.getOrUndefined(found)?.at(-1);
+            return latest?.status === "ready"
+              ? { link: { id: latest.id, number: latest.number } }
+              : unwritten(latest?.error ?? "the Fork failed");
+          }),
+        );
+
+      // Implement's other exit criterion: a written Walkthrough that covers the working tree as it
+      // is now. Fern writes one of whatever changed since the last: "writing" while it does. Else
+      // what the Checkpoint links to, or what to tell the agent instead.
+      const walkthroughExit = (sessionId: string) =>
         walkthroughs.write(sessionId).pipe(
           Effect.as("writing" as const),
           Effect.catchTags({
             WalkthroughInProgress: () => Effect.succeed("writing" as const),
-            NothingToReview: () => Effect.succeed("nothing" as const),
+            NothingToReview: () => covering(sessionId),
           }),
-        );
-
-      // Implement's other exit criterion: the Session has a Walkthrough. Either what the Checkpoint
-      // links to, "writing" while Fern writes the first one, or what to tell the agent instead.
-      const walkthroughExit = (sessionId: string) =>
-        Effect.gen(function* () {
-          const all = yield* walkthroughsNow(sessionId);
-          const written = all.some((w) => w.status === "ready");
-          if (written && all.at(-1)?.status !== "writing")
-            return { link: linkOf(all) };
-          const started = yield* startWalkthrough(sessionId);
-          if (started === "writing") return "writing" as const;
-          return { link: linkOf(all) };
-        }).pipe(
-          Effect.catch((error) =>
-            Effect.succeed({
-              text: `Fern couldn't write the Session's Walkthrough (${error._tag === "SessionNotFound" ? "it can't find the Session" : error.message}). Report Implement done again.`,
-              isError: true,
-            } satisfies Answer),
-          ),
+          Effect.catch((error) => Effect.succeed(unwritten(whyUnwritten(error)))),
         );
 
       const savePhases = (
@@ -673,12 +685,14 @@ export class Flows extends Context.Service<
             ON CONFLICT (id) DO UPDATE SET
               status = excluded.status, raised_at = excluded.raised_at,
               decided_at = excluded.decided_at, walkthrough_id = excluded.walkthrough_id`;
-          // Under Autonomy, Fern approves the end of the Phase itself: never the end of a Grill, and
-          // never a Checkpoint carrying Findings, which only the developer decides. If the next
-          // command can't be sent, the developer gets the Checkpoint after all.
+          // Under Autonomy, Fern approves the end of the Phase itself: never the end of a Grill, never
+          // a Checkpoint carrying Findings, which only the developer decides, and never the end of
+          // Implement without a Walkthrough to link to. If the next command can't be sent, the
+          // developer gets the Checkpoint after all.
           if (
             phase !== "grill" &&
             findings.length === 0 &&
+            (phase !== "implement" || walkthrough !== undefined) &&
             (yield* autonomy.covers(sessionId, phase))
           ) {
             const byFern = yield* moveOn(
@@ -725,44 +739,58 @@ export class Flows extends Context.Service<
 
       // Raises the held Checkpoint once its Session's Walkthrough is written: once no other write
       // is under way, Fern writes what changed since the last one, if anything did. That also
-      // covers a restart, after which the Fork that was writing it is gone.
+      // covers a restart, after which the Fork that was writing it is gone. If the Walkthrough
+      // can't be written, there's no Checkpoint, and the agent hears why.
       const release = (id: string) =>
         Effect.gen(function* () {
           const row = yield* checkpointRow(id).pipe(Effect.orDie);
           if (Option.isNone(row)) return;
           const { sessionId } = row.value;
-          const writing = yield* walkthroughs.write(sessionId).pipe(
+          const outcome = yield* walkthroughs.write(sessionId).pipe(
             Effect.retry({
               while: (error) => error._tag === "WalkthroughInProgress",
               schedule: Schedule.spaced("250 millis"),
             }),
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
+            Effect.andThen(written(sessionId)),
+            Effect.catchTags({
+              NothingToReview: () => covering(sessionId),
+              WalkthroughInProgress: Effect.die,
+            }),
+            Effect.catch((error) =>
+              Effect.succeed(unwritten(whyUnwritten(error))),
+            ),
           );
-          const all = writing
-            ? yield* walkthroughs.list(sessionId).pipe(
-                Stream.filter((ws) => ws.at(-1)?.status !== "writing"),
-                Stream.runHead,
-                Effect.map(Option.getOrElse(() => [])),
-              )
-            : yield* walkthroughsNow(sessionId);
-          yield* Effect.gen(function* () {
+          const told = yield* Effect.gen(function* () {
             const flow = yield* load(sessionId);
             const still = yield* checkpointRow(id).pipe(Effect.orDie);
-            if (Option.isNone(still) || still.value.status !== "held") return;
-            // Skipped or archived meanwhile: there's nothing to raise.
-            if (
+            if (Option.isNone(still) || still.value.status !== "held")
+              return undefined;
+            // Skipped or archived meanwhile, there's nothing to raise; without a Walkthrough,
+            // nothing to raise yet.
+            const moved =
               flow === null ||
               current(flow.phases) !== still.value.phase ||
-              flow.checkpoint
-            ) {
+              flow.checkpoint !== undefined;
+            if (moved || "isError" in outcome) {
               yield* sql`DELETE FROM checkpoints WHERE id = ${id}`.pipe(
                 Effect.orDie,
               );
-              return;
+              return moved || !("isError" in outcome) ? undefined : outcome;
             }
-            yield* raise({ ...still.value, findings: [] }, linkOf(all));
+            yield* raise({ ...still.value, findings: [] }, outcome.link);
+            return undefined;
           }).pipe(deciding.withPermits(1));
+          if (told)
+            yield* turns
+              .send(sessionId, { text: told.text })
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning(
+                    "Couldn't tell the agent its Walkthrough wasn't written",
+                    error._tag,
+                  ),
+                ),
+              );
         });
 
       // The agent says its Phase is done: raise a Checkpoint for the developer.

@@ -1,5 +1,5 @@
 import { assert, it as test, layer } from "@effect/vitest";
-import { FernApi, type Flow, LiveRpcs } from "@repo/api";
+import { FernApi, type Flow, LiveRpcs, WalkthroughError } from "@repo/api";
 import { Deferred, Effect, Layer, Option, Schedule, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
@@ -102,9 +102,10 @@ const Issues = Layer.succeed(
 );
 
 // The Walkthrough writer, faked: it claims every hunk in one Section, once `gate` (if a test set
-// one) opens.
+// one) opens. While `failing`, the Fork fails instead.
 const requests: Array<WriteRequest> = [];
 let gate: Deferred.Deferred<void> | undefined;
+let failing = false;
 const Writer = Layer.succeed(
   WalkthroughWriter,
   WalkthroughWriter.of({
@@ -112,6 +113,8 @@ const Writer = Layer.succeed(
       Effect.gen(function* () {
         requests.push(request);
         if (gate) yield* Deferred.await(gate);
+        if (failing)
+          return yield* new WalkthroughError({ message: "The Fork crashed." });
         const draft = {
           sections: [
             {
@@ -159,8 +162,12 @@ interface ToolServer {
   };
 }
 
+// Whether the agent changes code while it implements; a test may turn it off and puts it back after.
+let editing = true;
+
 // The agent follows the Flow: it reports each Phase done in the turn its command started, and
-// changes a file in its worktree while it implements.
+// changes a file in its worktree while it implements. Told Implement isn't done, it changes another
+// file and reports it done again.
 const agent = async ({ sessionId, text, options }: StartedTurn) => {
   const report = async (phase: string, extra: Record<string, unknown> = {}) => {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
@@ -182,9 +189,12 @@ const agent = async ({ sessionId, text, options }: StartedTurn) => {
   if (text.startsWith("/grill-with-docs")) await report("grill");
   else if (text === "/to-tickets")
     await report("spec", { spec: { brief: 2, tickets: [3, 4] } });
-  else if (text.startsWith("/implement-spec")) {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    writeFileSync(join(options.cwd as string, "toggle.ts"), "export {};\n");
+  else if (text.includes("declined the Checkpoint at the end of Implement")) {
+    writeFileSync(join(String(options.cwd), "fix.ts"), "export {};\n");
+    await report("implement");
+  } else if (text.startsWith("/implement-spec")) {
+    if (editing)
+      writeFileSync(join(String(options.cwd), "toggle.ts"), "export {};\n");
     await report("implement");
     for (let i = 0; i < 100 && !answers.at(-1)?.isError; i++) {
       if (requests.some((r) => r.sessionId === sessionId)) {
@@ -341,6 +351,29 @@ const holdingWriter = Effect.gen(function* () {
   };
 });
 
+// A Project where the developer has accepted Autonomy at the end of Implement.
+const autonomousImplement = Effect.gen(function* () {
+  const root = project();
+  const client = yield* makeClient;
+  const live = yield* makeLive;
+  let last = "";
+  for (let i = 0; i < 5; i++) {
+    last = yield* implemented(root);
+    yield* approveAt(last, "implement");
+  }
+  const autonomy = yield* firstWhere(
+    live.Autonomy({ session: last }),
+    (a) =>
+      a?.boundaries.find((b) => b.boundary === "implement")?.offer !==
+      undefined,
+  );
+  const offer = autonomy?.boundaries.find(
+    (b) => b.boundary === "implement",
+  )?.offer;
+  yield* client.autonomy.accept({ params: { id: offer?.id ?? "" } });
+  return root;
+});
+
 layer(server(freshDatabase()), { excludeTestServices: true })(
   "Implement exit",
   (it) => {
@@ -405,6 +438,64 @@ layer(server(freshDatabase()), { excludeTestServices: true })(
         }),
     );
 
+    it.effect(
+      "with code changed since the last Walkthrough, writes a new one and links the Checkpoint to it, not the stale one",
+      () =>
+        Effect.gen(function* () {
+          const id = yield* implemented(project());
+          const first = yield* flowOf(
+            id,
+            (f) => f?.checkpoint?.walkthrough !== undefined,
+          );
+          assert.strictEqual(first?.checkpoint?.walkthrough?.number, 1);
+
+          // The developer declines; the agent changes more code and reports Implement done again.
+          const client = yield* makeClient;
+          yield* client.flows.decline({
+            params: { id: first?.checkpoint?.id ?? "" },
+            payload: { note: "Handle the system theme too." },
+          });
+
+          const flow = yield* flowOf(
+            id,
+            (f) =>
+              f?.checkpoint !== undefined &&
+              f.checkpoint.id !== first?.checkpoint?.id,
+          );
+          const live = yield* makeLive;
+          const walkthroughs = yield* firstWhere(
+            live.Walkthroughs({ session: id }),
+            (all) => all.some((w) => w.number === 2 && w.status === "ready"),
+          );
+          assert.deepStrictEqual(flow?.checkpoint?.walkthrough, {
+            id: walkthroughs?.find((w) => w.number === 2)?.id ?? "",
+            number: 2,
+          });
+        }),
+    );
+
+    it.effect(
+      "when the Walkthrough can't be written, raises nothing and tells the agent",
+      () =>
+        Effect.gen(function* () {
+          failing = true;
+          const id = yield* implemented(project());
+
+          const told = yield* turnWhere(id, (text) =>
+            text.includes("couldn't write the Session's Walkthrough"),
+          );
+          assert.include(told.text, "Report Implement done again");
+          const flow = yield* flowOf(id, () => true);
+          assert.isUndefined(flow?.checkpoint);
+          assert.deepStrictEqual(statuses(flow), [
+            "grill:done",
+            "spec:done",
+            "implement:current",
+            "retro:notStarted",
+          ]);
+        }).pipe(Effect.ensuring(Effect.sync(() => (failing = false)))),
+    );
+
     it.effect("approving the Implement Checkpoint sends /retro", () =>
       Effect.gen(function* () {
         const id = yield* implemented(project());
@@ -425,25 +516,7 @@ layer(server(freshDatabase()), { excludeTestServices: true })(
       "under Autonomy at the end of Implement, approves it only once the Walkthrough is written",
       () =>
         Effect.gen(function* () {
-          const root = project();
-          const client = yield* makeClient;
-          const live = yield* makeLive;
-          let last = "";
-          for (let i = 0; i < 5; i++) {
-            last = yield* implemented(root);
-            yield* approveAt(last, "implement");
-          }
-          const autonomy = yield* firstWhere(
-            live.Autonomy({ session: last }),
-            (a) =>
-              a?.boundaries.find((b) => b.boundary === "implement")?.offer !==
-              undefined,
-          );
-          const offer = autonomy?.boundaries.find(
-            (b) => b.boundary === "implement",
-          )?.offer;
-          yield* client.autonomy.accept({ params: { id: offer?.id ?? "" } });
-
+          const root = yield* autonomousImplement;
           const { open } = yield* holdingWriter;
           const id = yield* implemented(root);
           yield* eventually(() => (writtenInTurn.has(id) ? true : undefined));
@@ -462,12 +535,30 @@ layer(server(freshDatabase()), { excludeTestServices: true })(
             (f) => f?.phases[2]?.status === "done",
           );
           assert.isUndefined(flow?.checkpoint);
+          const live = yield* makeLive;
           const walkthroughs = yield* firstWhere(
             live.Walkthroughs({ session: id }),
             () => true,
           );
           assert.strictEqual(walkthroughs?.[0]?.status, "ready");
         }),
+    );
+
+    it.effect(
+      "with nothing changed and no Walkthrough at all, raises the Checkpoint without a link, even under Autonomy",
+      () =>
+        Effect.gen(function* () {
+          const root = yield* autonomousImplement;
+          editing = false;
+          const id = yield* implemented(root);
+
+          const flow = yield* flowOf(id, (f) => f?.checkpoint !== undefined);
+          assert.strictEqual(flow?.checkpoint?.phase, "implement");
+          assert.isUndefined(flow?.checkpoint?.walkthrough);
+          assert.isUndefined(
+            started.find((t) => t.sessionId === id && t.text === "/retro"),
+          );
+        }).pipe(Effect.ensuring(Effect.sync(() => (editing = true)))),
     );
   },
 );

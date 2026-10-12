@@ -554,6 +554,8 @@ layer(server, { excludeTestServices: true })("Autonomy", (it) => {
           yield* client.autonomy.accept({ params: { id: b.offer?.id ?? "" } });
         yield* autonomyOf(last, (a) => a.boundaries.every((b) => b.granted));
 
+        // Fern approves the end of Implement only with a Walkthrough to link to.
+        editing = true;
         retroFindings = [
           {
             title: "Lint before each commit",
@@ -820,6 +822,8 @@ layer(server, { excludeTestServices: true })("Escapes", (it) => {
         const say = (id: string, text: string) =>
           client.sessions.send({ params: { id }, payload: { text } });
         silent = new Set(["implement", "retro"]);
+        // Fern approves the end of Implement only with a Walkthrough to link to.
+        editing = true;
         const id = yield* startSession(root);
         yield* approveAt(id, "grill");
         yield* approveAt(id, "spec");

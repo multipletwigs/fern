@@ -215,6 +215,27 @@ const startSession = (text: string) =>
     return id;
   });
 
+// The latest value of a live stream, kept as it changes.
+const watch = <A, E>(stream: Stream.Stream<A, E>) =>
+  Effect.gen(function* () {
+    let latest: A | undefined;
+    const fiber = yield* stream.pipe(
+      Stream.runForEach((a) => Effect.sync(() => (latest = a))),
+      Effect.forkChild,
+    );
+    yield* Effect.suspend(() => Effect.fromNullishOr(latest)).pipe(
+      Effect.retry({ schedule: Schedule.spaced("5 millis") }),
+    );
+    return { latest: () => latest, fiber };
+  });
+
+// Waits for the predicate to hold within a second, well before any two-second poll.
+const soon = (holds: () => boolean) =>
+  Effect.suspend(() => (holds() ? Effect.void : Effect.fail("not yet"))).pipe(
+    Effect.retry({ schedule: Schedule.spaced("10 millis") }),
+    Effect.timeout("1 second"),
+  );
+
 const statuses = (flow: Flow | null | undefined) =>
   flow?.phases.map((p) => `${p.phase}:${p.status}`);
 
@@ -562,28 +583,6 @@ layer(server(freshDatabase()), { excludeTestServices: true })("Flows", (it) => {
     () =>
       Effect.gen(function* () {
         const live = yield* makeLive;
-        // The latest value of a live stream, kept as it changes.
-        const watch = <A, E>(stream: Stream.Stream<A, E>) =>
-          Effect.gen(function* () {
-            let latest: A | undefined;
-            const fiber = yield* stream.pipe(
-              Stream.runForEach((a) => Effect.sync(() => (latest = a))),
-              Effect.forkChild,
-            );
-            yield* Effect.suspend(() => Effect.fromNullishOr(latest)).pipe(
-              Effect.retry({ schedule: Schedule.spaced("5 millis") }),
-            );
-            return { latest: () => latest, fiber };
-          });
-        // Holds within a second, well before any two-second poll.
-        const soon = (holds: () => boolean) =>
-          Effect.suspend(() =>
-            holds() ? Effect.void : Effect.fail("not yet"),
-          ).pipe(
-            Effect.retry({ schedule: Schedule.spaced("10 millis") }),
-            Effect.timeout("1 second"),
-          );
-
         agent = () => Promise.resolve();
         const phases = yield* watch(live.SessionPhases());
         const id = yield* startSession("Show me at once");
