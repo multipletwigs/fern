@@ -782,6 +782,36 @@ layer(server, { excludeTestServices: true })("Escapes", (it) => {
   );
 
   it.effect(
+    "an image on its own, a slash command, or \"continue\" corrects nothing, so it's no Escape",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* autonomousSpec;
+        silent = new Set(["implement"]);
+        const id = yield* startSession(root);
+        yield* approveAt(id, "grill");
+        yield* turnWhere(id, (t) => t.text === "/implement-spec #2");
+        yield* autonomyOf(id, (a) => at(a, "spec")?.approvedByFern === true);
+
+        const client = yield* makeClient;
+        const say = (payload: {
+          text: string;
+          images?: Array<{ mediaType: "image/png"; data: string }>;
+        }) => client.sessions.send({ params: { id }, payload });
+        yield* say({
+          text: "",
+          images: [{ mediaType: "image/png", data: "iVBORw0KGgo=" }],
+        });
+        yield* say({ text: "/compact" });
+        yield* say({ text: "  /context  " });
+        yield* say({ text: "Continue." });
+
+        const after = yield* autonomyOf(id);
+        assert.isTrue(at(after, "spec")?.granted);
+        assert.isUndefined(at(after, "spec")?.withdrawn);
+      }).pipe(restoring),
+  );
+
+  it.effect(
     "doesn't count Redirects at a boundary the developer approved, nor after the next Phase reports done, nor once the Session is archived",
     () =>
       Effect.gen(function* () {

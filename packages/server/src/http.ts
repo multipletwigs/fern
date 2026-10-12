@@ -26,8 +26,14 @@ export const SystemHandlers = HttpApiBuilder.group(
   (handlers) => handlers.handleAll({ health: () => Effect.void }),
 );
 
-// A developer message corrects the agent's course, unless it only says "continue".
-const isRedirect = (text: string) => !/^\s*continue[.!]*\s*$/i.test(text);
+// A developer message corrects the agent's course when it says something: not an image on its own,
+// a slash command, or only "continue".
+const isRedirect = (text: string) => {
+  const said = text.trim();
+  return (
+    said !== "" && !said.startsWith("/") && !/^continue[.!]*$/i.test(said)
+  );
+};
 
 export const SessionsHandlers = HttpApiBuilder.group(
   FernApi,
