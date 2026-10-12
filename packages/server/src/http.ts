@@ -134,6 +134,19 @@ export const AutonomyHandlers = HttpApiBuilder.group(
   }),
 );
 
+export const SubagentsHandlers = HttpApiBuilder.group(
+  FernApi,
+  "subagents",
+  Effect.fn(function* (handlers) {
+    const subagents = yield* Subagents;
+    return handlers.handleAll({
+      close: ({ params }) => subagents.close(params.sessionId, params.agentId),
+      reopen: ({ params }) =>
+        subagents.reopen(params.sessionId, params.agentId),
+    });
+  }),
+);
+
 // Handlers with their services still required, so tests can swap implementations.
 export const HandlersNoDeps = Layer.mergeAll(
   SystemHandlers,
@@ -143,6 +156,7 @@ export const HandlersNoDeps = Layer.mergeAll(
   FlowsHandlers,
   RoundsHandlers,
   AutonomyHandlers,
+  SubagentsHandlers,
 );
 
 // FernApi's handlers and the live streams', on one set of the real services, with a Walkthrough

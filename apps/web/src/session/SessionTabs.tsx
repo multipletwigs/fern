@@ -13,18 +13,23 @@ export function SessionTabs({
   waiting,
   subagents,
   onSelect,
+  onClose,
 }: {
   tab: SessionTab;
   grill: boolean;
   waiting: boolean;
+  // The Subagents whose tabs are open.
   subagents: ReadonlyArray<SubagentSummary>;
   onSelect: (tab: SessionTab) => void;
+  // Closes a Subagent's tab, by agent id. Grill and Chat can't be closed.
+  onClose: (agentId: string) => void;
 }) {
   const tabs: Array<{
     value: SessionTab;
     label: ReactNode;
     muted?: boolean;
     title?: string;
+    onClose?: () => void;
   }> = [];
   if (grill)
     tabs.push({
@@ -50,6 +55,7 @@ export function SessionTabs({
       ),
       muted: true,
       title: `${subagent.agentType}: ${subagent.description}`,
+      onClose: () => onClose(subagent.agentId),
     });
   return <TabBar label="Session" value={tab} onChange={onSelect} tabs={tabs} />;
 }

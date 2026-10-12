@@ -14,6 +14,7 @@ import {
   type TranscriptItem,
 } from "@repo/api";
 import {
+  Clock,
   Context,
   DateTime,
   Effect,
@@ -22,7 +23,9 @@ import {
   Predicate,
   Schedule,
   Stream,
+  SubscriptionRef,
 } from "effect";
+import { SqlClient } from "effect/sql";
 import { sdk } from "../agentSdk";
 import { diffItems, type Sent } from "../transcript/diff";
 import { buildItems, promptText, type StoredMessage } from "../transcript/View";
@@ -64,7 +67,7 @@ const assignmentOf = (messages: ReadonlyArray<StoredMessage>) => {
 const workOf = (messages: ReadonlyArray<StoredMessage>) =>
   messages[0]?.type === "user" ? messages.slice(1) : messages;
 
-// What the Subagent's tab says of it. Without metadata, its type and description come from its
+// What the Subagent says of itself. Without metadata, its type and description come from its
 // Agent call, else "Subagent" and the first line of its Assignment.
 const summarize = (
   { agentId, messages, metadata }: Transcript,
@@ -101,6 +104,17 @@ const sessionInfo = (sessionId: string) =>
       Predicate.isNotUndefined,
       () => new SessionNotFound({ id: sessionId }),
     ),
+  );
+
+// Fails unless the Session has a Subagent by this id.
+const known = (sessionId: string, agentId: string) =>
+  sessionInfo(sessionId).pipe(
+    Effect.andThen(sdk("listSubagents", () => listSubagents(sessionId))),
+    Effect.filterOrFail(
+      (ids) => ids.includes(agentId),
+      () => new SubagentNotFound({ sessionId, agentId }),
+    ),
+    Effect.asVoid,
   );
 
 const readSubagent = (
@@ -143,6 +157,22 @@ export class Subagents extends Context.Service<
       Stream.Stream<SubagentUpdate, TranscriptError>,
       SessionNotFound | SubagentNotFound | TranscriptError
     >;
+    // Closes the Subagent's tab for the Session, until it's reopened.
+    close(
+      sessionId: string,
+      agentId: string,
+    ): Effect.Effect<
+      void,
+      SessionNotFound | SubagentNotFound | TranscriptError
+    >;
+    // Reopens the Subagent's closed tab.
+    reopen(
+      sessionId: string,
+      agentId: string,
+    ): Effect.Effect<
+      void,
+      SessionNotFound | SubagentNotFound | TranscriptError
+    >;
   }
 >()("@repo/server/subagent/Subagents") {
   static readonly layer = Layer.effect(
@@ -150,6 +180,17 @@ export class Subagents extends Context.Service<
     Effect.gen(function* () {
       const files = yield* SubagentFiles;
       const turns = yield* Turns;
+      const sql = yield* SqlClient.SqlClient;
+      // Bumped after every close and reopen, so open lists show it at once.
+      const closings = yield* SubscriptionRef.make(0);
+
+      const closedOf = (sessionId: string) =>
+        sql<{ agentId: string }>`
+          SELECT agent_id FROM closed_subagents WHERE session_id = ${sessionId}
+        `.pipe(
+          Effect.map((rows) => new Set(rows.map((row) => row.agentId))),
+          Effect.orDie,
+        );
 
       // Ticks whenever the Session's transcript or one of its Subagent files changes, or a turn
       // Fern runs starts or ends. A poll that misses the transcript skips a beat.
@@ -188,6 +229,7 @@ export class Subagents extends Context.Service<
           subagents: session.metadata,
         };
         const ids = yield* sdk("listSubagents", () => listSubagents(sessionId));
+        const closed = yield* closedOf(sessionId);
         const read = yield* Effect.forEach(
           ids,
           (id) => readSubagent(sessionId, id, session.metadata),
@@ -200,7 +242,12 @@ export class Subagents extends Context.Service<
         for (const t of started)
           collectCalls(buildItems(workOf(t.messages), context), calls);
         return started
-          .map((t) => SubagentSummary.make(summarize(t, calls)))
+          .map((t) =>
+            SubagentSummary.make({
+              ...summarize(t, calls),
+              closed: closed.has(t.agentId),
+            }),
+          )
           .toSorted((a, b) => startMillis(a) - startMillis(b));
       });
 
@@ -236,7 +283,10 @@ export class Subagents extends Context.Service<
       return Subagents.of({
         list: Effect.fn("Subagents.list")(function* (sessionId: string) {
           yield* sessionInfo(sessionId);
-          return changes(sessionId).pipe(
+          return Stream.zipLatest(
+            changes(sessionId),
+            SubscriptionRef.changes(closings),
+          ).pipe(
             Stream.mapEffect(() =>
               summaries(sessionId).pipe(
                 Effect.asSome,
@@ -255,12 +305,7 @@ export class Subagents extends Context.Service<
           sessionId: string,
           agentId: string,
         ) {
-          yield* sessionInfo(sessionId);
-          const ids = yield* sdk("listSubagents", () =>
-            listSubagents(sessionId),
-          );
-          if (!ids.includes(agentId))
-            return yield* new SubagentNotFound({ sessionId, agentId });
+          yield* known(sessionId, agentId);
           return changes(sessionId).pipe(
             Stream.mapEffect(() =>
               view(sessionId, agentId).pipe(
@@ -285,6 +330,31 @@ export class Subagents extends Context.Service<
               },
             ),
           );
+        }),
+
+        close: Effect.fn("Subagents.close")(function* (
+          sessionId: string,
+          agentId: string,
+        ) {
+          yield* known(sessionId, agentId);
+          const closedAt = yield* Clock.currentTimeMillis;
+          yield* sql`
+            INSERT INTO closed_subagents ${sql.insert({ sessionId, agentId, closedAt })}
+            ON CONFLICT DO NOTHING
+          `.pipe(Effect.orDie);
+          yield* SubscriptionRef.update(closings, (n) => n + 1);
+        }),
+
+        reopen: Effect.fn("Subagents.reopen")(function* (
+          sessionId: string,
+          agentId: string,
+        ) {
+          yield* known(sessionId, agentId);
+          yield* sql`
+            DELETE FROM closed_subagents
+            WHERE session_id = ${sessionId} AND agent_id = ${agentId}
+          `.pipe(Effect.orDie);
+          yield* SubscriptionRef.update(closings, (n) => n + 1);
         }),
       });
     }),
