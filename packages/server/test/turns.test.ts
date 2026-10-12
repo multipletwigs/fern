@@ -3,14 +3,17 @@ import { Effect, Layer } from "effect";
 import { vi } from "vitest";
 import { GitError } from "../src/git/Git";
 import { Snapshots } from "../src/snapshot/Snapshots";
+import { FernTools } from "../src/turn/FernTools";
 import { HostedSessions } from "../src/turn/HostedSessions";
 import { Turns } from "../src/turn/Turns";
 
 const SESSION = "6f0c4a52-7d2e-4f0e-9a36-1f8b2c9d4e11";
 
-// Each turn Claude Code would run, in the order they start: what it was sent, and how to end it.
+// Each turn Claude Code would run, in the order they start: what it was sent, the options it was
+// run with, and how to end it.
 interface FakeTurn {
   readonly text: string;
+  readonly options: Record<string, unknown>;
   readonly finish: () => void;
 }
 const started: Array<FakeTurn> = [];
@@ -20,8 +23,10 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
     Promise.resolve({ sessionId: SESSION, lastModified: 0, cwd: "/repo" }),
   query: ({
     prompt,
+    options,
   }: {
     prompt: AsyncIterable<{ message: { content: Array<{ text?: string }> } }>;
+    options: Record<string, unknown>;
   }) => {
     const { promise: ended, resolve: finish } = Promise.withResolvers<void>();
     async function* events() {
@@ -29,7 +34,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
       const text = first.done
         ? ""
         : (first.value.message.content.find((part) => part.text)?.text ?? "");
-      started.push({ text, finish });
+      started.push({ text, options, finish });
       yield { type: "system", subtype: "init", model: "claude-test" };
       await ended;
       yield {
@@ -56,15 +61,41 @@ const NoSnapshots = Layer.succeed(
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   { repo: () => Effect.fail(new GitError({ message: "not a repo" })) } as never,
 );
+// SESSION is an External Session; the ones Fern starts are Hosted.
+const hostedIds = new Set<string>();
 const KnownSessions = Layer.succeed(
   HostedSessions,
   HostedSessions.of({
-    record: () => Effect.void,
+    record: (id) => Effect.sync(() => hostedIds.add(id)),
     listed: Effect.succeed([]),
     isProject: () => Effect.succeed(true),
+    isHosted: (id) => Effect.sync(() => hostedIds.has(id)),
   }),
 );
-const TestTurns = Turns.layer.pipe(Layer.provide([NoSnapshots, KnownSessions]));
+// Stands in for the Flow: a tool server and steering named after the Session they're for.
+const TestTools = Layer.succeed(
+  FernTools,
+  FernTools.of({
+    options: (id) =>
+      Effect.succeed({
+        mcpServers: { fern: { command: `fern-tools-${id}` } },
+        appendSystemPrompt: `Follow the Flow in ${id}.`,
+      }),
+  }),
+);
+const TestTurns = Turns.layer.pipe(
+  Layer.provide([NoSnapshots, KnownSessions, TestTools]),
+);
+
+// What a Hosted Session's turns are run with besides the message.
+const hostedOptions = (id: string) => ({
+  mcpServers: { fern: { command: `fern-tools-${id}` } },
+  systemPrompt: {
+    type: "preset",
+    preset: "claude_code",
+    append: `Follow the Flow in ${id}.`,
+  },
+});
 
 const tick = Effect.promise(
   () => new Promise((resolve) => setTimeout(resolve, 5)),
@@ -77,10 +108,10 @@ const until = (condition: () => boolean) =>
   });
 
 // Waits for the Session to go idle.
-const idle = (turns: Turns["Service"]) =>
+const idle = (turns: Turns["Service"], id = SESSION) =>
   Effect.gen(function* () {
     for (let i = 0; i < 200; i++) {
-      if ((yield* turns.turn(SESSION))?.running === false) return;
+      if ((yield* turns.turn(id))?.running === false) return;
       yield* tick;
     }
   });
@@ -142,5 +173,79 @@ layer(TestTurns, { excludeTestServices: true })("Turns", (it) => {
       for (let i = 0; i < 10; i++) yield* tick;
       assert.strictEqual(started.length, 1);
     }),
+  );
+
+  it.effect(
+    "runs every turn of a Hosted Session with Fern's tools and steering",
+    () =>
+      Effect.gen(function* () {
+        started.length = 0;
+        const turns = yield* Turns;
+        const id = yield* turns.start("/repo", message("first"));
+        yield* until(() => started.length === 1);
+        yield* turns.send(id, message("queued"));
+        started[0]?.finish();
+        yield* until(() => started.length === 2);
+        started[1]?.finish();
+        yield* idle(turns, id);
+
+        // Resumed later, once the queue has run.
+        yield* turns.send(id, message("resumed"));
+        yield* until(() => started.length === 3);
+        started[2]?.finish();
+        yield* idle(turns, id);
+
+        assert.deepStrictEqual(
+          started.map((turn) => turn.text),
+          ["first", "queued", "resumed"],
+        );
+        for (const turn of started)
+          assert.deepInclude(turn.options, hostedOptions(id));
+      }),
+  );
+
+  it.effect("runs an External Session's turns with nothing extra", () =>
+    Effect.gen(function* () {
+      started.length = 0;
+      const turns = yield* Turns;
+      yield* turns.send(SESSION, message("hello"));
+      yield* until(() => started.length === 1);
+      started[0]?.finish();
+      yield* idle(turns);
+      assert.notProperty(started[0]?.options, "mcpServers");
+      assert.notProperty(started[0]?.options, "systemPrompt");
+    }),
+  );
+});
+
+// Until the Flow engine supplies its own, a Hosted Session is only told about the Flow.
+layer(
+  Turns.layer.pipe(
+    Layer.provide([NoSnapshots, KnownSessions, FernTools.layer]),
+  ),
+  { excludeTestServices: true },
+)("Turns with the default Fern tools", (it) => {
+  it.effect(
+    "describes the Flow to a Hosted Session and offers it no tools",
+    () =>
+      Effect.gen(function* () {
+        started.length = 0;
+        const turns = yield* Turns;
+        const id = yield* turns.start("/repo", message("first"));
+        yield* until(() => started.length === 1);
+        started[0]?.finish();
+        yield* idle(turns, id);
+
+        const options = started[0]?.options;
+        assert.deepStrictEqual(options?.mcpServers, {});
+        assert.deepInclude(options?.systemPrompt, {
+          type: "preset",
+          preset: "claude_code",
+        });
+        assert.match(
+          JSON.stringify(options?.systemPrompt),
+          /Grill.*Spec.*Implement.*Retro/,
+        );
+      }),
   );
 });

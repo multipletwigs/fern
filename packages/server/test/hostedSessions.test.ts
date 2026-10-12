@@ -76,6 +76,8 @@ layer(HostedSessions.layer.pipe(Layer.provide(DatabaseLive(":memory:"))))(
           const ids = (yield* sessions.listed).map((info) => info.sessionId);
           assert.deepStrictEqual(ids, [MOVED, FERN, TERMINAL]);
           assert.isTrue(yield* sessions.isProject("/work/new"));
+          assert.isTrue(yield* sessions.isHosted(FERN));
+          assert.isFalse(yield* sessions.isHosted(TERMINAL));
         }),
     );
 
