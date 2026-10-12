@@ -15,7 +15,9 @@ The developer's own Fern (API on 7420, page on 5173, its own userData and `~/.cl
    pnpm verify:up N
    ```
 
-   This starts API `743N` and page `518N` with a fresh userData and its own `CLAUDE_CONFIG_DIR`, all under `$TMPDIR/fern-verify/N`. It seeds that config dir with the fixture from `scripts/verify/fixture.ts`. It prints the page URL and the log folder, and fails if the slot's ports are taken.
+   This starts API `743N` and page `518N` with a fresh userData and its own `CLAUDE_CONFIG_DIR`, all under `~/.fern/verify/N`. It seeds that config dir with the fixture from `scripts/verify/fixture.ts`. It prints the page URL and the log folder, and fails if the slot's ports are taken.
+
+   It also writes the slot's manifest, `~/.fern/verify/N/slot.json`: the slot, your worktree's root, its branch, both ports, the page URL, the pids it started and when. Every Fern, the developer's own and yours, reads these manifests and lists each slot with a live process under "Running" at the bottom of the sidebar, with the Session whose worktree it runs from.
 
 2. Drive it with agent-browser, in the slot's own browser session:
 
@@ -24,14 +26,14 @@ The developer's own Fern (API on 7420, page on 5173, its own userData and `~/.cl
    agent-browser open http://localhost:518N && agent-browser wait 2500
    agent-browser snapshot -i -c          # find refs; the fixture Session starts "Fixture: audit…"
    agent-browser click @eX
-   agent-browser screenshot "$TMPDIR/fern-verify/N/shot.png"
+   agent-browser screenshot ~/.fern/verify/N/shot.png
    ```
 
    The chat is a virtual list, so only rows on screen show in a snapshot. Scroll (`agent-browser scroll down 3000`) to reach later rows.
 
 3. After a change to the main process, the server or the API, restart: `pnpm verify:down N`, then `pnpm verify:up N` again (it rebuilds). Web changes hot-reload through Vite.
 
-4. Finish with `pnpm verify:down N`. It stops only that slot's processes and closes its browser session.
+4. Finish with `pnpm verify:down N`. It stops only that slot's processes, removes its manifest and closes its browser session. The rest of the slot's folder stays until the next `pnpm verify:up N` clears it, so move screenshots you want to keep elsewhere.
 
 ## The fixture
 

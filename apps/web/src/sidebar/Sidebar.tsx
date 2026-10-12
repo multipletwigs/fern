@@ -5,6 +5,7 @@ import { NewSessionButton } from "@repo/ui/NewSessionButton";
 import { ProjectGroup } from "@repo/ui/ProjectGroup";
 import { SessionRow } from "@repo/ui/SessionRow";
 import { SidebarPanel } from "@repo/ui/SidebarPanel";
+import { WorktreeBadge } from "@repo/ui/WorktreeBadge";
 import { isWorking } from "@repo/api";
 import { DateTime } from "effect";
 import { Atom, AsyncResult } from "effect/reactivity";
@@ -23,6 +24,7 @@ import {
 import { ago, useNow } from "../session/time";
 import { screenAtoms } from "../workspace/screen";
 import { ArchiveSession } from "./ArchiveSession";
+import { RunningSlots } from "./RunningSlots";
 
 const projectName = (path: string) => path.split("/").at(-1) || "Unknown";
 
@@ -133,6 +135,14 @@ export function Sidebar() {
                   onPreload={() =>
                     preload(session.id, session.worktree ?? project.path)
                   }
+                  badge={
+                    session.worktree !== undefined && (
+                      <WorktreeBadge
+                        branch={session.gitBranch}
+                        path={session.worktree}
+                      />
+                    )
+                  }
                   action={
                     session.ownWorktree === true && (
                       <ArchiveSession
@@ -147,6 +157,7 @@ export function Sidebar() {
             })}
         />
       ))}
+      <RunningSlots onSelect={select} />
     </SidebarPanel>
   );
 }
