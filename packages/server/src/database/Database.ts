@@ -75,6 +75,16 @@ const migrations = {
       )
     `;
   }),
+  // A Hosted Session runs in a worktree of its own (ADR 0005): `cwd` is then inside the worktree,
+  // and the Session is listed under the Project it was started from. Sessions started before have
+  // none of these.
+  "0003_hosted_session_worktrees": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE hosted_sessions ADD COLUMN project_root TEXT`;
+    yield* sql`ALTER TABLE hosted_sessions ADD COLUMN branch TEXT`;
+    yield* sql`ALTER TABLE hosted_sessions ADD COLUMN worktree TEXT`;
+    yield* sql`ALTER TABLE hosted_sessions ADD COLUMN base_commit TEXT`;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

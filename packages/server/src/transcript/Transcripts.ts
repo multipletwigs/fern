@@ -23,32 +23,48 @@ import {
   Stream,
 } from "effect";
 import { sdk } from "../agentSdk";
-import { HostedSessions } from "../turn/HostedSessions";
+import { HostedSessions, type HostedWorktree } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { buildView } from "./View";
 
 // Reads Claude Code transcripts through the Agent SDK, which honours CLAUDE_CONFIG_DIR.
 
-// Groups Sessions by working directory. The SDK lists newest first, so each Project's Sessions
-// and the Projects themselves come out most recently active first.
+// Groups Sessions by Project: the folder they ran in, or for a Session in a worktree Fern made, the
+// folder it was started from. The SDK lists newest first, so each Project's Sessions and the
+// Projects themselves come out most recently active first.
 type TurnsById = ReadonlyMap<string, HostedTurn>;
 
-const toProjects = ({
-  infos,
-  turns,
-}: {
-  infos: ReadonlyArray<SDKSessionInfo>;
-  turns: TurnsById;
-}) => {
+interface Listing {
+  readonly infos: ReadonlyArray<SDKSessionInfo>;
+  readonly turns: TurnsById;
+  readonly worktrees: ReadonlyArray<HostedWorktree>;
+}
+
+// The worktree Fern made that the Session ran in, if any. Another Session run there, such as one in
+// a terminal, belongs to the same Project.
+const worktreeOf = (
+  worktrees: ReadonlyArray<HostedWorktree>,
+  info: SDKSessionInfo,
+) => {
+  const cwd = info.cwd ?? "";
+  return (
+    worktrees.find((w) => w.id === info.sessionId) ??
+    worktrees.find((w) => cwd === w.cwd || cwd.startsWith(`${w.cwd}/`))
+  );
+};
+
+const toProjects = ({ infos, turns, worktrees }: Listing) => {
   const byPath = new Map<string, Array<SessionSummary>>();
   for (const info of infos) {
-    const path = info.cwd ?? "";
+    const worktree = worktreeOf(worktrees, info);
+    const path = worktree?.projectRoot ?? info.cwd ?? "";
     const sessions = byPath.get(path) ?? [];
     sessions.push(
       SessionSummary.make({
         id: info.sessionId,
         title: info.customTitle ?? info.summary,
-        gitBranch: info.gitBranch,
+        gitBranch: info.gitBranch ?? worktree?.branch,
+        worktree: worktree ? (info.cwd ?? worktree.cwd) : undefined,
         lastActivityAt: DateTime.makeUnsafe(info.lastModified),
         hostedTurn: turns.get(info.sessionId),
       }),
@@ -61,17 +77,11 @@ const toProjects = ({
 };
 
 // What the sidebar shows of a Session; a change to any of it means the list should be re-sent.
-const listingKey = ({
-  infos,
-  turns,
-}: {
-  infos: ReadonlyArray<SDKSessionInfo>;
-  turns: TurnsById;
-}) =>
+const listingKey = ({ infos, turns, worktrees }: Listing) =>
   infos
     .map((i) => {
       const turn = turns.get(i.sessionId);
-      return `${i.sessionId}:${i.lastModified}:${i.customTitle ?? i.summary}:${i.gitBranch}:${turn?.running}:${turn?.endedAt?.epochMilliseconds}`;
+      return `${i.sessionId}:${i.lastModified}:${i.customTitle ?? i.summary}:${i.gitBranch}:${worktreeOf(worktrees, i)?.projectRoot}:${turn?.running}:${turn?.endedAt?.epochMilliseconds}`;
     })
     .join("\n");
 
@@ -123,7 +133,8 @@ export class Transcripts extends Context.Service<
             );
             const byId = new Map<string, HostedTurn>();
             for (const [id, turn] of hosted) if (turn) byId.set(id, turn);
-            return { infos, turns: byId };
+            const worktrees = yield* sessions.worktrees;
+            return { infos, turns: byId, worktrees };
           }),
           Schedule.spaced("2 seconds"),
         ).pipe(

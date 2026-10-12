@@ -1,5 +1,5 @@
 import { NodeHttpServer } from "@effect/platform-node";
-import { ApiLive, DatabaseLive } from "@repo/server";
+import { ApiLive, DatabaseLive, WorktreesDir } from "@repo/server";
 import { app } from "electron";
 import { Context, Effect, Layer } from "effect";
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/http";
@@ -13,16 +13,18 @@ import path from "node:path";
 const DEV_API_PORT = Number(process.env.FERN_API_PORT ?? 7420);
 const DEV_WEB_URL = "http://localhost:5173";
 
-// The API with Fern's database, kept with the app's other data (ADR 0004). Built once the app is
-// ready, which is when Electron can say where that is.
+// The API with Fern's database and its Sessions' worktrees, kept with the app's other data (ADR
+// 0004, ADR 0005). Built once the app is ready, which is when Electron can say where that is.
 const Api = Layer.unwrap(
-  Effect.sync(() =>
-    ApiLive.pipe(
-      Layer.provide(
-        DatabaseLive(path.join(app.getPath("userData"), "fern.db")),
-      ),
-    ),
-  ),
+  Effect.sync(() => {
+    const data = app.getPath("userData");
+    return ApiLive.pipe(
+      Layer.provide([
+        DatabaseLive(path.join(data, "fern.db")),
+        Layer.succeed(WorktreesDir, { dir: data }),
+      ]),
+    );
+  }),
 );
 
 const serve = <E, R>(port: number, routes: Layer.Layer<never, E, R>) =>

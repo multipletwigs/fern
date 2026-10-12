@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
-import { NoWriter } from "./stubs";
+import { NoWorktreesDir, NoWriter } from "./stubs";
 
 // A git repo a Session ran in, with a tracked file, an ignored file, and a binary one.
 const repo = realpathSync(mkdtempSync(join(tmpdir(), "fern-repo-")));
@@ -55,7 +55,9 @@ const first = <A, E>(stream: Stream.Stream<A, E>) =>
 
 layer(
   Layer.mergeAll(
-    handlersWith(NoWriter).pipe(Layer.provide(DatabaseLive(":memory:"))),
+    handlersWith(NoWriter).pipe(
+      Layer.provide([DatabaseLive(":memory:"), NoWorktreesDir]),
+    ),
     HttpServer.layerServices,
   ),
 )("Projects API", (it) => {

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
-import { NoWriter } from "./stubs";
+import { NoWorktreesDir, NoWriter } from "./stubs";
 
 const SESSION = "4b01f026-4f24-41ef-b407-1e7e05c2684c";
 
@@ -97,7 +97,9 @@ const makeLive = RpcTest.makeClient(LiveRpcs);
 
 layer(
   Layer.mergeAll(
-    handlersWith(NoWriter).pipe(Layer.provide(DatabaseLive(":memory:"))),
+    handlersWith(NoWriter).pipe(
+      Layer.provide([DatabaseLive(":memory:"), NoWorktreesDir]),
+    ),
     HttpServer.layerServices,
   ),
 )("Sessions API", (it) => {
@@ -196,7 +198,7 @@ layer(
     Effect.gen(function* () {
       const client = yield* makeClient;
       const error = yield* client.sessions
-        .start({ payload: { cwd: "/nowhere", message: { text: "hello" } } })
+        .start({ payload: { root: "/nowhere", message: { text: "hello" } } })
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "ProjectNotFound");
     }),

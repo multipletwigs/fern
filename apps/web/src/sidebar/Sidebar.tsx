@@ -99,7 +99,9 @@ export function Sidebar() {
                 live={isWorking(lastActivityMs, session.hostedTurn, now)}
                 lastActive={ago(now - lastActivityMs)}
                 onSelect={() => select(session.id)}
-                onPreload={() => preload(session.id, project.path)}
+                onPreload={() =>
+                  preload(session.id, session.worktree ?? project.path)
+                }
               />
             );
           })}

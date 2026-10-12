@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
 import { Snapshots } from "../src/snapshot/Snapshots";
-import { NoWriter } from "./stubs";
+import { NoWorktreesDir, NoWriter } from "./stubs";
 
 // A committed repo with uncommitted work in it already, and a Session that ran in its `app` folder.
 const repo = realpathSync(mkdtempSync(join(tmpdir(), "fern-changes-")));
@@ -67,7 +67,9 @@ const counts = (result: SessionChanges | undefined) =>
 
 layer(
   Layer.mergeAll(
-    handlersWith(NoWriter).pipe(Layer.provide(DatabaseLive(":memory:"))),
+    handlersWith(NoWriter).pipe(
+      Layer.provide([DatabaseLive(":memory:"), NoWorktreesDir]),
+    ),
     Snapshots.layer.pipe(Layer.provide(NodeServices.layer)),
     HttpServer.layerServices,
   ),

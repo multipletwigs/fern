@@ -12,6 +12,7 @@ import { Turns } from "./turn/Turns";
 import { Walkthroughs } from "./walkthrough/Walkthroughs";
 import { WalkthroughWriter } from "./walkthrough/WalkthroughWriter";
 import { Workspace } from "./workspace/Workspace";
+import { Worktrees } from "./worktree/Worktrees";
 
 export const SystemHandlers = HttpApiBuilder.group(
   FernApi,
@@ -31,7 +32,7 @@ export const SessionsHandlers = HttpApiBuilder.group(
       send: ({ params, payload }) => turns.send(params.id, payload),
       start: ({ payload }) =>
         turns
-          .start(payload.cwd, payload.message)
+          .start(payload.root, payload.message)
           .pipe(Effect.map((id) => new SessionRef({ id }))),
       interrupt: ({ params }) => turns.interrupt(params.id),
       unqueue: ({ params }) => turns.unqueue(params.id, params.item),
@@ -73,8 +74,8 @@ export const HandlersNoDeps = Layer.mergeAll(
 );
 
 // FernApi's handlers and the live streams', on one set of the real services, with a Walkthrough
-// writer of the caller's choosing. Everything but the database, which the app opens where it keeps
-// its data.
+// writer of the caller's choosing. Everything but the database and the worktrees' folder, which
+// the app keeps with its data.
 export const handlersWith = (writer: Layer.Layer<WalkthroughWriter>) =>
   Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
     Layer.provide([Transcripts.layer, Walkthroughs.layer]),
@@ -83,6 +84,7 @@ export const handlersWith = (writer: Layer.Layer<WalkthroughWriter>) =>
       Snapshots.layer,
       HostedSessions.layer,
       FernTools.layer,
+      Worktrees.layer,
       writer,
     ]),
     Layer.provide(NodeServices.layer),

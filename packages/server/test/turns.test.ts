@@ -6,6 +6,7 @@ import { Snapshots } from "../src/snapshot/Snapshots";
 import { FernTools } from "../src/turn/FernTools";
 import { HostedSessions } from "../src/turn/HostedSessions";
 import { Turns } from "../src/turn/Turns";
+import { Worktrees } from "../src/worktree/Worktrees";
 
 const SESSION = "6f0c4a52-7d2e-4f0e-9a36-1f8b2c9d4e11";
 
@@ -67,9 +68,24 @@ const KnownSessions = Layer.succeed(
   HostedSessions,
   HostedSessions.of({
     record: (id) => Effect.sync(() => hostedIds.add(id)),
+    worktrees: Effect.succeed([]),
     listed: Effect.succeed([]),
     isProject: () => Effect.succeed(true),
     isHosted: (id) => Effect.sync(() => hostedIds.has(id)),
+  }),
+);
+// Makes a pretend worktree for each Session started, so starting needs no git.
+const FakeWorktrees = Layer.succeed(
+  Worktrees,
+  Worktrees.of({
+    create: (root) =>
+      Effect.succeed({
+        projectRoot: root,
+        branch: "work",
+        base: "0".repeat(40),
+        path: "/worktrees/work",
+        cwd: "/worktrees/work",
+      }),
   }),
 );
 // Stands in for the Flow: a tool server and steering named after the Session they're for.
@@ -84,7 +100,7 @@ const TestTools = Layer.succeed(
   }),
 );
 const TestTurns = Turns.layer.pipe(
-  Layer.provide([NoSnapshots, KnownSessions, TestTools]),
+  Layer.provide([NoSnapshots, KnownSessions, TestTools, FakeWorktrees]),
 );
 
 // What a Hosted Session's turns are run with besides the message.
@@ -197,7 +213,7 @@ layer(TestTurns, { excludeTestServices: true })("Turns", (it) => {
 
         assert.deepStrictEqual(
           started.map((turn) => turn.text),
-          ["first", "queued", "resumed"],
+          ["/grill-with-docs first", "queued", "resumed"],
         );
         for (const turn of started)
           assert.deepInclude(turn.options, hostedOptions(id));
@@ -221,7 +237,7 @@ layer(TestTurns, { excludeTestServices: true })("Turns", (it) => {
 // Until the Flow engine supplies its own, a Hosted Session is only told about the Flow.
 layer(
   Turns.layer.pipe(
-    Layer.provide([NoSnapshots, KnownSessions, FernTools.layer]),
+    Layer.provide([NoSnapshots, KnownSessions, FernTools.layer, FakeWorktrees]),
   ),
   { excludeTestServices: true },
 )("Turns with the default Fern tools", (it) => {
