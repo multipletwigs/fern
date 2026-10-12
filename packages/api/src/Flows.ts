@@ -40,6 +40,21 @@ export const CheckpointStatus = Schema.Literals([
 ]);
 export type CheckpointStatus = typeof CheckpointStatus.Type;
 
+// An issue on the Project's issue tracker.
+export const Issue = Schema.Struct({
+  number: Schema.Int,
+  title: Schema.String,
+  url: Schema.String,
+});
+export type Issue = typeof Issue.Type;
+
+// What Spec produced: the Brief and the tickets that implement it, as found on the issue tracker.
+export const SpecIssues = Schema.Struct({
+  brief: Issue,
+  tickets: Schema.Array(Issue),
+});
+export type SpecIssues = typeof SpecIssues.Type;
+
 // A Session waiting on the developer at the end of a Phase: approving it moves the Flow on to the
 // next Phase, or, at the end of Retro, finishes it.
 export class Checkpoint extends Schema.Class<Checkpoint>("Checkpoint")({
@@ -49,6 +64,8 @@ export class Checkpoint extends Schema.Class<Checkpoint>("Checkpoint")({
   phase: Phase,
   // What the agent says it did in the Phase.
   summary: Schema.String,
+  // At the end of Spec, the Brief and its tickets the developer approves.
+  spec: Schema.optional(SpecIssues),
   status: CheckpointStatus,
   // The developer's note on a declined Checkpoint, sent back to the Session as a Redirect.
   note: Schema.optional(Schema.String),

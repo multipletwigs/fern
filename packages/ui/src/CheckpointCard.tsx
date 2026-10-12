@@ -1,10 +1,10 @@
 import { LockSimpleIcon } from "@phosphor-icons/react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { GhostButton } from "./GhostButton";
 
 // A Session waiting on the developer at the end of a Phase: what the agent says it did, and the
 // question to settle. Approving moves the Flow on; declining asks for a note, which goes back to
-// the Session.
+// the Session. `children` shows what the Phase produced, under the summary.
 export function CheckpointCard({
   eyebrow,
   question,
@@ -13,6 +13,7 @@ export function CheckpointCard({
   failed,
   onApprove,
   onDecline,
+  children,
 }: {
   eyebrow: string;
   question: string;
@@ -21,6 +22,7 @@ export function CheckpointCard({
   failed: boolean;
   onApprove: () => void;
   onDecline: (note: string) => void;
+  children?: ReactNode;
 }) {
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState("");
@@ -44,6 +46,7 @@ export function CheckpointCard({
       <p className="mt-2 text-[13px] leading-5 whitespace-pre-wrap text-muted">
         {summary}
       </p>
+      {children}
       <div className="mt-4">
         {noting ? (
           <div className="space-y-2">

@@ -160,6 +160,11 @@ const migrations = {
       )
     `;
   }),
+  // The Brief and tickets a Spec Checkpoint shows, as JSON.
+  "0008_checkpoint_specs": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE checkpoints ADD COLUMN spec TEXT`;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.
