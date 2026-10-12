@@ -150,6 +150,7 @@ const TestTurns = Turns.layer.pipe(
         record: () => Effect.void,
         archive: () => Effect.die("unused"),
         worktrees: Effect.succeed([]),
+        session: () => Effect.succeed(undefined),
         listed: Effect.succeed([]),
         isProject: () => Effect.succeed(true),
         isHosted: () => Effect.succeed(false),

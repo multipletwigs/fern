@@ -15,6 +15,7 @@ import {
   PHASES,
   PhaseNotSkippable,
   SpecIssues,
+  SessionArchived,
   type SessionInUse,
   SessionNotFound,
   type SessionPhase,
@@ -265,6 +266,7 @@ export class Flows extends Context.Service<
       | CheckpointClosed
       | FindingsUndecided
       | SessionNotFound
+      | SessionArchived
       | SessionInUse
       | TranscriptError
     >;
@@ -277,6 +279,7 @@ export class Flows extends Context.Service<
       | CheckpointNotFound
       | CheckpointClosed
       | SessionNotFound
+      | SessionArchived
       | SessionInUse
       | TranscriptError
     >;
@@ -288,7 +291,11 @@ export class Flows extends Context.Service<
       reason: string,
     ): Effect.Effect<
       void,
-      PhaseNotSkippable | SessionNotFound | SessionInUse | TranscriptError
+      | PhaseNotSkippable
+      | SessionNotFound
+      | SessionArchived
+      | SessionInUse
+      | TranscriptError
     >;
     // Accepts or declines a Retro Finding. The last verdict marks Retro done and sends the
     // accepted Findings to the Session in one message. Only the developer calls this.
@@ -300,6 +307,7 @@ export class Flows extends Context.Service<
       | FindingNotFound
       | CheckpointClosed
       | SessionNotFound
+      | SessionArchived
       | SessionInUse
       | TranscriptError
     >;
@@ -401,11 +409,21 @@ export class Flows extends Context.Service<
           sql`SELECT checkpoint_id FROM findings WHERE id = ${id}`,
       });
 
-      // Hosted Sessions in a worktree of their own follow the Flow (ADR 0005).
+      // Hosted Sessions follow the Flow (ADR 0005).
       const inFlow = (sessionId: string) =>
-        hosted.worktrees.pipe(
-          Effect.map((all) => all.some((w) => w.id === sessionId)),
-        );
+        hosted.session(sessionId).pipe(Effect.map((s) => s !== undefined));
+
+      // Fails for an Archived Session, whose Flow can't move on.
+      const unarchived = (sessionId: string) =>
+        hosted
+          .session(sessionId)
+          .pipe(
+            Effect.flatMap((s) =>
+              s?.archivedAt != null
+                ? Effect.fail(new SessionArchived({ id: sessionId }))
+                : Effect.void,
+            ),
+          );
 
       // The Session's Phases: Grill current until the first Checkpoint is approved.
       const phasesOf = (sessionId: string) =>
@@ -447,9 +465,7 @@ export class Flows extends Context.Service<
 
       // The folder the Session works in, whose repository's issue tracker holds its issues.
       const cwdOf = (sessionId: string) =>
-        hosted.worktrees.pipe(
-          Effect.map((all) => all.find((w) => w.id === sessionId)?.cwd ?? ""),
-        );
+        hosted.session(sessionId).pipe(Effect.map((s) => s?.cwd ?? ""));
 
       // Spec's exit criteria: the Brief and every ticket exist on the issue tracker of the
       // repository the Session works in. Either what the Checkpoint shows, or what to tell the
@@ -827,6 +843,7 @@ export class Flows extends Context.Service<
         Effect.gen(function* () {
           const row = yield* checkpointRow(id).pipe(Effect.orDie);
           if (Option.isNone(row)) return yield* new CheckpointNotFound({ id });
+          yield* unarchived(row.value.sessionId);
           if (row.value.status !== "pending")
             return yield* new CheckpointClosed({ id });
           return row.value;
@@ -877,6 +894,7 @@ export class Flows extends Context.Service<
           const flow = yield* load(sessionId);
           if (flow === null)
             return yield* new SessionNotFound({ id: sessionId });
+          yield* unarchived(sessionId);
           if (current(flow.phases) !== phase)
             return yield* new PhaseNotSkippable({
               session: sessionId,

@@ -23,6 +23,18 @@ export const HostedWorktree = Schema.Struct({
 });
 export type HostedWorktree = typeof HostedWorktree.Type;
 
+// A Session Fern started that follows the Flow: in a worktree of its own, or in place in a folder
+// outside git.
+export const FlowSession = Schema.Struct({
+  id: Schema.String,
+  cwd: Schema.String,
+  projectRoot: Schema.String,
+  // The worktree's root, for a Session in one.
+  worktree: Schema.NullOr(Schema.String),
+  archivedAt: Schema.NullOr(Schema.Finite),
+});
+export type FlowSession = typeof FlowSession.Type;
+
 // The Sessions Fern lists: the ones the developer ran, as Claude Code's own /resume picker shows
 // them, plus the ones Fern started itself. Claude Code records Fern's as headless SDK Sessions,
 // which /resume leaves out along with every other script's, so Fern keeps its own record of them.
@@ -36,6 +48,8 @@ export class HostedSessions extends Context.Service<
     archive(id: string): Effect.Effect<void>;
     // Every Session Fern started in a worktree, archived or not.
     readonly worktrees: Effect.Effect<ReadonlyArray<HostedWorktree>>;
+    // The Session following the Flow with the id, archived or not.
+    session(id: string): Effect.Effect<FlowSession | undefined>;
     // Every listed Session, most recently active first.
     readonly listed: Effect.Effect<
       ReadonlyArray<SDKSessionInfo>,
@@ -76,6 +90,18 @@ export class HostedSessions extends Context.Service<
           WHERE project_root IS NOT NULL AND branch IS NOT NULL
             AND worktree IS NOT NULL AND base_commit IS NOT NULL`,
       })().pipe(Effect.orDie);
+      const flowSession = SqlSchema.findOneOption({
+        Request: Schema.String,
+        Result: FlowSession,
+        execute: (id) => sql`
+          SELECT id, cwd, project_root, worktree, archived_at FROM hosted_sessions
+          WHERE id = ${id} AND project_root IS NOT NULL`,
+      });
+      const session = Effect.fn("HostedSessions.session")(function* (
+        id: string,
+      ) {
+        return Option.getOrUndefined(yield* flowSession(id));
+      }, Effect.orDie);
       const startedIn = SqlSchema.findAll({
         Request: Schema.String,
         Result: Schema.Struct({ id: Schema.String }),
@@ -186,6 +212,7 @@ export class HostedSessions extends Context.Service<
         record,
         archive,
         worktrees,
+        session,
         listed,
         isProject,
         isHosted,

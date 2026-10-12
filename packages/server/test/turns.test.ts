@@ -70,6 +70,7 @@ const KnownSessions = Layer.succeed(
     record: (id) => Effect.sync(() => hostedIds.add(id)),
     archive: () => Effect.die("unused"),
     worktrees: Effect.succeed([]),
+    session: () => Effect.succeed(undefined),
     listed: Effect.succeed([]),
     isProject: () => Effect.succeed(true),
     isHosted: (id) => Effect.sync(() => hostedIds.has(id)),

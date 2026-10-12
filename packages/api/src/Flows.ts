@@ -161,7 +161,19 @@ export class FindingsUndecided extends Schema.TaggedError<FindingsUndecided>()(
   { httpApiStatus: 409 },
 ) {}
 
-const SendErrors = [SessionNotFound, SessionInUse, TranscriptError];
+// The Session is Archived: its worktree is gone, so its Flow can't move on.
+export class SessionArchived extends Schema.TaggedError<SessionArchived>()(
+  "SessionArchived",
+  { id: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
+const SendErrors = [
+  SessionNotFound,
+  SessionArchived,
+  SessionInUse,
+  TranscriptError,
+];
 
 export class FlowsApi extends HttpApiGroup.make("flows")
   .add(
