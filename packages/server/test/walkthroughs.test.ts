@@ -28,6 +28,7 @@ import {
 } from "../src/walkthrough/WalkthroughWriter";
 import {
   UnusedCommands,
+  UnusedRounds,
   UnusedTranscripts,
   unusedTurns,
   UnusedWorkspace,
@@ -141,6 +142,7 @@ const hunkIn = (request: WriteRequest | undefined, path: string) =>
   request?.hunks.find((hunk) => hunk.path === path)?.id ?? "";
 
 const Services = Layer.mergeAll(
+  UnusedRounds,
   UnusedTranscripts,
   UnusedCommands,
   UnusedWorkspace,

@@ -240,9 +240,11 @@ export class Turns extends Context.Service<
       const extras = (id: string) =>
         Effect.gen(function* () {
           if (!(yield* hosted.isHosted(id))) return {};
-          const { mcpServers, appendSystemPrompt } = yield* tools.options(id);
+          const { mcpServers, allowedTools, appendSystemPrompt } =
+            yield* tools.options(id);
           return {
             mcpServers: { ...mcpServers },
+            allowedTools: [...allowedTools],
             systemPrompt: {
               type: "preset",
               preset: "claude_code",

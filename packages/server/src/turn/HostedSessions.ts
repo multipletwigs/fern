@@ -39,6 +39,8 @@ export class HostedSessions extends Context.Service<
     isProject(cwd: string): Effect.Effect<boolean, TranscriptError>;
     // Whether Fern started the Session, which makes it a Hosted Session.
     isHosted(id: string): Effect.Effect<boolean>;
+    // The Project a Hosted Session belongs to: the folder it was started from.
+    projectOf(id: string): Effect.Effect<string | undefined>;
   }
 >()("@repo/server/turn/HostedSessions") {
   static readonly layer = Layer.effect(
@@ -138,12 +140,26 @@ export class HostedSessions extends Context.Service<
         return Option.isSome(yield* hostedId(id));
       }, Effect.orDie);
 
+      const projectRow = SqlSchema.findOneOption({
+        Request: Schema.String,
+        Result: Schema.Struct({ project: Schema.String }),
+        execute: (id) => sql`
+          SELECT COALESCE(project_root, cwd) AS project FROM hosted_sessions
+          WHERE id = ${id}`,
+      });
+      const projectOf = Effect.fn("HostedSessions.projectOf")(function* (
+        id: string,
+      ) {
+        return Option.getOrUndefined(yield* projectRow(id))?.project;
+      }, Effect.orDie);
+
       return HostedSessions.of({
         record,
         worktrees,
         listed,
         isProject,
         isHosted,
+        projectOf,
       });
     }),
   );

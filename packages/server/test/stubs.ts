@@ -1,5 +1,6 @@
 import { Effect, Layer, Stream } from "effect";
 import { Commands } from "../src/commands/Commands";
+import { Rounds } from "../src/round/Rounds";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { Turns } from "../src/turn/Turns";
 import { Walkthroughs } from "../src/walkthrough/Walkthroughs";
@@ -66,4 +67,13 @@ export const NoWorktreesDir = Layer.succeed(WorktreesDir, {
 export const UnusedWorktrees = Layer.succeed(
   Worktrees,
   Worktrees.of({ create: () => Effect.die("unused") }),
+);
+
+export const UnusedRounds = Layer.succeed(
+  Rounds,
+  Rounds.of({
+    post: () => Effect.die("unused"),
+    answer: () => Effect.die("unused"),
+    list: () => Stream.die("unused"),
+  }),
 );

@@ -1,5 +1,6 @@
 import { HttpApi, OpenApi } from "effect/http-api";
 import { ProjectsApi } from "./Projects";
+import { RoundsApi } from "./Rounds";
 import { SessionsApi } from "./Sessions";
 import { SystemApi } from "./System";
 import { WalkthroughsApi } from "./Walkthroughs";
@@ -11,5 +12,6 @@ export class FernApi extends HttpApi.make("fern")
   .add(SessionsApi)
   .add(ProjectsApi)
   .add(WalkthroughsApi)
+  .add(RoundsApi)
   .prefix("/api")
   .annotateMerge(OpenApi.annotations({ title: "Fern API" })) {}

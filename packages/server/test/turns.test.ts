@@ -72,6 +72,7 @@ const KnownSessions = Layer.succeed(
     listed: Effect.succeed([]),
     isProject: () => Effect.succeed(true),
     isHosted: (id) => Effect.sync(() => hostedIds.has(id)),
+    projectOf: () => Effect.succeed("/repo"),
   }),
 );
 // Makes a pretend worktree for each Session started, so starting needs no git.
@@ -95,8 +96,10 @@ const TestTools = Layer.succeed(
     options: (id) =>
       Effect.succeed({
         mcpServers: { fern: { command: `fern-tools-${id}` } },
+        allowedTools: [`mcp__fern__tool_${id}`],
         appendSystemPrompt: `Follow the Flow in ${id}.`,
       }),
+    add: () => Effect.void,
   }),
 );
 const TestTurns = Turns.layer.pipe(
@@ -106,6 +109,7 @@ const TestTurns = Turns.layer.pipe(
 // What a Hosted Session's turns are run with besides the message.
 const hostedOptions = (id: string) => ({
   mcpServers: { fern: { command: `fern-tools-${id}` } },
+  allowedTools: [`mcp__fern__tool_${id}`],
   systemPrompt: {
     type: "preset",
     preset: "claude_code",
