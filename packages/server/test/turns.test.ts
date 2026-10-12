@@ -68,6 +68,7 @@ const KnownSessions = Layer.succeed(
   HostedSessions,
   HostedSessions.of({
     record: (id) => Effect.sync(() => hostedIds.add(id)),
+    archive: () => Effect.die("unused"),
     worktrees: Effect.succeed([]),
     listed: Effect.succeed([]),
     isProject: () => Effect.succeed(true),
@@ -86,6 +87,9 @@ const FakeWorktrees = Layer.succeed(
         path: "/worktrees/work",
         cwd: "/worktrees/work",
       }),
+    isMerged: () => Effect.die("unused"),
+    isDirty: () => Effect.die("unused"),
+    remove: () => Effect.die("unused"),
   }),
 );
 // Stands in for the Flow: a tool server and steering named after the Session they're for.

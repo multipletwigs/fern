@@ -12,6 +12,7 @@ import { Turns } from "./turn/Turns";
 import { Walkthroughs } from "./walkthrough/Walkthroughs";
 import { WalkthroughWriter } from "./walkthrough/WalkthroughWriter";
 import { Workspace } from "./workspace/Workspace";
+import { WorktreeCleanup } from "./worktree/WorktreeCleanup";
 import { Worktrees } from "./worktree/Worktrees";
 
 export const SystemHandlers = HttpApiBuilder.group(
@@ -26,6 +27,7 @@ export const SessionsHandlers = HttpApiBuilder.group(
   Effect.fn(function* (handlers) {
     const transcripts = yield* Transcripts;
     const turns = yield* Turns;
+    const cleanup = yield* WorktreeCleanup;
     return handlers.handleAll({
       current: () => transcripts.current,
       running: () => turns.running,
@@ -36,6 +38,8 @@ export const SessionsHandlers = HttpApiBuilder.group(
           .pipe(Effect.map((id) => new SessionRef({ id }))),
       interrupt: ({ params }) => turns.interrupt(params.id),
       unqueue: ({ params }) => turns.unqueue(params.id, params.item),
+      archive: ({ params, payload }) =>
+        cleanup.archive(params.id, { force: payload.force ?? false }),
     });
   }),
 );
@@ -78,7 +82,11 @@ export const HandlersNoDeps = Layer.mergeAll(
 // the app keeps with its data.
 export const handlersWith = (writer: Layer.Layer<WalkthroughWriter>) =>
   Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
-    Layer.provide([Transcripts.layer, Walkthroughs.layer]),
+    Layer.provide([
+      Transcripts.layer,
+      Walkthroughs.layer,
+      WorktreeCleanup.layer,
+    ]),
     Layer.provide([Turns.layer, Workspace.layer, Commands.layer]),
     Layer.provide([
       Snapshots.layer,

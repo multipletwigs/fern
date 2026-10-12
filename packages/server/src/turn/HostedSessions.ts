@@ -14,6 +14,12 @@ export const HostedWorktree = Schema.Struct({
   cwd: Schema.String,
   projectRoot: Schema.String,
   branch: Schema.String,
+  // The worktree's root.
+  worktree: Schema.String,
+  // The commit the branch started from.
+  baseCommit: Schema.String,
+  // When the Session was archived, and its worktree removed.
+  archivedAt: Schema.NullOr(Schema.Finite),
 });
 export type HostedWorktree = typeof HostedWorktree.Type;
 
@@ -26,7 +32,9 @@ export class HostedSessions extends Context.Service<
     // Remembers a Session Fern started in a worktree, so it's listed from then on, under the
     // Project it was started from.
     record(id: string, worktree: Worktree): Effect.Effect<void>;
-    // Every Session Fern started in a worktree.
+    // Leaves the Session out of every listing from now on.
+    archive(id: string): Effect.Effect<void>;
+    // Every Session Fern started in a worktree, archived or not.
     readonly worktrees: Effect.Effect<ReadonlyArray<HostedWorktree>>;
     // Every listed Session, most recently active first.
     readonly listed: Effect.Effect<
@@ -48,14 +56,23 @@ export class HostedSessions extends Context.Service<
       const startedIds = SqlSchema.findAll({
         Request: Schema.Void,
         Result: Schema.Struct({ id: Schema.String }),
-        execute: () => sql`SELECT id FROM hosted_sessions`,
+        execute: () =>
+          sql`SELECT id FROM hosted_sessions WHERE archived_at IS NULL`,
+      });
+      const archivedIds = SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ id: Schema.String }),
+        execute: () =>
+          sql`SELECT id FROM hosted_sessions WHERE archived_at IS NOT NULL`,
       });
       const worktrees = SqlSchema.findAll({
         Request: Schema.Void,
         Result: HostedWorktree,
         execute: () => sql`
-          SELECT id, cwd, project_root, branch FROM hosted_sessions
-          WHERE project_root IS NOT NULL AND branch IS NOT NULL`,
+          SELECT id, cwd, project_root, branch, worktree, base_commit, archived_at
+          FROM hosted_sessions
+          WHERE project_root IS NOT NULL AND branch IS NOT NULL
+            AND worktree IS NOT NULL AND base_commit IS NOT NULL`,
       })().pipe(Effect.orDie);
       const startedIn = SqlSchema.findAll({
         Request: Schema.String,
@@ -90,15 +107,27 @@ export class HostedSessions extends Context.Service<
         })}`;
       }, Effect.orDie);
 
+      const archive = Effect.fn("HostedSessions.archive")(function* (
+        id: string,
+      ) {
+        const archivedAt = yield* Clock.currentTimeMillis;
+        yield* sql`UPDATE hosted_sessions SET archived_at = ${archivedAt} WHERE id = ${id}`;
+      }, Effect.orDie);
+
       const listed = Effect.gen(function* () {
-        const [developers, started] = yield* Effect.all(
+        const [listedByDeveloper, started, archived] = yield* Effect.all(
           [
             sdk("listSessions", () =>
               listSessions({ includeProgrammatic: false }),
             ),
             startedIds().pipe(Effect.orDie),
+            archivedIds().pipe(Effect.orDie),
           ],
           { concurrency: "unbounded" },
+        );
+        const hidden = new Set(archived.map((row) => row.id));
+        const developers = listedByDeveloper.filter(
+          (info) => !hidden.has(info.sessionId),
         );
         if (started.length === 0) {
           yield* remember(developers);
@@ -140,6 +169,7 @@ export class HostedSessions extends Context.Service<
 
       return HostedSessions.of({
         record,
+        archive,
         worktrees,
         listed,
         isProject,

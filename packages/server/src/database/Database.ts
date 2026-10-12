@@ -85,6 +85,12 @@ const migrations = {
     yield* sql`ALTER TABLE hosted_sessions ADD COLUMN worktree TEXT`;
     yield* sql`ALTER TABLE hosted_sessions ADD COLUMN base_commit TEXT`;
   }),
+  // When a Session was archived, by the developer or because its branch merged. Its worktree is
+  // gone and the sidebar leaves it out.
+  "0004_archived_sessions": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE hosted_sessions ADD COLUMN archived_at INTEGER`;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

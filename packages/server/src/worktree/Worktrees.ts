@@ -46,6 +46,25 @@ export class Worktrees extends Context.Service<
       root: string,
       openingPrompt: string,
     ): Effect.Effect<Worktree, WorktreeError>;
+    // Whether the branch, made from `base` in the repo at `root`, has merged into `main`: it moved
+    // past `base`, and either its tip is in `main`'s history, or merging it would change nothing
+    // in `main`, as after a squash merge. A branch still at `base` hasn't merged, it's only new.
+    isMerged(
+      root: string,
+      branch: string,
+      base: string,
+    ): Effect.Effect<boolean>;
+    // Whether the worktree at `path` has changes not yet committed, untracked files included. One
+    // that's gone has none.
+    isDirty(path: string): Effect.Effect<boolean, WorktreeError>;
+    // Removes the worktree at `path`, made from the repo at `root`, keeping its branch. With
+    // uncommitted changes in it, git refuses unless `force`. One already deleted by hand is only
+    // forgotten.
+    remove(
+      root: string,
+      path: string,
+      options: { readonly force: boolean },
+    ): Effect.Effect<void, WorktreeError>;
   }
 >()("@repo/server/worktree/Worktrees") {
   static readonly layer = Layer.effect(
@@ -99,7 +118,64 @@ export class Worktrees extends Context.Service<
         };
       });
 
-      return Worktrees.of({ create });
+      const isMerged = Effect.fn("Worktrees.isMerged")(
+        function* (root: string, branch: string, base: string) {
+          const commit = (ref: string) =>
+            git
+              .run(root, ["rev-parse", "--verify", "-q", `${ref}^{commit}`])
+              .pipe(Effect.map(trim));
+          const tip = yield* commit(`refs/heads/${branch}`);
+          if (tip === base) return false;
+          const main = yield* commit("refs/heads/main");
+          const inHistory = yield* git
+            .run(root, ["merge-base", "--is-ancestor", tip, main])
+            .pipe(
+              Effect.as(true),
+              // Exit 1 means no; both refs exist, so that's the only failure left.
+              Effect.orElseSucceed(() => false),
+            );
+          if (inHistory) return true;
+          const [merged, mainTree] = yield* Effect.all([
+            git
+              .run(root, ["merge-tree", "--write-tree", main, tip])
+              .pipe(Effect.map((out) => out.split("\n")[0]?.trim())),
+            git
+              .run(root, ["rev-parse", `${main}^{tree}`])
+              .pipe(Effect.map(trim)),
+          ]);
+          return merged === mainTree;
+        },
+        // A deleted branch, no `main`, or a conflicting merge: not merged, as far as Fern can tell.
+        Effect.orElseSucceed(() => false),
+      );
+
+      const exists = (worktree: string) =>
+        fs.exists(worktree).pipe(Effect.orElseSucceed(() => true));
+
+      const isDirty = Effect.fn("Worktrees.isDirty")(function* (
+        worktree: string,
+      ) {
+        if (!(yield* exists(worktree))) return false;
+        const status = yield* git
+          .run(worktree, ["status", "--porcelain"])
+          .pipe(Effect.mapError((error) => failed(error.message)));
+        return status.trim() !== "";
+      });
+
+      const remove = Effect.fn("Worktrees.remove")(function* (
+        root: string,
+        worktree: string,
+        { force }: { readonly force: boolean },
+      ) {
+        const args = (yield* exists(worktree))
+          ? ["worktree", "remove", ...(force ? ["--force"] : []), worktree]
+          : ["worktree", "prune"];
+        yield* git
+          .run(root, args)
+          .pipe(Effect.mapError((error) => failed(error.message)));
+      });
+
+      return Worktrees.of({ create, isMerged, isDirty, remove });
     }),
   ).pipe(Layer.provide(Git.layer));
 }

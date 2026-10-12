@@ -31,6 +31,7 @@ import {
   UnusedTranscripts,
   unusedTurns,
   UnusedWorkspace,
+  UnusedWorktreeCleanup,
 } from "./stubs";
 
 const git = (...args: Array<string>) =>
@@ -144,6 +145,7 @@ const Services = Layer.mergeAll(
   UnusedTranscripts,
   UnusedCommands,
   UnusedWorkspace,
+  UnusedWorktreeCleanup,
   FakeTurns,
   Walkthroughs.layer.pipe(
     Layer.provide([FakeTurns, Writer, DatabaseLive(":memory:")]),
