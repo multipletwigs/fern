@@ -1,0 +1,35 @@
+import { TabBar } from "@repo/ui/TabBar";
+import type { ReactNode } from "react";
+import type { SessionTab } from "./useSessionTab";
+
+// The tabs on the Session's chat column: the Grill, while there is one, then the chat. The Grill
+// tab glows amber while a Round waits on the developer and another tab shows.
+export function SessionTabs({
+  tab,
+  grill,
+  waiting,
+  onSelect,
+}: {
+  tab: SessionTab;
+  grill: boolean;
+  waiting: boolean;
+  onSelect: (tab: SessionTab) => void;
+}) {
+  const tabs: Array<{ value: SessionTab; label: ReactNode }> = [];
+  if (grill)
+    tabs.push({
+      value: "grill",
+      label: (
+        <>
+          {waiting && tab !== "grill" && (
+            <span className="size-1.5 rounded-full bg-amber shadow-[0_0_8px_rgb(245_177_76/0.8)]" />
+          )}
+          Grill
+        </>
+      ),
+    });
+  tabs.push({ value: "chat", label: "Chat" });
+  return (
+    <TabBar label="Session" value={tab} onChange={onSelect} tabs={tabs} />
+  );
+}

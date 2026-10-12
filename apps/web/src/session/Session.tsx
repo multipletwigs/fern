@@ -20,14 +20,14 @@ import {
 import { type Components, Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { SessionChecklist } from "../flow/SessionChecklist";
 import { type PendingPrompt, pendingPromptAtom, transcriptAtom } from "./atoms";
-import { GrillToggle } from "../grill/GrillToggle";
 import { GrillView } from "../grill/GrillView";
-import { useGrillView } from "../grill/useGrillView";
 import { ItemView } from "./ItemView";
 import { type Row, toRows } from "./rows";
 import { SessionComposer } from "./SessionComposer";
+import { SessionTabs } from "./SessionTabs";
 import { useNow } from "./time";
 import { ToolRun } from "./ToolRun";
+import { useSessionTab } from "./useSessionTab";
 
 // Space kept under the last row, room for the Thinking line included.
 const FOOTER = 56;
@@ -84,7 +84,7 @@ export function Session({
   onPainted?: (id: string) => void;
 }) {
   const result = useAtomValue(transcriptAtom(id));
-  const grill = useGrillView(id);
+  const tabs = useSessionTab(id);
   const now = useNow();
   const transcript = AsyncResult.isSuccess(result) ? result.value : undefined;
   const header = transcript?.header;
@@ -313,13 +313,14 @@ export function Session({
     <div className="relative flex h-full flex-col">
       <Glow live={live} />
       <TopBar>
-        {grill.available && (
-          <GrillToggle
-            view={grill.view}
-            waiting={grill.rounds?.open !== undefined}
-            onChange={grill.setView}
+        <div className="mr-auto min-w-0">
+          <SessionTabs
+            tab={tabs.tab}
+            grill={tabs.grill}
+            waiting={tabs.rounds?.open !== undefined}
+            onSelect={tabs.select}
           />
-        )}
+        </div>
         {header?.cacheExpiresAt && (
           <CacheCountdown
             remainingMs={DateTime.toEpochMillis(header.cacheExpiresAt) - now}
@@ -348,9 +349,9 @@ export function Session({
         ) : (
           <Empty text="Opening transcript…" />
         )}
-        {grill.view === "grill" && grill.rounds && (
+        {tabs.tab === "grill" && tabs.rounds && (
           <GrillView
-            rounds={grill.rounds}
+            rounds={tabs.rounds}
             active={visible}
             // The answers stand in the transcript, risen to the top, until Claude Code records them.
             onSending={(text) =>
