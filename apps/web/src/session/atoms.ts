@@ -1,5 +1,7 @@
 import type {
   SessionHeader,
+  SubagentHeader,
+  SubagentUpdate,
   TranscriptItem,
   TranscriptUpdate,
 } from "@repo/api";
@@ -107,17 +109,26 @@ export interface Transcript {
   readonly items: ReadonlyArray<TranscriptItem>;
 }
 
-const apply = (
-  state: Transcript,
-  { header, order, upserts }: TranscriptUpdate,
-): Transcript => {
-  const byId = new Map(state.items.map((item) => [item.id, item]));
+// The items after a live update: in its order, each the latest version sent.
+const applyItems = (
+  items: ReadonlyArray<TranscriptItem>,
+  {
+    order,
+    upserts,
+  }: {
+    readonly order: ReadonlyArray<string>;
+    readonly upserts: ReadonlyArray<TranscriptItem>;
+  },
+) => {
+  const byId = new Map(items.map((item) => [item.id, item]));
   for (const item of upserts) byId.set(item.id, item);
-  return {
-    header,
-    items: order.flatMap((id) => byId.get(id) ?? []),
-  };
+  return order.flatMap((id) => byId.get(id) ?? []);
 };
+
+const apply = (state: Transcript, update: TranscriptUpdate): Transcript => ({
+  header: update.header,
+  items: applyItems(state.items, update),
+});
 
 // A Session's transcript, kept current by the server's live stream. Resubscribes after a dropped
 // connection or an ended stream; the server then resends every item. Stays loaded a while after it
@@ -140,3 +151,53 @@ export const transcriptAtom = Atom.family((id: string) =>
     )
     .pipe(Atom.setIdleTTL("1 minute")),
 );
+
+// A Session's Subagents in the order they started, kept current by the server's live stream.
+export const subagentsAtom = Atom.family((sessionId: string) =>
+  LiveClient.runtime
+    .atom(
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const client = yield* LiveClient;
+          return client("Subagents", { sessionId });
+        }),
+      ).pipe(resubscribe(Schedule.spaced("1 second"))),
+    )
+    .pipe(Atom.setIdleTTL("1 minute")),
+);
+
+export interface SubagentView {
+  readonly header: SubagentHeader | undefined;
+  readonly assignment: string;
+  readonly items: ReadonlyArray<TranscriptItem>;
+}
+
+// The key of one Subagent's view: its Session and its agent id.
+export const subagentKey = (sessionId: string, agentId: string) =>
+  `${sessionId} ${agentId}`;
+
+// One Subagent's Assignment and work, kept current by the server's live stream, keyed by
+// `subagentKey`. Stays loaded a while after it leaves the screen, so switching back is instant.
+export const subagentAtom = Atom.family((key: string) => {
+  const [sessionId = "", agentId = ""] = key.split(" ");
+  return LiveClient.runtime
+    .atom(
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const client = yield* LiveClient;
+          return client("Subagent", { sessionId, agentId });
+        }),
+      ).pipe(
+        resubscribe(Schedule.spaced("1 second")),
+        Stream.scan<SubagentView, SubagentUpdate>(
+          () => ({ header: undefined, assignment: "", items: [] }),
+          (state, update) => ({
+            header: update.header,
+            assignment: update.assignment,
+            items: applyItems(state.items, update),
+          }),
+        ),
+      ),
+    )
+    .pipe(Atom.setIdleTTL("1 minute"));
+});

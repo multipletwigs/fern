@@ -13,12 +13,15 @@ import { useFileOpener } from "../code/useFileOpener";
 import { displayName } from "./toolName";
 import { UnansweredPrompt } from "./UnansweredPrompt";
 
+// Given `onOpenSubagent`, a Subagent row opens that Subagent's tab.
 export function ItemView({
   sessionId,
   item,
+  onOpenSubagent,
 }: {
   sessionId: string;
   item: TranscriptItem;
+  onOpenSubagent?: (agentId: string) => void;
 }) {
   const opener = useFileOpener();
   switch (item._tag) {
@@ -76,14 +79,21 @@ export function ItemView({
         </ToolCallRow>
       );
     }
-    case "Subagent":
+    case "Subagent": {
+      const { agentId } = item;
       return (
         <SubagentRow
           agentType={item.agentType}
           description={item.description}
           status={item.status}
+          onOpen={
+            agentId !== undefined && onOpenSubagent
+              ? () => onOpenSubagent(agentId)
+              : undefined
+          }
         />
       );
+    }
     case "Interrupt":
       return <Chip className="text-amber">Interrupted</Chip>;
     case "Notice":

@@ -25,9 +25,10 @@ import { ItemView } from "./ItemView";
 import { type Row, toRows } from "./rows";
 import { SessionComposer } from "./SessionComposer";
 import { SessionTabs } from "./SessionTabs";
+import { SubagentView } from "./SubagentView";
 import { useNow } from "./time";
 import { ToolRun } from "./ToolRun";
-import { useSessionTab } from "./useSessionTab";
+import { agentOf, subagentTab, useSessionTab } from "./useSessionTab";
 
 // Space kept under the last row, room for the Thinking line included.
 const FOOTER = 56;
@@ -49,6 +50,8 @@ interface ListContext {
   readonly thinking: boolean;
   // Row ids before the latest arrivals; unset while nothing has arrived since opening.
   readonly prior: ReadonlySet<string> | undefined;
+  // Selects a Subagent's tab.
+  readonly openSubagent: (agentId: string) => void;
 }
 
 // The stand-in looks like what Claude Code will record: a command card, or the message.
@@ -86,6 +89,12 @@ export function Session({
 }) {
   const result = useAtomValue(transcriptAtom(id));
   const tabs = useSessionTab(id);
+  const agent = agentOf(tabs.tab);
+  const { select } = tabs;
+  const openSubagent = useCallback(
+    (agentId: string) => select(subagentTab(agentId)),
+    [select],
+  );
   const now = useNow();
   const transcript = AsyncResult.isSuccess(result) ? result.value : undefined;
   const header = transcript?.header;
@@ -275,9 +284,15 @@ export function Session({
   const context = useMemo(
     () =>
       header
-        ? { header, spacer: spacer.height, thinking, prior: tracked?.prior }
+        ? {
+            header,
+            spacer: spacer.height,
+            thinking,
+            prior: tracked?.prior,
+            openSubagent,
+          }
         : undefined,
-    [header, spacer, thinking, tracked?.prior],
+    [header, spacer, thinking, tracked?.prior, openSubagent],
   );
 
   // Virtuoso keeps its rows hidden until it has scrolled to the end, so a screen holding this
@@ -319,6 +334,7 @@ export function Session({
             tab={tabs.tab}
             grill={tabs.grill}
             waiting={tabs.rounds?.open !== undefined}
+            subagents={tabs.subagents}
             onSelect={tabs.select}
           />
         </div>
@@ -368,9 +384,20 @@ export function Session({
             onFailed={() => setPending(undefined)}
           />
         )}
+        {agent !== undefined && (
+          <SubagentView
+            key={agent}
+            sessionId={id}
+            agentId={agent}
+            onOpenSubagent={openSubagent}
+          />
+        )}
       </div>
+      {/* A Subagent's tab is read-only; the composer keeps its draft out of sight meanwhile. */}
       {header && (
-        <SessionComposer header={header} now={now} lastTurnId={lastTurnId} />
+        <div hidden={agent !== undefined}>
+          <SessionComposer header={header} now={now} lastTurnId={lastTurnId} />
+        </div>
       )}
     </div>
   );
@@ -413,7 +440,11 @@ const renderItem = (_: number, row: Row, context: ListContext) => (
         calls={row.calls}
       />
     ) : (
-      <ItemView sessionId={context.header.id} item={row.item} />
+      <ItemView
+        sessionId={context.header.id}
+        item={row.item}
+        onOpenSubagent={context.openSubagent}
+      />
     )}
   </TranscriptRow>
 );

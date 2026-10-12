@@ -1,15 +1,22 @@
 import { clsx } from "clsx";
 import type { ReactNode } from "react";
 
-// Views of one column, one showing at a time, drawn as quiet labels; the selected one lifts.
-// Sits in the top bar, outside the window's drag area.
+// Views of one column, one showing at a time, drawn as quiet labels; the selected one lifts. A
+// muted tab is smaller and dimmer, for views that are mostly noise. Sits in the top bar, outside
+// the window's drag area.
 export function TabBar<Value extends string>({
   tabs,
   value,
   onChange,
   label,
 }: {
-  tabs: ReadonlyArray<{ value: Value; label: ReactNode }>;
+  tabs: ReadonlyArray<{
+    value: Value;
+    label: ReactNode;
+    muted?: boolean;
+    // What the tab shows, in full, on hover.
+    title?: string;
+  }>;
   value: Value;
   onChange: (value: Value) => void;
   label: string;
@@ -26,12 +33,18 @@ export function TabBar<Value extends string>({
           type="button"
           role="tab"
           aria-selected={tab.value === value}
+          title={tab.title}
           onClick={() => onChange(tab.value)}
           className={clsx(
-            "flex h-full items-center gap-1.5 rounded-md px-2.5 text-[12px] transition-colors",
+            "flex min-w-0 items-center gap-1.5 rounded-md transition-colors",
+            tab.muted
+              ? "h-6 shrink px-2 text-[11px]"
+              : "h-full shrink-0 px-2.5 text-[12px]",
             tab.value === value
               ? "bg-white/[0.06] text-ink"
-              : "text-muted hover:text-ink",
+              : tab.muted
+                ? "text-faint hover:text-muted"
+                : "text-muted hover:text-ink",
           )}
         >
           {tab.label}
