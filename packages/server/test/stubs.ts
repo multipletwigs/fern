@@ -105,17 +105,22 @@ export const UnusedRounds = Layer.succeed(
   }),
 );
 
-// The issue tracker, faked: the Brief #2 and its tickets #3 and #4 exist, nothing else does.
-const issue = (number: number, title: string): TrackedIssue => ({
+// The issue tracker, faked: the Brief #2 and its tickets #3 and #4 exist, nothing else does. The
+// tickets are closed, as Implement leaves them.
+const issue = (
+  number: number,
+  title: string,
+  state: TrackedIssue["state"],
+): TrackedIssue => ({
   number,
   title,
   url: `https://github.com/acme/app/issues/${number}`,
-  state: "open",
+  state,
 });
 const ISSUES = new Map([
-  [2, issue(2, "Dark mode")],
-  [3, issue(3, "Add the theme setting")],
-  [4, issue(4, "Toggle in the settings page")],
+  [2, issue(2, "Dark mode", "open")],
+  [3, issue(3, "Add the theme setting", "closed")],
+  [4, issue(4, "Toggle in the settings page", "closed")],
 ]);
 export const FakeIssues = Layer.succeed(
   IssueTracker,

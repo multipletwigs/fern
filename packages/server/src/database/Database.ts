@@ -213,6 +213,11 @@ const migrations = {
     `;
     yield* sql`CREATE INDEX milestones_by_boundary ON milestones (project, boundary)`;
   }),
+  // The Walkthrough an Implement Checkpoint links to. Until it's written, that Checkpoint is held.
+  "0011_checkpoint_walkthroughs": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE checkpoints ADD COLUMN walkthrough_id TEXT`;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

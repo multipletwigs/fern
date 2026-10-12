@@ -2,6 +2,7 @@ import { tool } from "@anthropic-ai/claude-agent-sdk";
 import {
   Checkpoint,
   CheckpointClosed,
+  type CheckpointWalkthrough,
   CheckpointNotFound,
   CheckpointStatus,
   Finding,
@@ -18,13 +19,16 @@ import {
   SessionNotFound,
   type SessionPhase,
   type TranscriptError,
+  type Walkthrough,
 } from "@repo/api";
 import {
   Clock,
   Context,
   Effect,
+  FiberMap,
   Layer,
   Option,
+  Schedule,
   Schema,
   Semaphore,
   Stream,
@@ -37,6 +41,7 @@ import { Autonomy } from "../autonomy/Autonomy";
 import { FernTools } from "../turn/FernTools";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
+import { Walkthroughs } from "../walkthrough/Walkthroughs";
 
 const TITLES: Record<Phase, string> = {
   grill: "Grill",
@@ -53,7 +58,13 @@ const COMMANDS: Record<Exclude<Phase, "grill">, ReadonlyArray<string>> = {
   retro: ["/retro"],
 };
 
-export const STEERING = `Report the end of each Phase through Fern's \`phase_done\` tool, with the Phase and a short summary of what it settled or produced, then end your turn. Fern raises a Checkpoint, and the developer approves it or declines it with a note. Never start the next Phase's skill yourself (/to-spec, /to-tickets, /implement-spec, /retro): once the developer approves, Fern sends the next Phase's command as your next message. A message that isn't the next Phase's command means the Phase isn't done yet, so keep working on it. Spec is done only once both the Brief and its tickets exist on the issue tracker: report it with the Brief's issue number and its tickets' issue numbers.`;
+export const STEERING = `Report the end of each Phase through Fern's \`phase_done\` tool, with the Phase and a short summary of what it settled or produced, then end your turn. Fern raises a Checkpoint, and the developer approves it or declines it with a note. Never start the next Phase's skill yourself (/to-spec, /to-tickets, /implement-spec, /retro): once the developer approves, Fern sends the next Phase's command as your next message. A message that isn't the next Phase's command means the Phase isn't done yet, so keep working on it. Spec is done only once both the Brief and its tickets exist on the issue tracker: report it with the Brief's issue number and its tickets' issue numbers. Implement is done only once every one of those tickets is closed.`;
+
+// What Fern answers while it writes the Walkthrough the Implement Checkpoint waits on.
+const HOLDING: Answer = {
+  text: "Fern is writing the Session's Walkthrough first; the developer's Checkpoint for the end of Implement appears once it's written. End your turn now; the decision arrives as your next message.",
+  isError: false,
+};
 
 const PHASE_DONE = `Report the current Phase of Fern's Flow done. Fern raises a Checkpoint for the developer and answers at once; end your turn after calling it. The developer's decision arrives as your next message.`;
 
@@ -74,16 +85,20 @@ const encodePhases = Schema.encodeSync(
 const SpecColumn = Schema.fromJsonString(SpecIssues);
 const encodeSpec = Schema.encodeSync(SpecColumn);
 
+// A Checkpoint at the end of Implement is held, and not yet shown, until the Session's
+// Walkthrough is written.
 const CheckpointRow = Schema.Struct({
   id: Schema.String,
   sessionId: Schema.String,
   phase: Phase,
   summary: Schema.String,
   spec: Schema.NullOr(SpecColumn),
-  status: CheckpointStatus,
+  status: Schema.Literals([...CheckpointStatus.literals, "held"]),
   note: Schema.NullOr(Schema.String),
   raisedAt: Schema.Finite,
   decidedAt: Schema.NullOr(Schema.Finite),
+  walkthroughId: Schema.NullOr(Schema.String),
+  walkthroughNumber: Schema.NullOr(Schema.Int),
 });
 type CheckpointRow = typeof CheckpointRow.Type;
 
@@ -126,7 +141,12 @@ const toCheckpoint = (
     phase: row.phase,
     summary: row.summary,
     spec: row.spec ?? undefined,
-    status: row.status,
+    walkthrough:
+      row.walkthroughId !== null && row.walkthroughNumber !== null
+        ? { id: row.walkthroughId, number: row.walkthroughNumber }
+        : undefined,
+    // Held Checkpoints are never shown.
+    status: row.status === "held" ? "pending" : row.status,
     note: row.note ?? undefined,
     findings: findings.length > 0 ? findings.map(toFinding) : undefined,
     raisedAt: Schema.decodeSync(Schema.DateTimeUtcFromMillis)(row.raisedAt),
@@ -190,6 +210,14 @@ const shown = ({ number, title, url }: TrackedIssue) => ({
   title,
   url,
 });
+
+// What the Implement Checkpoint links to: the latest written Walkthrough, or else the latest.
+const linkOf = (
+  all: ReadonlyArray<Walkthrough>,
+): CheckpointWalkthrough | undefined => {
+  const linked = all.findLast((w) => w.status === "ready") ?? all.at(-1);
+  return linked && { id: linked.id, number: linked.number };
+};
 
 // What Fern sends the Session once Retro's Findings all have a verdict: the accepted ones to commit.
 const acceptedMessage = (accepted: ReadonlyArray<FindingRow>) =>
@@ -283,6 +311,7 @@ export class Flows extends Context.Service<
       const sql = yield* SqlClient.SqlClient;
       const hosted = yield* HostedSessions;
       const turns = yield* Turns;
+      const walkthroughs = yield* Walkthroughs;
       const tools = yield* FernTools;
       const issues = yield* IssueTracker;
       const autonomy = yield* Autonomy;
@@ -291,6 +320,8 @@ export class Flows extends Context.Service<
       const bump = SubscriptionRef.update(version, (n) => n + 1);
       // One decision or report at a time, so a Checkpoint is raised and decided exactly once.
       const deciding = yield* Semaphore.make(1);
+      // Held Checkpoints waiting on their Session's Walkthrough, by id.
+      const holds = yield* FiberMap.make<string>();
 
       const flowRows = SqlSchema.findAll({
         Request: Schema.Void,
@@ -303,13 +334,18 @@ export class Flows extends Context.Service<
         execute: (sessionId) =>
           sql`SELECT session_id, phases FROM flows WHERE session_id = ${sessionId}`,
       });
+      // A Checkpoint's columns, with the number of the Walkthrough it links to.
+      const checkpointColumns = sql.literal(
+        "checkpoints.*, walkthroughs.number AS walkthrough_number",
+      );
       const pendingOf = SqlSchema.findOneOption({
         Request: Schema.String,
         Result: CheckpointRow,
         // An archived Session waits on nothing.
         execute: (sessionId) => sql`
-          SELECT checkpoints.* FROM checkpoints
+          SELECT ${checkpointColumns} FROM checkpoints
           JOIN hosted_sessions ON hosted_sessions.id = checkpoints.session_id
+          LEFT JOIN walkthroughs ON walkthroughs.id = checkpoints.walkthrough_id
           WHERE checkpoints.session_id = ${sessionId} AND checkpoints.status = 'pending'
             AND hosted_sessions.archived_at IS NULL
           ORDER BY checkpoints.raised_at DESC LIMIT 1`,
@@ -319,15 +355,35 @@ export class Flows extends Context.Service<
         Result: CheckpointRow,
         // An archived Session waits on nothing, so its Checkpoints leave the queue.
         execute: () => sql`
-          SELECT checkpoints.* FROM checkpoints
+          SELECT ${checkpointColumns} FROM checkpoints
           JOIN hosted_sessions ON hosted_sessions.id = checkpoints.session_id
+          LEFT JOIN walkthroughs ON walkthroughs.id = checkpoints.walkthrough_id
           WHERE checkpoints.status = 'pending' AND hosted_sessions.archived_at IS NULL
           ORDER BY checkpoints.raised_at, checkpoints.rowid`,
       });
       const checkpointRow = SqlSchema.findOneOption({
         Request: Schema.String,
         Result: CheckpointRow,
-        execute: (id) => sql`SELECT * FROM checkpoints WHERE id = ${id}`,
+        execute: (id) => sql`
+          SELECT ${checkpointColumns} FROM checkpoints
+          LEFT JOIN walkthroughs ON walkthroughs.id = checkpoints.walkthrough_id
+          WHERE checkpoints.id = ${id}`,
+      });
+      // Every held Checkpoint, waiting on its Session's Walkthrough.
+      const held = SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: CheckpointRow,
+        execute: () => sql`
+          SELECT ${checkpointColumns} FROM checkpoints
+          LEFT JOIN walkthroughs ON walkthroughs.id = checkpoints.walkthrough_id
+          WHERE checkpoints.status = 'held'`,
+      });
+      const heldOf = SqlSchema.findOneOption({
+        Request: Schema.Struct({ sessionId: Schema.String, phase: Phase }),
+        Result: Schema.Struct({ id: Schema.String }),
+        execute: ({ sessionId, phase }) => sql`
+          SELECT id FROM checkpoints
+          WHERE session_id = ${sessionId} AND phase = ${phase} AND status = 'held'`,
       });
 
       const findingsOf = SqlSchema.findAll({
@@ -389,6 +445,12 @@ export class Flows extends Context.Service<
           Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
         );
 
+      // The folder the Session works in, whose repository's issue tracker holds its issues.
+      const cwdOf = (sessionId: string) =>
+        hosted.worktrees.pipe(
+          Effect.map((all) => all.find((w) => w.id === sessionId)?.cwd ?? ""),
+        );
+
       // Spec's exit criteria: the Brief and every ticket exist on the issue tracker of the
       // repository the Session works in. Either what the Checkpoint shows, or what to tell the
       // agent instead.
@@ -399,10 +461,7 @@ export class Flows extends Context.Service<
               text: "Report Spec done with `spec`: the Brief's issue number and its tickets' issue numbers.",
               isError: true,
             } satisfies Answer;
-          const worktree = (yield* hosted.worktrees).find(
-            (w) => w.id === sessionId,
-          );
-          const cwd = worktree?.cwd ?? "";
+          const cwd = yield* cwdOf(sessionId);
           const look = (number: number) =>
             issues.issue(cwd, number).pipe(Effect.map(Option.getOrUndefined));
           const [brief, tickets] = yield* Effect.all(
@@ -431,6 +490,93 @@ export class Flows extends Context.Service<
           Effect.catchTag("IssueTrackerError", (error) =>
             Effect.succeed({
               text: `Fern couldn't check the Brief and tickets on the issue tracker (${error.message}). Report Spec done again once it can.`,
+              isError: true,
+            } satisfies Answer),
+          ),
+        );
+
+      // The tickets Spec wrote, as its approved Checkpoint shows them.
+      const specOf = SqlSchema.findOneOption({
+        Request: Schema.String,
+        Result: Schema.Struct({ spec: SpecColumn }),
+        execute: (sessionId) => sql`
+          SELECT spec FROM checkpoints
+          WHERE session_id = ${sessionId} AND phase = 'spec' AND status = 'approved'
+            AND spec IS NOT NULL
+          ORDER BY decided_at DESC LIMIT 1`,
+      });
+
+      // Implement's exit criteria: every ticket from Spec is closed on the issue tracker. What to
+      // tell the agent when one isn't, if any.
+      const ticketsExit = (sessionId: string) =>
+        Effect.gen(function* () {
+          const spec = yield* specOf(sessionId).pipe(Effect.orDie);
+          if (Option.isNone(spec)) return undefined;
+          const cwd = yield* cwdOf(sessionId);
+          const unclosed = yield* Effect.forEach(
+            spec.value.spec.tickets,
+            (ticket) =>
+              issues.issue(cwd, ticket.number).pipe(
+                Effect.map(
+                  Option.match({
+                    onNone: () => [
+                      `#${ticket.number} ${ticket.title} (no longer on the issue tracker)`,
+                    ],
+                    onSome: (found) =>
+                      found.state === "closed"
+                        ? []
+                        : [`#${found.number} ${found.title}`],
+                  }),
+                ),
+              ),
+            { concurrency: 4 },
+          ).pipe(Effect.map((all) => all.flat()));
+          if (unclosed.length === 0) return undefined;
+          return {
+            text: `Implement isn't done: ${unclosed.length === 1 ? "this ticket is" : "these tickets are"} still open on the issue tracker:\n${unclosed.map((t) => `- ${t}`).join("\n")}\nFinish and close ${unclosed.length === 1 ? "it" : "them"}, then report Implement done again.`,
+            isError: true,
+          } satisfies Answer;
+        }).pipe(
+          Effect.catchTag("IssueTrackerError", (error) =>
+            Effect.succeed({
+              text: `Fern couldn't check the tickets on the issue tracker (${error.message}). Report Implement done again once it can.`,
+              isError: true,
+            } satisfies Answer),
+          ),
+        );
+
+      // The Session's Walkthroughs as they are now, oldest first.
+      const walkthroughsNow = (sessionId: string) =>
+        walkthroughs
+          .list(sessionId)
+          .pipe(Stream.runHead, Effect.map(Option.getOrElse(() => [])));
+
+      // Starts writing the Session's Walkthrough: "writing" while a Fork writes it, "nothing" when
+      // there's nothing to review.
+      const startWalkthrough = (sessionId: string) =>
+        walkthroughs.write(sessionId).pipe(
+          Effect.as("writing" as const),
+          Effect.catchTags({
+            WalkthroughInProgress: () => Effect.succeed("writing" as const),
+            NothingToReview: () => Effect.succeed("nothing" as const),
+          }),
+        );
+
+      // Implement's other exit criterion: the Session has a Walkthrough. Either what the Checkpoint
+      // links to, "writing" while Fern writes the first one, or what to tell the agent instead.
+      const walkthroughExit = (sessionId: string) =>
+        Effect.gen(function* () {
+          const all = yield* walkthroughsNow(sessionId);
+          const written = all.some((w) => w.status === "ready");
+          if (written && all.at(-1)?.status !== "writing")
+            return { link: linkOf(all) };
+          const started = yield* startWalkthrough(sessionId);
+          if (started === "writing") return "writing" as const;
+          return { link: linkOf(all) };
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.succeed({
+              text: `Fern couldn't write the Session's Walkthrough (${error._tag === "SessionNotFound" ? "it can't find the Session" : error.message}). Report Implement done again.`,
               isError: true,
             } satisfies Answer),
           ),
@@ -477,6 +623,128 @@ export class Flows extends Context.Service<
           for (const text of rest) yield* turns.send(sessionId, { text });
         });
 
+      // Raises the Checkpoint for the developer, or under Autonomy approves it on their behalf.
+      const raise = (
+        checkpoint: {
+          readonly id: string;
+          readonly sessionId: string;
+          readonly phase: Phase;
+          readonly summary: string;
+          readonly spec: SpecIssues | null;
+          readonly findings: ReadonlyArray<ReportedFinding>;
+        },
+        walkthrough: CheckpointWalkthrough | undefined,
+      ) =>
+        Effect.gen(function* () {
+          const { id, sessionId, phase, summary, spec, findings } = checkpoint;
+          const raisedAt = yield* Clock.currentTimeMillis;
+          // A held Checkpoint already has its row.
+          const record = (status: CheckpointStatus, decidedAt?: number) =>
+            sql`INSERT INTO checkpoints ${sql.insert({
+              id,
+              sessionId,
+              phase,
+              summary,
+              spec: spec === null ? null : encodeSpec(spec),
+              status,
+              raisedAt,
+              decidedAt: decidedAt ?? null,
+              walkthroughId: walkthrough?.id ?? null,
+            })}
+            ON CONFLICT (id) DO UPDATE SET
+              status = excluded.status, raised_at = excluded.raised_at,
+              decided_at = excluded.decided_at, walkthrough_id = excluded.walkthrough_id`;
+          // Under Autonomy, Fern approves the end of the Phase itself: never the end of a Grill, and
+          // never a Checkpoint carrying Findings, which only the developer decides. If the next
+          // command can't be sent, the developer gets the Checkpoint after all.
+          if (
+            phase !== "grill" &&
+            findings.length === 0 &&
+            (yield* autonomy.covers(sessionId, phase))
+          ) {
+            const byFern = yield* moveOn(
+              sessionId,
+              phase,
+              spec ?? undefined,
+              (decidedAt) => record("approved", decidedAt),
+              autonomy.approvedByFern(sessionId, phase),
+            ).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+            if (byFern)
+              return {
+                text: `Fern approved the end of ${TITLES[phase]} on the developer's behalf. End your turn now; the next Phase's command arrives as your next message.`,
+                isError: false,
+              } satisfies Answer;
+          }
+          yield* sql
+            .withTransaction(
+              Effect.all([
+                record("pending"),
+                ...findings.map(
+                  (finding, position) =>
+                    sql`INSERT INTO findings ${sql.insert({
+                      id: crypto.randomUUID(),
+                      checkpointId: id,
+                      position,
+                      title: finding.title,
+                      change: finding.change,
+                      reasoning: finding.reasoning,
+                    })}`,
+                ),
+              ]),
+            )
+            .pipe(Effect.orDie);
+          yield* bump;
+          return {
+            text: `Fern raised a Checkpoint for the developer to confirm the end of ${TITLES[phase]}. End your turn now; their decision arrives as your next message.`,
+            isError: false,
+          } satisfies Answer;
+        });
+
+      // Raises the held Checkpoint once its Session's Walkthrough is written: once no other write
+      // is under way, Fern writes what changed since the last one, if anything did. That also
+      // covers a restart, after which the Fork that was writing it is gone.
+      const release = (id: string) =>
+        Effect.gen(function* () {
+          const row = yield* checkpointRow(id).pipe(Effect.orDie);
+          if (Option.isNone(row)) return;
+          const { sessionId } = row.value;
+          const writing = yield* walkthroughs.write(sessionId).pipe(
+            Effect.retry({
+              while: (error) => error._tag === "WalkthroughInProgress",
+              schedule: Schedule.spaced("250 millis"),
+            }),
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          );
+          const all = writing
+            ? yield* walkthroughs.list(sessionId).pipe(
+                Stream.filter((ws) => ws.at(-1)?.status !== "writing"),
+                Stream.runHead,
+                Effect.map(Option.getOrElse(() => [])),
+              )
+            : yield* walkthroughsNow(sessionId);
+          yield* Effect.gen(function* () {
+            const flow = yield* load(sessionId);
+            const still = yield* checkpointRow(id).pipe(Effect.orDie);
+            if (Option.isNone(still) || still.value.status !== "held") return;
+            // Skipped or archived meanwhile: there's nothing to raise.
+            if (
+              flow === null ||
+              current(flow.phases) !== still.value.phase ||
+              flow.checkpoint
+            ) {
+              yield* sql`DELETE FROM checkpoints WHERE id = ${id}`.pipe(
+                Effect.orDie,
+              );
+              return;
+            }
+            yield* raise({ ...still.value, findings: [] }, linkOf(all));
+          }).pipe(deciding.withPermits(1));
+        });
+
       // The agent says its Phase is done: raise a Checkpoint for the developer.
       const phaseDone = (
         sessionId: string,
@@ -507,6 +775,12 @@ export class Flows extends Context.Service<
               text: `The developer already has a Checkpoint for the end of ${TITLES[now]}. End your turn; their decision arrives as your next message.`,
               isError: false,
             };
+          if (
+            Option.isSome(
+              yield* heldOf({ sessionId, phase: now }).pipe(Effect.orDie),
+            )
+          )
+            return HOLDING;
           const findings = report.findings ?? [];
           if (findings.length > 0 && now !== "retro")
             return {
@@ -517,73 +791,35 @@ export class Flows extends Context.Service<
           const spec =
             now === "spec" ? yield* specExit(sessionId, report.spec) : null;
           if (spec !== null && "isError" in spec) return spec;
-          const raisedAt = yield* Clock.currentTimeMillis;
-          const id = crypto.randomUUID();
-          // Under Autonomy, Fern approves the end of the Phase itself: never the end of a Grill, and
-          // never a Checkpoint carrying Findings, which only the developer decides. If the next
-          // command can't be sent, the developer gets the Checkpoint after all.
-          if (
-            now !== "grill" &&
-            findings.length === 0 &&
-            (yield* autonomy.covers(sessionId, now))
-          ) {
-            const byFern = yield* moveOn(
-              sessionId,
-              now,
-              spec ?? undefined,
-              (decidedAt) =>
-                sql`INSERT INTO checkpoints ${sql.insert({
-                  id,
-                  sessionId,
-                  phase: now,
-                  summary: report.summary,
-                  spec: spec === null ? null : encodeSpec(spec),
-                  status: "approved",
-                  raisedAt,
-                  decidedAt,
-                })}`,
-              autonomy.approvedByFern(sessionId, now),
-            ).pipe(
-              Effect.as(true),
-              Effect.orElseSucceed(() => false),
-            );
-            if (byFern)
-              return {
-                text: `Fern approved the end of ${TITLES[now]} on the developer's behalf. End your turn now; the next Phase's command arrives as your next message.`,
-                isError: false,
-              };
-          }
-          yield* sql
-            .withTransaction(
-              Effect.all([
-                sql`INSERT INTO checkpoints ${sql.insert({
-                  id,
-                  sessionId,
-                  phase: now,
-                  summary: report.summary,
-                  spec: spec === null ? null : encodeSpec(spec),
-                  status: "pending",
-                  raisedAt,
-                })}`,
-                ...findings.map(
-                  (finding, position) =>
-                    sql`INSERT INTO findings ${sql.insert({
-                      id: crypto.randomUUID(),
-                      checkpointId: id,
-                      position,
-                      title: finding.title,
-                      change: finding.change,
-                      reasoning: finding.reasoning,
-                    })}`,
-                ),
-              ]),
-            )
-            .pipe(Effect.orDie);
-          yield* bump;
-          return {
-            text: `Fern raised a Checkpoint for the developer to confirm the end of ${TITLES[now]}. End your turn now; their decision arrives as your next message.`,
-            isError: false,
+          const checkpoint = {
+            id: crypto.randomUUID(),
+            sessionId,
+            phase: now,
+            summary: report.summary,
+            spec,
+            findings,
           };
+          if (now !== "implement") return yield* raise(checkpoint, undefined);
+          // So do Implement's: no Checkpoint while a ticket is open, nor before the Session has a
+          // Walkthrough. While Fern writes one, the Checkpoint is held.
+          const open = yield* ticketsExit(sessionId);
+          if (open) return open;
+          const walkthrough = yield* walkthroughExit(sessionId);
+          if (walkthrough === "writing") {
+            const raisedAt = yield* Clock.currentTimeMillis;
+            yield* sql`INSERT INTO checkpoints ${sql.insert({
+              id: checkpoint.id,
+              sessionId,
+              phase: now,
+              summary: report.summary,
+              status: "held",
+              raisedAt,
+            })}`.pipe(Effect.orDie);
+            yield* FiberMap.run(holds, checkpoint.id, release(checkpoint.id));
+            return HOLDING;
+          }
+          if ("isError" in walkthrough) return walkthrough;
+          return yield* raise(checkpoint, walkthrough.link);
         }).pipe(deciding.withPermits(1));
 
       // The pending Checkpoint with the id.
@@ -820,6 +1056,16 @@ export class Flows extends Context.Service<
           ),
         ],
       });
+
+      // Held Checkpoints carry on after a restart.
+      yield* held().pipe(
+        Effect.orDie,
+        Effect.flatMap((rows) =>
+          Effect.forEach(rows, (row) =>
+            FiberMap.run(holds, row.id, release(row.id)),
+          ),
+        ),
+      );
 
       return Flows.of({
         flow: (sessionId) => reloading(load(sessionId)),

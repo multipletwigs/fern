@@ -5,6 +5,19 @@ export const openItems = (walkthrough: Walkthrough) =>
   walkthrough.sections.filter((s) => !s.verdict).length +
   walkthrough.unexplained.filter((u) => !u.verdict).length;
 
+// Where a Walkthrough's review stands, as its row in a list shows it.
+export const rowStatus = (
+  walkthrough: Walkthrough,
+): { status: string; tone: "amber" | "writing" | "danger" | "muted" } => {
+  if (walkthrough.status === "writing")
+    return { status: "Writing", tone: "writing" };
+  if (walkthrough.status === "failed")
+    return { status: "Failed", tone: "danger" };
+  if (walkthrough.redirectError) return { status: "Not sent", tone: "danger" };
+  if (walkthrough.reviewedAt) return { status: "Reviewed", tone: "muted" };
+  return { status: `${openItems(walkthrough)} to review`, tone: "amber" };
+};
+
 export const totalItems = (walkthrough: Walkthrough) =>
   walkthrough.sections.length + walkthrough.unexplained.length;
 

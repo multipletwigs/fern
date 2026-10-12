@@ -1,19 +1,7 @@
 import type { Walkthrough } from "@repo/api";
 import { WalkthroughRow } from "@repo/ui/WalkthroughRow";
-import { openItems } from "./review";
+import { rowStatus } from "./review";
 import { WriteWalkthroughButton } from "./WriteWalkthroughButton";
-
-const rowStatus = (
-  walkthrough: Walkthrough,
-): { status: string; tone: "amber" | "writing" | "danger" | "muted" } => {
-  if (walkthrough.status === "writing")
-    return { status: "Writing", tone: "writing" };
-  if (walkthrough.status === "failed")
-    return { status: "Failed", tone: "danger" };
-  if (walkthrough.redirectError) return { status: "Not sent", tone: "danger" };
-  if (walkthrough.reviewedAt) return { status: "Reviewed", tone: "muted" };
-  return { status: `${openItems(walkthrough)} to review`, tone: "amber" };
-};
 
 // A Session's Walkthroughs at the top of the code panel's list, newest first, with a way to ask for
 // another.
