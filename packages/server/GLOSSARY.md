@@ -76,6 +76,14 @@ _Avoid_: Closed, deleted
 A conversation that Claude Code delegates to through its Agent tool, shown inside its Session and never counted as a Session of its own.
 _Avoid_: Worker (the Verifier's term), child session, task
 
+**Assignment**:
+The prompt a Session's agent gives a Subagent when it delegates to it.
+_Avoid_: Prompt (the developer's message), brief, task
+
+**Hand-back**:
+A Subagent's final answer to the agent that delegated to it, whether it comes back at once or arrives later from the background.
+_Avoid_: Report (the Verifier's term), result
+
 **Fork**:
 A conversation Fern branches off a Session for its own purposes, such as writing a Walkthrough. Like a Subagent, it is never counted as a Session.
 _Avoid_: Branch (git), clone, side session
