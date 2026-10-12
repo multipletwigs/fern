@@ -131,10 +131,11 @@ layer(
         yield* statuses(SESSION, COMPLETED, "toolu_completed"),
         { row: "done", tab: "done", view: "done" },
       );
-      assert.deepStrictEqual(
-        yield* statuses(SESSION, FAILED, "toolu_failed"),
-        { row: "failed", tab: "failed", view: "failed" },
-      );
+      assert.deepStrictEqual(yield* statuses(SESSION, FAILED, "toolu_failed"), {
+        row: "failed",
+        tab: "failed",
+        view: "failed",
+      });
     }),
   );
 });
