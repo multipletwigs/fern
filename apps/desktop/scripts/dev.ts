@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
-import { watch } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { build } from "tsdown";
 
@@ -10,13 +11,13 @@ import { build } from "tsdown";
 // - it skips restarting into a build with type errors, keeping the running app instead.
 // A build that type-checks but doesn't start is reported and left down until the next change.
 //
-// It watches the sources itself and builds once per change: rolldown's watch mode finishes
-// without ever writing the bundle.
+// It builds once per change, found by polling the sources' mtimes: rolldown's watch mode finishes
+// without ever writing the bundle, and macOS file events run out with several dev servers up.
 
 const API = `http://127.0.0.1:${process.env.FERN_API_PORT ?? 7420}/api`;
 const SOURCES = ["src", "../../packages/server/src", "../../packages/api/src"];
 const START_TIMEOUT_MS = 20_000;
-const DEBOUNCE_MS = 200;
+const POLL_MS = 400;
 
 let app: ChildProcess | undefined;
 
@@ -117,11 +118,30 @@ const rebuild = () => {
   });
 };
 
-let debounce: NodeJS.Timeout | undefined;
-for (const dir of SOURCES)
-  watch(dir, { recursive: true }, () => {
-    clearTimeout(debounce);
-    debounce = setTimeout(rebuild, DEBOUNCE_MS);
-  });
+// Every source file with its mtime, so an edit, a new file and a deleted one all change it.
+const snapshot = async () => {
+  const entries = await Promise.all(
+    SOURCES.map(async (dir) => {
+      const files = await readdir(dir, { recursive: true });
+      return Promise.all(
+        files.map(async (file) => {
+          const path = join(dir, file);
+          const info = await stat(path).catch(() => undefined);
+          return info?.isFile() ? `${path}:${info.mtimeMs}` : "";
+        }),
+      );
+    }),
+  );
+  return entries.flat().toSorted().join("\n");
+};
 
+let seen = await snapshot();
 rebuild();
+for (;;) {
+  await sleep(POLL_MS);
+  const now = await snapshot();
+  if (now !== seen) {
+    seen = now;
+    rebuild();
+  }
+}

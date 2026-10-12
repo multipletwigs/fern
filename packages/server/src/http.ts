@@ -1,5 +1,6 @@
 import { FernApi, SessionRef } from "@repo/api";
 import { Effect, Layer } from "effect";
+import { HttpMiddleware } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
 import { NodeServices } from "@effect/platform-node";
 import type { ChildProcessSpawner } from "effect/process";
@@ -153,7 +154,10 @@ export const VerifySlotsHandlers = HttpApiBuilder.group(
   "verifySlots",
   Effect.fn(function* (handlers) {
     const slots = yield* VerifySlots;
-    return handlers.handleAll({ running: () => slots.running });
+    // The sidebar asks every few seconds; logging each would drown the rest.
+    return handlers.handleAll({
+      running: () => HttpMiddleware.withLoggerDisabled(slots.running),
+    });
   }),
 );
 
