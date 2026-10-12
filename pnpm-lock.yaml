@@ -91,6 +91,9 @@ importers:
         specifier: 4.18.16
         version: 4.18.16(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
     devDependencies:
+      '@effect/vitest':
+        specifier: 4.0.2
+        version: 4.0.2(effect@4.0.2)(vitest@5.0.3(@types/node@26.4.1)(vite@8.3.4(@types/node@26.4.1)(jiti@2.7.0)))
       '@repo/typescript-config':
         specifier: workspace:*
         version: link:../../packages/typescript-config
@@ -118,6 +121,9 @@ importers:
       vite:
         specifier: 8.3.4
         version: 8.3.4(@types/node@26.4.1)(jiti@2.7.0)
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@26.4.1)(vite@8.3.4(@types/node@26.4.1)(jiti@2.7.0))
       wait-on:
         specifier: 9.5.1
         version: 9.5.1(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)

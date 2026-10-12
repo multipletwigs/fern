@@ -18,6 +18,7 @@ import {
   DateTime,
   Effect,
   Layer,
+  Option,
   Predicate,
   Schedule,
   Stream,
@@ -152,10 +153,16 @@ export class Transcripts extends Context.Service<
           yield* info;
 
           return Stream.fromEffectSchedule(
-            Effect.all({ latest: info, hostedTurn: turns.turn(id) }),
+            Effect.all({ latest: info, hostedTurn: turns.turn(id) }).pipe(
+              // A poll that misses the file (the SDK returns undefined on any read error) skips a
+              // beat. Ending the stream would leave the page on its last header.
+              Effect.asSome,
+              Effect.catchTag("SessionNotFound", () => Effect.succeedNone),
+            ),
             Schedule.spaced("400 millis"),
           ).pipe(
-            Stream.catchTag("SessionNotFound", () => Stream.empty),
+            Stream.filter(Option.isSome),
+            Stream.map((polled) => polled.value),
             // Re-read when the transcript changes or a turn Fern runs starts or ends.
             Stream.changesWith(
               (a, b) =>

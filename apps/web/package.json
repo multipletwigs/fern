@@ -7,7 +7,8 @@
     "dev": "vite",
     "dev:ready": "wait-on --timeout 60000 http-get://localhost:5173",
     "build": "vite build",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@effect/atom-react": "4.0.2",
@@ -20,6 +21,7 @@
     "react-virtuoso": "4.18.16"
   },
   "devDependencies": {
+    "@effect/vitest": "4.0.2",
     "@repo/typescript-config": "workspace:*",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "26.4.1",
@@ -29,6 +31,7 @@
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "8.3.4",
+    "vitest": "5.0.3",
     "wait-on": "9.5.1"
   }
 }

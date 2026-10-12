@@ -7,6 +7,7 @@ import { Effect, Schedule, Stream } from "effect";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { ApiClient } from "../ApiClient";
 import { LiveClient } from "../LiveClient";
+import { resubscribe } from "../resubscribe";
 
 export const currentSessionAtom = ApiClient.query("sessions", "current", {});
 
@@ -43,7 +44,7 @@ export const projectsAtom = LiveClient.runtime.atom(
       const client = yield* LiveClient;
       return client("Projects", undefined);
     }),
-  ).pipe(Stream.retry(Schedule.spaced("1 second"))),
+  ).pipe(resubscribe(Schedule.spaced("1 second"))),
 );
 
 // The Session the pointer last rested on in the sidebar, drawn out of sight so picking it shows it
@@ -117,9 +118,9 @@ const apply = (
   };
 };
 
-// A Session's transcript, kept current by the server's live stream. Reconnects after a dropped
-// connection; the server then resends every item. Stays loaded a while after it leaves the screen,
-// so switching back to it is instant.
+// A Session's transcript, kept current by the server's live stream. Resubscribes after a dropped
+// connection or an ended stream; the server then resends every item. Stays loaded a while after it
+// leaves the screen, so switching back to it is instant.
 export const transcriptAtom = Atom.family((id: string) =>
   LiveClient.runtime
     .atom(
@@ -129,7 +130,7 @@ export const transcriptAtom = Atom.family((id: string) =>
           return client("Transcript", { id });
         }),
       ).pipe(
-        Stream.retry(Schedule.spaced("1 second")),
+        resubscribe(Schedule.spaced("1 second")),
         Stream.scan<Transcript, TranscriptUpdate>(
           () => ({ header: undefined, items: [] }),
           apply,
