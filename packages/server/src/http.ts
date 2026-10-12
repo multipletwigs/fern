@@ -79,6 +79,8 @@ export const FlowsHandlers = HttpApiBuilder.group(
     return handlers.handleAll({
       approve: ({ params }) => flows.approve(params.id),
       decline: ({ params, payload }) => flows.decline(params.id, payload.note),
+      skip: ({ params, payload }) =>
+        flows.skip(params.session, payload.phase, payload.reason),
     });
   }),
 );

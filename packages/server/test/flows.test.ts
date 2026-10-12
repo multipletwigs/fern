@@ -411,6 +411,138 @@ layer(server(freshDatabase()), { excludeTestServices: true })("Flows", (it) => {
         assert.isFalse(queue?.some((c) => c.sessionId === id));
       }),
   );
+
+  it.effect(
+    "on a Skip, marks the Phase skipped with its reason, makes the next current and sends its commands",
+    () =>
+      Effect.gen(function* () {
+        agent = () => Promise.resolve();
+        const id = yield* startSession("Fix the typo in the README");
+        const client = yield* makeClient;
+        yield* client.flows.skip({
+          params: { session: id },
+          payload: { phase: "grill", reason: "Just a typo fix" },
+        });
+
+        const live = yield* makeLive;
+        const flow = yield* firstWhere(
+          live.Flow({ session: id }),
+          (f) => f?.phases[0]?.status === "skipped",
+        );
+        assert.deepStrictEqual(statuses(flow), [
+          "grill:skipped",
+          "spec:current",
+          "implement:notStarted",
+          "retro:notStarted",
+        ]);
+        assert.strictEqual(flow?.phases[0]?.reason, "Just a typo fix");
+        yield* turnWhere(id, (t) => t.text === "/to-tickets");
+        assert.deepStrictEqual(
+          started.filter((t) => t.sessionId === id).map((t) => t.text),
+          [
+            "/grill-with-docs Fix the typo in the README",
+            "/to-spec",
+            "/to-tickets",
+          ],
+        );
+      }),
+  );
+
+  it.effect("refuses a Skip without a reason", () =>
+    Effect.gen(function* () {
+      agent = () => Promise.resolve();
+      const id = yield* startSession("Fix the typo in the README");
+      const client = yield* makeClient;
+      for (const reason of ["", "   "])
+        yield* client.flows
+          .skip({
+            params: { session: id },
+            payload: { phase: "grill", reason },
+          })
+          .pipe(Effect.flip);
+
+      const live = yield* makeLive;
+      const flow = yield* firstWhere(live.Flow({ session: id }), Boolean);
+      assert.strictEqual(statuses(flow)?.[0], "grill:current");
+      assert.deepStrictEqual(
+        started.filter((t) => t.sessionId === id).map((t) => t.text),
+        ["/grill-with-docs Fix the typo in the README"],
+      );
+    }),
+  );
+
+  it.effect(
+    "refuses to skip a Phase that's done or not yet current, or one waiting at a Checkpoint",
+    () =>
+      Effect.gen(function* () {
+        const { id, checkpoint } = yield* atGrillCheckpoint;
+        const client = yield* makeClient;
+        const skip = (phase: "grill" | "spec" | "implement") =>
+          client.flows
+            .skip({
+              params: { session: id },
+              payload: { phase, reason: "Not needed" },
+            })
+            .pipe(Effect.flip);
+
+        const waiting = yield* skip("grill");
+        assert.deepStrictEqual(
+          waiting._tag === "PhaseNotSkippable" ? waiting.why : waiting._tag,
+          "checkpointPending",
+        );
+        const notYet = yield* skip("spec");
+        assert.deepStrictEqual(
+          notYet._tag === "PhaseNotSkippable" ? notYet.why : notYet._tag,
+          "notCurrent",
+        );
+
+        yield* client.flows.approve({ params: { id: checkpoint } });
+        yield* turnWhere(id, (t) => t.text === "/to-tickets");
+        const done = yield* skip("grill");
+        assert.deepStrictEqual(
+          done._tag === "PhaseNotSkippable" ? done.why : done._tag,
+          "notCurrent",
+        );
+        const later = yield* skip("implement");
+        assert.deepStrictEqual(
+          later._tag === "PhaseNotSkippable" ? later.why : later._tag,
+          "notCurrent",
+        );
+
+        const live = yield* makeLive;
+        const flow = yield* firstWhere(live.Flow({ session: id }), Boolean);
+        assert.deepStrictEqual(statuses(flow), [
+          "grill:done",
+          "spec:current",
+          "implement:notStarted",
+          "retro:notStarted",
+        ]);
+      }),
+  );
+
+  it.effect(
+    "takes an archived Session's pending Checkpoint out of the queue",
+    () =>
+      Effect.gen(function* () {
+        const { id } = yield* atGrillCheckpoint;
+        const live = yield* makeLive;
+        yield* firstWhere(live.Checkpoints(), (all) =>
+          all.some((c) => c.sessionId === id),
+        );
+
+        const client = yield* makeClient;
+        yield* client.sessions.archive({
+          params: { id },
+          payload: { force: true },
+        });
+
+        const queue = yield* firstWhere(
+          live.Checkpoints(),
+          (all) => !all.some((c) => c.sessionId === id),
+        );
+        assert.isFalse(queue?.some((c) => c.sessionId === id));
+      }),
+  );
 });
 
 test.live("keeps the Flow and its pending Checkpoint after Fern restarts", () =>

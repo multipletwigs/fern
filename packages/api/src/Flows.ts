@@ -28,6 +28,8 @@ export type PhaseStatus = typeof PhaseStatus.Type;
 export const FlowPhase = Schema.Struct({
   phase: Phase,
   status: PhaseStatus,
+  // Why the developer skipped the Phase, on a skipped one.
+  reason: Schema.optional(Schema.String),
 });
 export type FlowPhase = typeof FlowPhase.Type;
 
@@ -83,6 +85,21 @@ export class CheckpointClosed extends Schema.TaggedError<CheckpointClosed>()(
   { httpApiStatus: 409 },
 ) {}
 
+// The Phase can't be skipped: it isn't the current one (already done or not yet started), or the
+// agent has reported it done and the developer has a Checkpoint to decide instead.
+export class PhaseNotSkippable extends Schema.TaggedError<PhaseNotSkippable>()(
+  "PhaseNotSkippable",
+  {
+    session: Schema.String,
+    phase: Phase,
+    why: Schema.Literals(["notCurrent", "checkpointPending"]),
+  },
+  { httpApiStatus: 409 },
+) {}
+
+// A one-line reason for a Skip: not blank.
+export const SkipReason = Schema.Trim.check(Schema.isNonEmpty());
+
 const SendErrors = [SessionNotFound, SessionInUse, TranscriptError];
 
 export class FlowsApi extends HttpApiGroup.make("flows")
@@ -101,6 +118,16 @@ export class FlowsApi extends HttpApiGroup.make("flows")
       payload: Schema.Struct({ note: Schema.NonEmptyString }),
       success: HttpApiSchema.NoContent,
       error: [CheckpointNotFound, CheckpointClosed, ...SendErrors],
+    }),
+  )
+  .add(
+    // Skips the Session's current Phase with the developer's reason, makes the next one current
+    // and sends its command into the Session.
+    HttpApiEndpoint.post("skip", "/sessions/:session/skip", {
+      params: { session: Schema.NonEmptyString },
+      payload: Schema.Struct({ phase: Phase, reason: SkipReason }),
+      success: HttpApiSchema.NoContent,
+      error: [PhaseNotSkippable, ...SendErrors],
     }),
   )
   .prefix("/flows") {}

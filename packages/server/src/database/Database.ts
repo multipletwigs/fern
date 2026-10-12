@@ -147,6 +147,19 @@ const migrations = {
     yield* sql`CREATE INDEX decisions_by_session ON decisions (session_id)`;
     yield* sql`CREATE INDEX decisions_by_project ON decisions (project)`;
   }),
+  // Phases the developer skipped, with their reasons: the Session's record of every Skip.
+  "0007_skips": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE skips (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        skipped_at INTEGER NOT NULL
+      )
+    `;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.
