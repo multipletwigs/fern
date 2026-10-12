@@ -5,13 +5,30 @@ import type {
   TranscriptItem,
   TranscriptUpdate,
 } from "@repo/api";
-import { Effect, Schedule, Stream } from "effect";
+import { Effect, Predicate, Schedule, Stream } from "effect";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { ApiClient } from "../ApiClient";
 import { LiveClient } from "../LiveClient";
 import { resubscribe } from "../resubscribe";
 
-export const currentSessionAtom = ApiClient.query("sessions", "current", {});
+// The latest Session. The page can load before the main process serves the API, so a dropped
+// request is retried; only the server saying there's no Session ends it.
+export const currentSessionAtom = ApiClient.runtime.atom(
+  Effect.gen(function* () {
+    const client = yield* ApiClient;
+    return yield* client.sessions.current();
+  }).pipe(
+    Effect.retry(
+      Schedule.spaced("1 second").pipe(
+        Schedule.while(
+          ({ input }) =>
+            !Predicate.isTagged(input, "SessionNotFound") &&
+            !Predicate.isTagged(input, "TranscriptError"),
+        ),
+      ),
+    ),
+  ),
+);
 
 export const sendMessageAtom = ApiClient.mutation("sessions", "send");
 

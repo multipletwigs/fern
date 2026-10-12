@@ -31,3 +31,6 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+
+# Agent worktrees, each its own checkout
+.claude/worktrees/

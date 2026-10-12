@@ -62,12 +62,16 @@ export function SessionComposer({
 
   return (
     <Composer
-      placeholder={inUse ? "Running in a terminal…" : "Message Claude Code"}
+      placeholder={
+        inUse
+          ? "Not managed by Fern: running in a terminal. Continue it here once it goes idle."
+          : "Message Claude Code"
+      }
       disabled={inUse}
       running={turn?.running ?? false}
       notice={
         inUse
-          ? "Running in a terminal. You can continue it here once it goes idle."
+          ? undefined
           : (failure ?? (turn?.running ? undefined : turn?.error))
       }
       commands={commands}

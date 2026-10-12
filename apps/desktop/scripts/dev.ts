@@ -1,20 +1,22 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
-import { copyFile, mkdir } from "node:fs/promises";
+import { watch } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { build } from "tsdown";
 
 // `pnpm dev` for the desktop app. Fern is often used to edit Fern, so a rebuild must never take
 // the running app down with it:
 // - it waits until no turn is running, so Claude's edit doesn't kill the turn making it;
-// - it skips restarting into a build with type errors, keeping the running app instead;
-// - if a new build still fails to start, it falls back to the last build that did.
+// - it skips restarting into a build with type errors, keeping the running app instead.
+// A build that type-checks but doesn't start is reported and left down until the next change.
+//
+// It watches the sources itself and builds once per change: rolldown's watch mode finishes
+// without ever writing the bundle.
 
 const API = `http://127.0.0.1:${process.env.FERN_API_PORT ?? 7420}/api`;
-const BUILD = "dist/main.mjs";
-const LAST_GOOD = ".dev/last-good.mjs";
+const SOURCES = ["src", "../../packages/server/src", "../../packages/api/src"];
 const START_TIMEOUT_MS = 20_000;
+const DEBOUNCE_MS = 200;
 
 let app: ChildProcess | undefined;
 
@@ -61,8 +63,8 @@ const stop = async () => {
 };
 
 // `pnpm dev` puts the electron CLI on PATH; it forwards SIGTERM to the app.
-const launch = (entry: string) => {
-  app = spawn("electron", [entry, "--dev"], { stdio: "inherit" });
+const launch = () => {
+  app = spawn("electron", [".", "--dev"], { stdio: "inherit" });
   return app;
 };
 
@@ -78,27 +80,31 @@ const startsHealthy = async (child: ChildProcess) => {
 
 const restart = async () => {
   await stop();
-  if (await startsHealthy(launch("."))) {
-    await mkdir(".dev", { recursive: true });
-    await copyFile(BUILD, LAST_GOOD);
-    return;
-  }
+  if (await startsHealthy(launch())) return;
   await stop();
-  if (!existsSync(LAST_GOOD)) {
-    console.error(
-      "[dev] The new build didn't start; waiting for the next rebuild.",
-    );
-    return;
-  }
   console.error(
-    "[dev] The new build didn't start; running the last good build until the next rebuild.",
+    "[dev] The new build didn't start (see its output above); waiting for the next change.",
   );
-  launch(LAST_GOOD);
 };
 
-await build({
-  watch: true,
-  onSuccess: async (_config, signal) => {
+// Builds and restarts. A change that lands meanwhile aborts what's left, and its own run takes
+// over once this build is written.
+let current: AbortController | undefined;
+let building: Promise<unknown> = Promise.resolve();
+
+const rebuild = () => {
+  current?.abort();
+  const controller = new AbortController();
+  current = controller;
+  const { signal } = controller;
+  building = building.then(async () => {
+    if (signal.aborted) return;
+    try {
+      await build({ watch: false });
+    } catch (error) {
+      console.error("[dev] Build failed; keeping the running app.", error);
+      return;
+    }
     await waitForIdle(signal);
     if (signal.aborted) return;
     if (isUp(app) && !(await typechecks())) {
@@ -107,7 +113,15 @@ await build({
       );
       return;
     }
-    // A newer build replaced this one and will do the restart itself.
     if (!signal.aborted) await restart();
-  },
-});
+  });
+};
+
+let debounce: NodeJS.Timeout | undefined;
+for (const dir of SOURCES)
+  watch(dir, { recursive: true }, () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(rebuild, DEBOUNCE_MS);
+  });
+
+rebuild();

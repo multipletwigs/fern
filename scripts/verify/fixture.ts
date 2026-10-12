@@ -181,6 +181,19 @@ export const writeFixture = (configDir: string, cwd: string) => {
   DONE.forEach((agentId, i) =>
     main.handBack(agentId, "general-purpose", `Ticket ${i + 1} is done.`),
   );
+  // Edits to a few files, so the code panel opens with changed files to switch between.
+  [
+    "apps/web/src/session/rows.ts",
+    "apps/web/src/session/toolName.ts",
+    "packages/server/src/transcript/View.ts",
+  ].forEach((path, i) => {
+    main.tool(`toolu_fixtureEdit00000${i}`, "Edit", {
+      file_path: join(cwd, path),
+      old_string: "",
+      new_string: "",
+    });
+    main.result(`toolu_fixtureEdit00000${i}`, "The file has been updated.");
+  });
   main.text("Most Subagents are back; the last ticket is still running.");
   main.write(join(root, `${FIXTURE_SESSION}.jsonl`));
 
