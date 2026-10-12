@@ -54,6 +54,24 @@ export const SpecIssues = Schema.Struct({
   tickets: Schema.Array(Issue),
 });
 export type SpecIssues = typeof SpecIssues.Type;
+// The developer's call on a Finding. Declining may carry a note.
+export const FindingVerdict = Schema.Struct({
+  kind: Schema.Literals(["accepted", "declined"]),
+  note: Schema.optional(Schema.String),
+});
+export type FindingVerdict = typeof FindingVerdict.Type;
+
+// A proposed change to the Setup, reported with Retro. The developer accepts or declines each one;
+// the accepted ones go back to the Session to commit.
+export class Finding extends Schema.Class<Finding>("Finding")({
+  id: Schema.String,
+  title: Schema.String,
+  // The change it proposes to the Setup.
+  change: Schema.String,
+  // Why the Retro proposes it.
+  reasoning: Schema.String,
+  verdict: Schema.optional(FindingVerdict),
+}) {}
 
 // A Session waiting on the developer at the end of a Phase: approving it moves the Flow on to the
 // next Phase, or, at the end of Retro, finishes it.
@@ -69,6 +87,9 @@ export class Checkpoint extends Schema.Class<Checkpoint>("Checkpoint")({
   status: CheckpointStatus,
   // The developer's note on a declined Checkpoint, sent back to the Session as a Redirect.
   note: Schema.optional(Schema.String),
+  // The Findings reported with Retro, in order. A Checkpoint with Findings is settled by a verdict
+  // on each, never by approving it, and never by Autonomy.
+  findings: Schema.optional(Schema.Array(Finding)),
   raisedAt: Schema.DateTimeUtcFromMillis,
   decidedAt: Schema.optional(Schema.DateTimeUtcFromMillis),
 }) {}
@@ -117,6 +138,19 @@ export class PhaseNotSkippable extends Schema.TaggedError<PhaseNotSkippable>()(
 // A one-line reason for a Skip: not blank.
 export const SkipReason = Schema.Trim.check(Schema.isNonEmpty());
 
+export class FindingNotFound extends Schema.TaggedError<FindingNotFound>()(
+  "FindingNotFound",
+  { id: Schema.String },
+  { httpApiStatus: 404 },
+) {}
+
+// The Checkpoint's Findings settle it: each needs a verdict instead.
+export class FindingsUndecided extends Schema.TaggedError<FindingsUndecided>()(
+  "FindingsUndecided",
+  { id: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
 const SendErrors = [SessionNotFound, SessionInUse, TranscriptError];
 
 export class FlowsApi extends HttpApiGroup.make("flows")
@@ -125,7 +159,12 @@ export class FlowsApi extends HttpApiGroup.make("flows")
     HttpApiEndpoint.post("approve", "/checkpoints/:id/approve", {
       params: { id: Schema.NonEmptyString },
       success: HttpApiSchema.NoContent,
-      error: [CheckpointNotFound, CheckpointClosed, ...SendErrors],
+      error: [
+        CheckpointNotFound,
+        CheckpointClosed,
+        FindingsUndecided,
+        ...SendErrors,
+      ],
     }),
   )
   .add(
@@ -145,6 +184,16 @@ export class FlowsApi extends HttpApiGroup.make("flows")
       payload: Schema.Struct({ phase: Phase, reason: SkipReason }),
       success: HttpApiSchema.NoContent,
       error: [PhaseNotSkippable, ...SendErrors],
+    }),
+  )
+  .add(
+    // Accepts or declines a Finding. The last verdict marks Retro done and sends the accepted
+    // Findings to the Session in one message.
+    HttpApiEndpoint.put("findingVerdict", "/findings/:id/verdict", {
+      params: { id: Schema.NonEmptyString },
+      payload: FindingVerdict,
+      success: HttpApiSchema.NoContent,
+      error: [FindingNotFound, CheckpointClosed, ...SendErrors],
     }),
   )
   .prefix("/flows") {}

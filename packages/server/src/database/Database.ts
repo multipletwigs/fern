@@ -165,6 +165,24 @@ const migrations = {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE checkpoints ADD COLUMN spec TEXT`;
   }),
+  // Findings reported with Retro, on its Checkpoint, and the developer's verdict on each.
+  "0009_findings": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE findings (
+        id TEXT PRIMARY KEY,
+        checkpoint_id TEXT NOT NULL REFERENCES checkpoints (id),
+        position INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        change TEXT NOT NULL,
+        reasoning TEXT NOT NULL,
+        verdict TEXT,
+        note TEXT,
+        decided_at INTEGER
+      )
+    `;
+    yield* sql`CREATE INDEX findings_by_checkpoint ON findings (checkpoint_id)`;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

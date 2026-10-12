@@ -1,6 +1,6 @@
 import { assert, it as test, layer } from "@effect/vitest";
 import { FernApi, type Flow, LiveRpcs } from "@repo/api";
-import { Effect, Layer, Option, Schedule, Stream } from "effect";
+import { Effect, Layer, Schedule, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { RpcTest } from "effect/rpc";
@@ -11,9 +11,8 @@ import { join } from "node:path";
 import { vi } from "vitest";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
-import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
 import { WorktreesDir } from "../src/worktree/Worktrees";
-import { NoWriter } from "./stubs";
+import { FakeIssues, NoWriter } from "./stubs";
 
 const git = (cwd: string, ...args: Array<string>) =>
   execFileSync(
@@ -153,26 +152,6 @@ vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => ({
     });
   },
 }));
-
-// The issue tracker, faked: the Brief #2 and its tickets #3 and #4 exist, nothing else does.
-const issue = (number: number, title: string): TrackedIssue => ({
-  number,
-  title,
-  url: `https://github.com/acme/app/issues/${number}`,
-  state: "open",
-});
-const ISSUES = new Map([
-  [2, issue(2, "Dark mode")],
-  [3, issue(3, "Add the theme setting")],
-  [4, issue(4, "Toggle in the settings page")],
-]);
-const FakeIssues = Layer.succeed(
-  IssueTracker,
-  IssueTracker.of({
-    issue: (_cwd, number) =>
-      Effect.succeed(Option.fromNullishOr(ISSUES.get(number))),
-  }),
-);
 
 const makeClient = HttpApiTest.groups(FernApi, ["sessions", "flows"]);
 const makeLive = RpcTest.makeClient(LiveRpcs);

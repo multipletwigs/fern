@@ -10,6 +10,7 @@ import {
   flowAtom,
 } from "./atoms";
 import { CHECKPOINT_QUESTIONS, PHASE_TITLES } from "./phases";
+import { RetroFindings } from "./RetroFindings";
 
 // The Checkpoint the Session is waiting at, if any, above its composer.
 export function SessionCheckpoint({ sessionId }: { sessionId: string }) {
@@ -22,6 +23,14 @@ export function SessionCheckpoint({ sessionId }: { sessionId: string }) {
     ? result.value?.checkpoint
     : undefined;
   if (!checkpoint) return null;
+  if (checkpoint.findings)
+    return (
+      <RetroFindings
+        key={checkpoint.id}
+        checkpoint={checkpoint}
+        findings={checkpoint.findings}
+      />
+    );
 
   const decide = async (run: () => Promise<Exit.Exit<unknown, unknown>>) => {
     setPending(true);

@@ -4,7 +4,11 @@ import {
   CheckpointClosed,
   CheckpointNotFound,
   CheckpointStatus,
+  Finding,
   Flow,
+  FindingNotFound,
+  FindingsUndecided,
+  type FindingVerdict,
   FlowPhase,
   Phase,
   PHASES,
@@ -26,7 +30,7 @@ import {
   Stream,
   SubscriptionRef,
 } from "effect";
-import { SqlClient, SqlSchema } from "effect/sql";
+import { SqlClient, type SqlError, SqlSchema } from "effect/sql";
 import { z } from "zod";
 import { IssueTracker, type TrackedIssue } from "../issue/IssueTracker";
 import { FernTools } from "../turn/FernTools";
@@ -82,7 +86,39 @@ const CheckpointRow = Schema.Struct({
 });
 type CheckpointRow = typeof CheckpointRow.Type;
 
-const toCheckpoint = (row: CheckpointRow) =>
+const FindingRow = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  change: Schema.String,
+  reasoning: Schema.String,
+  verdict: Schema.NullOr(Schema.Literals(["accepted", "declined"])),
+  note: Schema.NullOr(Schema.String),
+});
+type FindingRow = typeof FindingRow.Type;
+
+const toFinding = (row: FindingRow) =>
+  Finding.make({
+    id: row.id,
+    title: row.title,
+    change: row.change,
+    reasoning: row.reasoning,
+    verdict:
+      row.verdict === null
+        ? undefined
+        : { kind: row.verdict, note: row.note ?? undefined },
+  });
+
+// A Finding as the agent reports it.
+interface ReportedFinding {
+  readonly title: string;
+  readonly change: string;
+  readonly reasoning: string;
+}
+
+const toCheckpoint = (
+  row: CheckpointRow,
+  findings: ReadonlyArray<FindingRow> = [],
+) =>
   Checkpoint.make({
     id: row.id,
     sessionId: row.sessionId,
@@ -91,6 +127,7 @@ const toCheckpoint = (row: CheckpointRow) =>
     spec: row.spec ?? undefined,
     status: row.status,
     note: row.note ?? undefined,
+    findings: findings.length > 0 ? findings.map(toFinding) : undefined,
     raisedAt: Schema.decodeSync(Schema.DateTimeUtcFromMillis)(row.raisedAt),
     decidedAt:
       row.decidedAt === null
@@ -152,6 +189,20 @@ const shown = ({ number, title, url }: TrackedIssue) => ({
   url,
 });
 
+// What Fern sends the Session once Retro's Findings all have a verdict: the accepted ones to commit.
+const acceptedMessage = (accepted: ReadonlyArray<FindingRow>) =>
+  [
+    `The developer accepted ${accepted.length === 1 ? "this Finding" : "these Findings"} from your Retro. Make ${accepted.length === 1 ? "its change" : "their changes"} to the Setup, then commit on this Session's branch in a commit of its own, separate from the feature code:`,
+    ...accepted.map((f, i) =>
+      [
+        `${i + 1}. ${f.title}`,
+        `   Change: ${f.change}`,
+        `   Why: ${f.reasoning}`,
+        ...(f.note ? [`   Developer's note: ${f.note}`] : []),
+      ].join("\n"),
+    ),
+  ].join("\n\n");
+
 // What a Fern tool answers the agent.
 interface Answer {
   readonly text: string;
@@ -182,6 +233,7 @@ export class Flows extends Context.Service<
       void,
       | CheckpointNotFound
       | CheckpointClosed
+      | FindingsUndecided
       | SessionNotFound
       | SessionInUse
       | TranscriptError
@@ -207,6 +259,19 @@ export class Flows extends Context.Service<
     ): Effect.Effect<
       void,
       PhaseNotSkippable | SessionNotFound | SessionInUse | TranscriptError
+    >;
+    // Accepts or declines a Retro Finding. The last verdict marks Retro done and sends the
+    // accepted Findings to the Session in one message. Only the developer calls this.
+    findingVerdict(
+      id: string,
+      verdict: FindingVerdict,
+    ): Effect.Effect<
+      void,
+      | FindingNotFound
+      | CheckpointClosed
+      | SessionNotFound
+      | SessionInUse
+      | TranscriptError
     >;
   }
 >()("@repo/server/flow/Flows") {
@@ -262,6 +327,21 @@ export class Flows extends Context.Service<
         execute: (id) => sql`SELECT * FROM checkpoints WHERE id = ${id}`,
       });
 
+      const findingsOf = SqlSchema.findAll({
+        Request: Schema.String,
+        Result: FindingRow,
+        execute: (checkpointId) => sql`
+          SELECT id, title, change, reasoning, verdict, note FROM findings
+          WHERE checkpoint_id = ${checkpointId} ORDER BY position`,
+      });
+
+      const findingRow = SqlSchema.findOneOption({
+        Request: Schema.String,
+        Result: Schema.Struct({ checkpointId: Schema.String }),
+        execute: (id) =>
+          sql`SELECT checkpoint_id FROM findings WHERE id = ${id}`,
+      });
+
       // Hosted Sessions in a worktree of their own follow the Flow (ADR 0005).
       const inFlow = (sessionId: string) =>
         hosted.worktrees.pipe(
@@ -284,13 +364,15 @@ export class Flows extends Context.Service<
         Effect.gen(function* () {
           if (!(yield* inFlow(sessionId))) return null;
           const phases = yield* phasesOf(sessionId);
-          const checkpoint = yield* pendingOf(sessionId).pipe(Effect.orDie);
+          const waiting = yield* pendingOf(sessionId).pipe(Effect.orDie);
+          if (Option.isNone(waiting)) return Flow.make({ sessionId, phases });
+          const findings = yield* findingsOf(waiting.value.id).pipe(
+            Effect.orDie,
+          );
           return Flow.make({
             sessionId,
             phases,
-            checkpoint: Option.getOrUndefined(
-              Option.map(checkpoint, toCheckpoint),
-            ),
+            checkpoint: toCheckpoint(waiting.value, findings),
           });
         });
 
@@ -371,6 +453,7 @@ export class Flows extends Context.Service<
           readonly phase: Phase;
           readonly summary: string;
           readonly spec?: SpecReport | undefined;
+          readonly findings?: ReadonlyArray<ReportedFinding> | undefined;
         },
       ) =>
         Effect.gen(function* () {
@@ -393,19 +476,44 @@ export class Flows extends Context.Service<
               text: `The developer already has a Checkpoint for the end of ${TITLES[now]}. End your turn; their decision arrives as your next message.`,
               isError: false,
             };
+          const findings = report.findings ?? [];
+          if (findings.length > 0 && now !== "retro")
+            return {
+              text: "Only Retro reports Findings. Report the Phase done without them.",
+              isError: true,
+            };
+          // Spec's exit criteria come first: a failed check raises nothing, and Autonomy can't pass it.
           const spec =
             now === "spec" ? yield* specExit(sessionId, report.spec) : null;
           if (spec !== null && "isError" in spec) return spec;
           const raisedAt = yield* Clock.currentTimeMillis;
-          yield* sql`INSERT INTO checkpoints ${sql.insert({
-            id: crypto.randomUUID(),
-            sessionId,
-            phase: now,
-            summary: report.summary,
-            spec: spec === null ? null : encodeSpec(spec),
-            status: "pending",
-            raisedAt,
-          })}`.pipe(Effect.orDie);
+          const id = crypto.randomUUID();
+          yield* sql
+            .withTransaction(
+              Effect.all([
+                sql`INSERT INTO checkpoints ${sql.insert({
+                  id,
+                  sessionId,
+                  phase: now,
+                  summary: report.summary,
+                  spec: spec === null ? null : encodeSpec(spec),
+                  status: "pending",
+                  raisedAt,
+                })}`,
+                ...findings.map(
+                  (finding, position) =>
+                    sql`INSERT INTO findings ${sql.insert({
+                      id: crypto.randomUUID(),
+                      checkpointId: id,
+                      position,
+                      title: finding.title,
+                      change: finding.change,
+                      reasoning: finding.reasoning,
+                    })}`,
+                ),
+              ]),
+            )
+            .pipe(Effect.orDie);
           yield* bump;
           return {
             text: `Fern raised a Checkpoint for the developer to confirm the end of ${TITLES[now]}. End your turn now; their decision arrives as your next message.`,
@@ -425,6 +533,15 @@ export class Flows extends Context.Service<
 
       const approve = Effect.fn("Flows.approve")(function* (id: string) {
         const checkpoint = yield* open(id);
+        // Findings settle their Checkpoint through a verdict on each, never through approval.
+        yield* findingsOf(id).pipe(
+          Effect.orDie,
+          Effect.flatMap((findings) =>
+            findings.length > 0
+              ? Effect.fail(new FindingsUndecided({ id }))
+              : Effect.void,
+          ),
+        );
         const phases = yield* phasesOf(checkpoint.sessionId);
         const [first, ...rest] = commandsAfter(
           checkpoint.phase,
@@ -520,6 +637,71 @@ export class Flows extends Context.Service<
         for (const text of rest) yield* turns.send(sessionId, { text });
       }, deciding.withPermits(1));
 
+      // The last Finding has its verdict: Retro is done, and the accepted Findings go back to the
+      // Session to commit.
+      const finishRetro = (
+        checkpoint: CheckpointRow,
+        findings: ReadonlyArray<FindingRow>,
+        record: Effect.Effect<unknown, SqlError.SqlError>,
+        decidedAt: number,
+      ) =>
+        Effect.gen(function* () {
+          const accepted = findings.filter((f) => f.verdict === "accepted");
+          // Sent before anything is recorded, so a send that fails leaves the verdict to retry.
+          if (accepted.length > 0)
+            yield* turns.send(checkpoint.sessionId, {
+              text: acceptedMessage(accepted),
+            });
+          const phases = yield* phasesOf(checkpoint.sessionId);
+          yield* sql
+            .withTransaction(
+              Effect.all([
+                record,
+                savePhases(
+                  checkpoint.sessionId,
+                  advance(phases, checkpoint.phase),
+                  decidedAt,
+                ),
+                sql`UPDATE checkpoints SET status = 'approved', decided_at = ${decidedAt}
+                    WHERE id = ${checkpoint.id}`,
+              ]),
+            )
+            .pipe(Effect.orDie);
+        });
+
+      const findingVerdict = Effect.fn("Flows.findingVerdict")(function* (
+        id: string,
+        verdict: FindingVerdict,
+      ) {
+        const finding = yield* findingRow(id).pipe(
+          Effect.orDie,
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.fail(new FindingNotFound({ id })),
+              onSome: Effect.succeed,
+            }),
+          ),
+        );
+        // A Finding's Checkpoint always exists.
+        const checkpoint = yield* open(finding.checkpointId).pipe(
+          Effect.catchTag("CheckpointNotFound", Effect.die),
+        );
+        const note = verdict.note?.trim() || null;
+        const findings = (yield* findingsOf(checkpoint.id).pipe(
+          Effect.orDie,
+        )).map((f): FindingRow =>
+          f.id === id ? { ...f, verdict: verdict.kind, note } : f,
+        );
+        const decidedAt = yield* Clock.currentTimeMillis;
+        const record = sql`UPDATE findings
+            SET verdict = ${verdict.kind}, note = ${note}, decided_at = ${decidedAt}
+            WHERE id = ${id}`;
+        yield* findings.some((f) => f.verdict === null)
+          ? record.pipe(Effect.orDie)
+          : finishRetro(checkpoint, findings, record, decidedAt);
+        yield* bump;
+      }, deciding.withPermits(1));
+
       const phases = Effect.gen(function* () {
         const [worktrees, rows] = yield* Effect.all([
           hosted.worktrees,
@@ -562,6 +744,26 @@ export class Flows extends Context.Service<
                 .describe(
                   "Required when the Phase is spec: the issues Spec wrote",
                 ),
+              findings: z
+                .array(
+                  z.object({
+                    title: z.string().min(1).describe("The Finding in a line"),
+                    change: z
+                      .string()
+                      .min(1)
+                      .describe(
+                        "The change it proposes to the Setup: steering files, skills, hooks or Checks",
+                      ),
+                    reasoning: z
+                      .string()
+                      .min(1)
+                      .describe("Why, from what happened in the Session"),
+                  }),
+                )
+                .optional()
+                .describe(
+                  "Retro only: the Findings, each a proposed change to the Setup. Don't make the changes yet: the developer accepts or declines each, and Fern sends back the accepted ones to commit.",
+                ),
             },
             (args) => run(phaseDone(sessionId, args).pipe(Effect.map(reply))),
           ),
@@ -573,13 +775,14 @@ export class Flows extends Context.Service<
         checkpoints: reloading(
           pending().pipe(
             Effect.orDie,
-            Effect.map((rows) => rows.map(toCheckpoint)),
+            Effect.map((rows) => rows.map((row) => toCheckpoint(row))),
           ),
         ),
         phases: reloading(phases),
         approve,
         decline,
         skip,
+        findingVerdict,
       });
     }),
   );

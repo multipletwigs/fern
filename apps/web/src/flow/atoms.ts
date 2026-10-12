@@ -41,3 +41,4 @@ export const sessionPhasesAtom = LiveClient.runtime.atom(
 export const approveCheckpointAtom = ApiClient.mutation("flows", "approve");
 export const declineCheckpointAtom = ApiClient.mutation("flows", "decline");
 export const skipPhaseAtom = ApiClient.mutation("flows", "skip");
+export const findingVerdictAtom = ApiClient.mutation("flows", "findingVerdict");

@@ -83,6 +83,8 @@ export const FlowsHandlers = HttpApiBuilder.group(
       decline: ({ params, payload }) => flows.decline(params.id, payload.note),
       skip: ({ params, payload }) =>
         flows.skip(params.session, payload.phase, payload.reason),
+      findingVerdict: ({ params, payload }) =>
+        flows.findingVerdict(params.id, payload),
     });
   }),
 );

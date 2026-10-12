@@ -1,6 +1,7 @@
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Option, Stream } from "effect";
 import { Commands } from "../src/commands/Commands";
 import { Flows } from "../src/flow/Flows";
+import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
 import { Rounds } from "../src/round/Rounds";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { Turns } from "../src/turn/Turns";
@@ -90,6 +91,7 @@ export const UnusedFlows = Layer.succeed(
     approve: () => Effect.die("unused"),
     decline: () => Effect.die("unused"),
     skip: () => Effect.die("unused"),
+    findingVerdict: () => Effect.die("unused"),
   }),
 );
 
@@ -99,5 +101,25 @@ export const UnusedRounds = Layer.succeed(
     post: () => Effect.die("unused"),
     answer: () => Effect.die("unused"),
     list: () => Stream.die("unused"),
+  }),
+);
+
+// The issue tracker, faked: the Brief #2 and its tickets #3 and #4 exist, nothing else does.
+const issue = (number: number, title: string): TrackedIssue => ({
+  number,
+  title,
+  url: `https://github.com/acme/app/issues/${number}`,
+  state: "open",
+});
+const ISSUES = new Map([
+  [2, issue(2, "Dark mode")],
+  [3, issue(3, "Add the theme setting")],
+  [4, issue(4, "Toggle in the settings page")],
+]);
+export const FakeIssues = Layer.succeed(
+  IssueTracker,
+  IssueTracker.of({
+    issue: (_cwd, number) =>
+      Effect.succeed(Option.fromNullishOr(ISSUES.get(number))),
   }),
 );
