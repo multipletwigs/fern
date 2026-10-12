@@ -169,44 +169,19 @@ const agent = async ({ sessionId, text, options }: StartedTurn) => {
 
 // Only the Agent SDK's query() is faked: it records the turn, writes the transcript as Claude Code
 // would, lets the agent act, then ends the turn.
-vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  query: ({
-    prompt,
-    options,
-  }: {
-    prompt: AsyncIterable<{ message: { content: Array<{ text?: string }> } }>;
-    options: Record<string, unknown> & {
-      cwd: string;
-      sessionId?: string;
-      resume?: string;
-    };
-  }) => {
-    async function* events() {
-      const first = await prompt[Symbol.asyncIterator]().next();
-      const text = first.done
-        ? ""
-        : (first.value.message.content.find((part) => part.text)?.text ?? "");
-      const sessionId = options.sessionId ?? options.resume ?? "";
+vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => {
+  const { scriptedQuery } = await import("./fakeClaude");
+  return {
+    ...(await importOriginal<object>()),
+    query: scriptedQuery(async ({ sessionId, text, options, first }) => {
       const turn = { sessionId, text, options };
       started.push(turn);
-      if (options.sessionId) transcript(options.cwd, options.sessionId, text);
-      yield { type: "system", subtype: "init", model: "claude-test" };
+      if (first && typeof options.sessionId === "string")
+        transcript(String(options.cwd), options.sessionId, text);
       await agent(turn);
-      yield {
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        result: "",
-        modelUsage: { "claude-test": { contextWindow: 1_000 } },
-      };
-    }
-    return Object.assign(events(), {
-      interrupt: () => Promise.resolve(),
-      close: () => {},
-    });
-  },
-}));
+    }),
+  };
+});
 
 const makeClient = HttpApiTest.groups(FernApi, [
   "sessions",

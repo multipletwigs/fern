@@ -10,12 +10,15 @@ export const LIVE_WINDOW_MS = 30_000;
 // Fern's own writes can land this long after its turn ends; they don't make a Session "in use".
 const HOSTED_TAIL_MS = 2_000;
 
-// A message sent while a turn ran, waiting for the turns before it to end.
+// A message sent while a turn ran, until the agent has taken it in. Claude Code takes it in at the
+// next tool call, or as a turn of its own once the turn ends, as with a slash command.
 export const QueuedMessage = Schema.Struct({
   id: Schema.String,
   text: Schema.String,
   // How many images it carries.
   images: Schema.Finite,
+  // Whether Claude Code has the message already, so it can no longer be taken back.
+  delivered: Schema.Boolean,
 });
 export type QueuedMessage = typeof QueuedMessage.Type;
 
@@ -28,7 +31,7 @@ export const HostedTurn = Schema.Struct({
   // The size of the context window of the model the turn ran on, as the previous turn reported it
   // while this one runs.
   contextWindow: Schema.optional(Schema.Finite),
-  // Messages to run once this turn ends, in order.
+  // Messages sent during this turn that the agent hasn't taken in yet, in order.
   queued: Schema.optional(Schema.Array(QueuedMessage)),
 });
 export type HostedTurn = typeof HostedTurn.Type;
@@ -219,6 +222,13 @@ export class SessionBusy extends Schema.TaggedError<SessionBusy>()(
   { httpApiStatus: 409 },
 ) {}
 
+// The message is with Claude Code already, so it can't be taken out of the queue.
+export class MessageDelivered extends Schema.TaggedError<MessageDelivered>()(
+  "MessageDelivered",
+  { id: Schema.String, item: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
 // Another process, such as Claude Code in a terminal, is writing this Session right now.
 export class SessionInUse extends Schema.TaggedError<SessionInUse>()(
   "SessionInUse",
@@ -292,10 +302,11 @@ export class SessionsApi extends HttpApiGroup.make("sessions")
     }),
   )
   .add(
-    // Takes a message out of the Session's queue before it runs.
+    // Takes a message out of the Session's queue, unless Claude Code has it already.
     HttpApiEndpoint.delete("unqueue", "/:id/queue/:item", {
       params: { id: Schema.NonEmptyString, item: Schema.NonEmptyString },
       success: HttpApiSchema.NoContent,
+      error: [MessageDelivered],
     }),
   )
   .add(

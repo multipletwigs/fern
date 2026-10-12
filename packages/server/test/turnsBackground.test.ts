@@ -6,67 +6,24 @@ import { Snapshots } from "../src/snapshot/Snapshots";
 import { FernTools } from "../src/turn/FernTools";
 import { HostedSessions } from "../src/turn/HostedSessions";
 import { Turns } from "../src/turn/Turns";
+import { holdAt, processes, scripts } from "./fakeClaude";
 import { UnusedWorktrees } from "./stubs";
 
 // Replays message sequences captured from the real Claude Code CLI (0.3.296, Haiku), trimmed to the
-// fields Turns reads. Each query Turns opens plays the next script; a `wait` step holds the script
-// until the test releases it, the way a background subagent's work takes time.
+// fields Turns reads, on the Session's long-lived process.
 
 const SESSION = "2c9ad25b-9de1-43f3-a556-86a845165b20";
 
-type Step = Record<string, unknown> | "wait";
-const scripts: Array<ReadonlyArray<Step>> = [];
-// What happened, in order: the text each query was sent, each message's label as Claude Code
-// sends it, and each close.
-const log: Array<string> = [];
-let release: () => void = () => {};
+vi.mock("@anthropic-ai/claude-agent-sdk", async () => {
+  const { replayQuery } = await import("./fakeClaude");
+  return {
+    getSessionInfo: () =>
+      Promise.resolve({ sessionId: SESSION, lastModified: 0, cwd: "/repo" }),
+    query: replayQuery,
+  };
+});
 
-const label = (step: Record<string, unknown>) =>
-  step.type === "result"
-    ? `result ${JSON.stringify(step.result)}`
-    : step.type === "assistant"
-      ? "assistant"
-      : String(step.subtype ?? step.type);
-
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  getSessionInfo: () =>
-    Promise.resolve({ sessionId: SESSION, lastModified: 0, cwd: "/repo" }),
-  query: ({
-    prompt,
-  }: {
-    prompt: AsyncIterable<{ message: { content: Array<{ text?: string }> } }>;
-  }) => {
-    let closed = false;
-    const script = scripts.shift() ?? [];
-    async function* events() {
-      const first = await prompt[Symbol.asyncIterator]().next();
-      if (!first.done)
-        log.push(`sent ${first.value.message.content[0]?.text ?? ""}`);
-      for (const step of script) {
-        if (step === "wait") {
-          const { promise, resolve } = Promise.withResolvers<void>();
-          release = resolve;
-          await promise;
-          continue;
-        }
-        if (closed) return;
-        log.push(label(step));
-        yield step;
-      }
-    }
-    return Object.assign(events(), {
-      // Claude Code stops the turn, and its background tasks, with an error result.
-      interrupt: () => {
-        release();
-        return Promise.resolve();
-      },
-      close: () => {
-        closed = true;
-        log.push("close");
-      },
-    });
-  },
-}));
+type Step = Record<string, unknown>;
 
 const init = { type: "system", subtype: "init", model: "claude-haiku" };
 const assistant = (text: string) => ({
@@ -74,12 +31,14 @@ const assistant = (text: string) => ({
   parent_tool_use_id: null,
   message: { role: "assistant", content: [{ type: "text", text }] },
 });
-const result = (text: string, turns: number) => ({
+// A result, with the messages its turn took in.
+const result = (text: string, turns: number, taken: ReadonlyArray<string>) => ({
   type: "result",
   subtype: "success",
   is_error: false,
   num_turns: turns,
   result: text,
+  user_message_uuids: taken,
   modelUsage: { "claude-haiku": { contextWindow: 1_000 } },
 });
 const subagent = {
@@ -103,36 +62,31 @@ const notified = (status: string) => ({
 // A turn whose agent launches a background subagent: the main loop's result arrives while the
 // subagent runs, and its notification then runs as another turn, ending in a second result.
 const backgroundSubagent: ReadonlyArray<Step> = [
+  { send: "spawn a background agent" },
   init,
   { type: "assistant", message: { content: [{ type: "tool_use" }] } },
   tasksChanged([subagent]),
   { type: "system", subtype: "task_started", task_id: subagent.task_id },
   assistant("launched"),
-  result("launched", 2),
-  "wait",
+  result("launched", 2, ["$1"]),
   { type: "system", subtype: "task_progress", task_id: subagent.task_id },
   notified("completed"),
   tasksChanged([]),
   init,
   assistant("The background subagent finished."),
-  result("The background subagent finished.", 1),
+  result("The background subagent finished.", 1, []),
 ];
 
 // Resuming a Session whose subagent was killed: the stopped notification gets an empty result,
 // with no model call, before Claude Code answers the message.
 const resumeAfterKilledSubagent: ReadonlyArray<Step> = [
+  { send: "ping" },
   notified("stopped"),
   init,
-  result("", 0),
+  result("", 0, []),
   init,
   assistant("pong"),
-  result("pong", 1),
-];
-
-const reply = (text: string): ReadonlyArray<Step> => [
-  init,
-  assistant(text),
-  result(text, 1),
+  result("pong", 1, ["$1"]),
 ];
 
 const NoSnapshots = Layer.succeed(
@@ -163,12 +117,7 @@ const TestTurns = Turns.layer.pipe(
       FernTools,
       FernTools.of({
         register: () => Effect.void,
-        options: () =>
-          Effect.succeed({
-            mcpServers: {},
-            allowedTools: [],
-            appendSystemPrompt: "",
-          }),
+        options: () => Effect.die("unused"),
       }),
     ),
     UnusedWorktrees,
@@ -179,7 +128,7 @@ const tick = Effect.promise(
   () => new Promise((resolve) => setTimeout(resolve, 5)),
 );
 
-// Gives the turn's fiber moments to move until the condition holds.
+// Gives the Session's fibers moments to move until the condition holds.
 const until = (condition: () => boolean) =>
   Effect.gen(function* () {
     for (let i = 0; i < 200 && !condition(); i++) yield* tick;
@@ -193,59 +142,49 @@ const idle = (turns: Turns["Service"]) =>
     }
   });
 
-const fresh = (...next: ReadonlyArray<ReadonlyArray<Step>>) => {
-  log.length = 0;
-  scripts.length = 0;
-  scripts.push(...next);
-};
+// A new process for the Session, playing the script.
+const fresh = (script: ReadonlyArray<Step>) =>
+  Effect.gen(function* () {
+    yield* (yield* Turns).close(SESSION);
+    processes.length = 0;
+    scripts.length = 0;
+    scripts.push(script);
+  });
 
 layer(TestTurns, { excludeTestServices: true })(
   "Turns with background tasks",
   (it) => {
     it.effect(
-      "keeps the turn open until its background subagent's notification turn ends",
+      "keeps the turn open until its background subagent's notification turn ends, and the process after it",
       () =>
         Effect.gen(function* () {
-          fresh(backgroundSubagent, reply("pong"));
+          yield* fresh(backgroundSubagent);
           const turns = yield* Turns;
-          yield* turns.send(SESSION, { text: "spawn a background agent" });
-          yield* until(() => log.includes(`result "launched"`));
-          for (let i = 0; i < 10; i++) yield* tick;
-
-          // The subagent is still working: the Session runs, and a new message waits for it.
-          assert.isTrue((yield* turns.turn(SESSION))?.running);
-          assert.notInclude(log, "close");
-          yield* turns.send(SESSION, { text: "ping" });
-          assert.deepStrictEqual(
-            (yield* turns.turn(SESSION))?.queued?.map((q) => q.text),
-            ["ping"],
+          const finished: Array<string> = [];
+          yield* turns.finished.pipe(
+            Stream.runForEach((turn) =>
+              Effect.sync(() => finished.push(turn.id)),
+            ),
+            Effect.forkScoped,
           );
-          assert.notInclude(log, "sent ping");
+          yield* tick;
+          // The subagent's work takes a while.
+          const working = holdAt((label) => label === "task_progress");
+          yield* turns.send(SESSION, { text: "spawn a background agent" });
+          yield* until(() => working.reached);
 
-          release();
-          yield* until(() => log.includes("sent ping"));
+          // The main loop's result is in, but the subagent is still working: the Session runs.
+          assert.include(processes[0]?.log ?? [], `result "launched"`);
+          assert.isTrue((yield* turns.turn(SESSION))?.running);
+          assert.deepStrictEqual(finished, []);
+
+          working.release();
+          yield* until(() => processes[0]?.waiting === "end");
           yield* idle(turns);
-          assert.deepStrictEqual(log, [
-            "sent spawn a background agent",
-            "init",
-            "assistant",
-            "background_tasks_changed",
-            "task_started",
-            "assistant",
-            `result "launched"`,
-            "task_progress",
-            "task_notification",
-            "background_tasks_changed",
-            "init",
-            "assistant",
-            `result "The background subagent finished."`,
-            "close",
-            "sent ping",
-            "init",
-            "assistant",
-            `result "pong"`,
-            "close",
-          ]);
+          assert.isFalse((yield* turns.turn(SESSION))?.running);
+          assert.deepStrictEqual(finished, [SESSION]);
+          // The process stays, so nothing the subagents run is killed.
+          assert.notInclude(processes[0]?.log ?? [], "close");
         }),
     );
 
@@ -253,19 +192,19 @@ layer(TestTurns, { excludeTestServices: true })(
       "receives the reply after the empty result that follows a resume",
       () =>
         Effect.gen(function* () {
-          fresh(resumeAfterKilledSubagent);
+          yield* fresh(resumeAfterKilledSubagent);
           const turns = yield* Turns;
           yield* turns.send(SESSION, { text: "ping" });
+          yield* until(() => processes[0]?.waiting === "end");
           yield* idle(turns);
-          assert.deepStrictEqual(log, [
+          assert.deepStrictEqual(processes[0]?.log, [
             "sent ping",
             "task_notification",
             "init",
             `result ""`,
             "init",
-            "assistant",
+            "assistant pong",
             `result "pong"`,
-            "close",
           ]);
           assert.isFalse((yield* turns.turn(SESSION))?.running);
         }),
@@ -276,28 +215,28 @@ layer(TestTurns, { excludeTestServices: true })(
       () =>
         Effect.gen(function* () {
           // What /clear sends.
-          fresh([{ type: "conversation_reset" }, init, result("", 0)]);
+          yield* fresh([
+            { send: "/clear" },
+            { type: "conversation_reset" },
+            init,
+            result("", 0, ["$1"]),
+          ]);
           const turns = yield* Turns;
           yield* turns.send(SESSION, { text: "/clear" });
+          yield* until(() => processes[0]?.waiting === "end");
           yield* idle(turns);
-          assert.deepStrictEqual(log, [
-            "sent /clear",
-            "conversation_reset",
-            "init",
-            `result ""`,
-            "close",
-          ]);
           assert.isFalse((yield* turns.turn(SESSION))?.running);
         }),
     );
 
     it.effect("stops a turn with a background subagent at once", () =>
       Effect.gen(function* () {
-        fresh([
+        yield* fresh([
+          { send: "spawn a background agent" },
           init,
           tasksChanged([subagent]),
-          result("launched", 2),
-          "wait",
+          result("launched", 2, ["$1"]),
+          { interrupt: { still_queued: [] } },
           {
             type: "result",
             subtype: "error_during_execution",
@@ -307,17 +246,17 @@ layer(TestTurns, { excludeTestServices: true })(
             result: "stopped",
             modelUsage: {},
           },
-          // With its input open, Claude Code then waits for more.
-          "wait",
         ]);
         const turns = yield* Turns;
         yield* turns.send(SESSION, { text: "spawn a background agent" });
-        yield* until(() => log.includes(`result "launched"`));
+        yield* until(() => processes[0]?.waiting === "interrupt");
         const before = Date.now();
         yield* turns.interrupt(SESSION);
         assert.isBelow(Date.now() - before, 1_000);
-        assert.deepStrictEqual(log.slice(-2), [`result "stopped"`, "close"]);
+        assert.include(processes[0]?.log ?? [], `result "stopped"`);
         assert.isFalse((yield* turns.turn(SESSION))?.running);
+        assert.isUndefined((yield* turns.turn(SESSION))?.error);
+        assert.isFalse(processes[0]?.closed);
       }),
     );
   },

@@ -33,6 +33,7 @@ export const unusedTurns = Turns.of({
   unqueue: () => Effect.die("unused"),
   start: () => Effect.die("unused"),
   interrupt: () => Effect.die("unused"),
+  close: () => Effect.die("unused"),
   turn: () => Effect.die("unused"),
   running: Effect.die("unused"),
   overlapping: () => Effect.die("unused"),

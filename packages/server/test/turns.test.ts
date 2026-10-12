@@ -7,54 +7,31 @@ import { FernTools } from "../src/turn/FernTools";
 import { HostedSessions } from "../src/turn/HostedSessions";
 import { Turns } from "../src/turn/Turns";
 import { Worktrees } from "../src/worktree/Worktrees";
+import type { FakeTurn } from "./fakeClaude";
 
 const SESSION = "6f0c4a52-7d2e-4f0e-9a36-1f8b2c9d4e11";
 
-// Each turn Claude Code would run, in the order they start: what it was sent, the options it was
-// run with, and how to end it.
-interface FakeTurn {
-  readonly text: string;
-  readonly options: Record<string, unknown>;
-  readonly finish: () => void;
-}
-const started: Array<FakeTurn> = [];
+// Each turn Claude Code runs, in the order they start, with how to end it.
+const started: Array<FakeTurn & { readonly finish: () => void }> = [];
+// Each process opened, by the options it was opened with.
+const opened: Array<Record<string, unknown>> = [];
 
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  getSessionInfo: () =>
-    Promise.resolve({ sessionId: SESSION, lastModified: 0, cwd: "/repo" }),
-  query: ({
-    prompt,
-    options,
-  }: {
-    prompt: AsyncIterable<{ message: { content: Array<{ text?: string }> } }>;
-    options: Record<string, unknown>;
-  }) => {
-    const { promise: ended, resolve: finish } = Promise.withResolvers<void>();
-    async function* events() {
-      const first = await prompt[Symbol.asyncIterator]().next();
-      const text = first.done
-        ? ""
-        : (first.value.message.content.find((part) => part.text)?.text ?? "");
-      started.push({ text, options, finish });
-      yield { type: "system", subtype: "init", model: "claude-test" };
-      await ended;
-      yield {
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        result: "",
-        modelUsage: { "claude-test": { contextWindow: 1_000 } },
-      };
-    }
-    return Object.assign(events(), {
-      interrupt: () => {
-        finish();
-        return Promise.resolve();
-      },
-      close: () => {},
-    });
-  },
-}));
+vi.mock("@anthropic-ai/claude-agent-sdk", async () => {
+  const { scriptedQuery } = await import("./fakeClaude");
+  const run = scriptedQuery((turn) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    started.push({ ...turn, finish: resolve });
+    return promise;
+  });
+  return {
+    getSessionInfo: () =>
+      Promise.resolve({ sessionId: SESSION, lastModified: 0, cwd: "/repo" }),
+    query: (args: Parameters<typeof run>[0]) => {
+      opened.push(args.options);
+      return run(args);
+    },
+  };
+});
 
 const NoSnapshots = Layer.succeed(
   Snapshots,
@@ -114,7 +91,7 @@ const TestTurns = Turns.layer.pipe(
   Layer.provide([NoSnapshots, KnownSessions, TestTools, FakeWorktrees]),
 );
 
-// What a Hosted Session's turns are run with besides the message.
+// What a Hosted Session's process is opened with besides its messages.
 const hostedOptions = (id: string) => ({
   mcpServers: { fern: { command: `fern-tools-${id}` } },
   allowedTools: [`mcp__fern__tool_${id}`],
@@ -129,7 +106,7 @@ const tick = Effect.promise(
   () => new Promise((resolve) => setTimeout(resolve, 5)),
 );
 
-// Gives the turn's fiber moments to move until the condition holds.
+// Gives the Session's fibers moments to move until the condition holds.
 const until = (condition: () => boolean) =>
   Effect.gen(function* () {
     for (let i = 0; i < 200 && !condition(); i++) yield* tick;
@@ -146,29 +123,29 @@ const idle = (turns: Turns["Service"], id = SESSION) =>
 
 const message = (text: string) => ({ text });
 
+const fresh = Effect.gen(function* () {
+  yield* (yield* Turns).close(SESSION);
+  started.length = 0;
+  opened.length = 0;
+});
+
 // One set of Turns for the file: each test leaves the Session idle for the next.
 layer(TestTurns, { excludeTestServices: true })("Turns", (it) => {
   it.effect(
-    "queues messages behind the running turn and runs them in order",
+    "sends messages into the running turn, and the agent takes each in before the turn ends",
     () =>
       Effect.gen(function* () {
-        started.length = 0;
+        yield* fresh;
         const turns = yield* Turns;
         yield* turns.send(SESSION, message("first"));
         yield* until(() => started.length === 1);
-
         yield* turns.send(SESSION, message("second"));
-        yield* turns.send(SESSION, message("third"));
-        const queued = (yield* turns.turn(SESSION))?.queued ?? [];
         assert.deepStrictEqual(
-          queued.map((q) => q.text),
-          ["second", "third"],
+          (yield* turns.turn(SESSION))?.queued?.map((q) => q.text),
+          ["second"],
         );
 
-        // The third is taken back before it runs.
-        const third = queued[1];
-        if (third) yield* turns.unqueue(SESSION, third.id);
-
+        // This agent takes it in once the first message is answered, as a turn of its own.
         started[0]?.finish();
         yield* until(() => started.length === 2);
         const between = yield* turns.turn(SESSION);
@@ -181,43 +158,49 @@ layer(TestTurns, { excludeTestServices: true })("Turns", (it) => {
         const after = yield* turns.turn(SESSION);
         assert.isFalse(after?.running);
         assert.strictEqual(after?.contextWindow, 1_000);
-        assert.strictEqual(started.length, 2);
+        assert.strictEqual(opened.length, 1);
       }),
   );
 
-  it.effect("drops the queue when the developer stops the turn", () =>
-    Effect.gen(function* () {
-      started.length = 0;
-      const turns = yield* Turns;
-      yield* turns.send(SESSION, message("first"));
-      yield* until(() => started.length === 1);
-      yield* turns.send(SESSION, message("second"));
+  it.effect(
+    "stops the turn, dropping only what Claude Code doesn't have, and keeps the process",
+    () =>
+      Effect.gen(function* () {
+        yield* fresh;
+        const turns = yield* Turns;
+        yield* turns.send(SESSION, message("first"));
+        yield* until(() => started.length === 1);
 
-      yield* turns.interrupt(SESSION);
-      const after = yield* turns.turn(SESSION);
-      assert.isFalse(after?.running);
-      assert.isUndefined(after?.queued);
-      // Nothing queued starts after the stop.
-      for (let i = 0; i < 10; i++) yield* tick;
-      assert.strictEqual(started.length, 1);
-    }),
+        yield* turns.interrupt(SESSION);
+        const after = yield* turns.turn(SESSION);
+        assert.isFalse(after?.running);
+        assert.isUndefined(after?.error);
+
+        yield* turns.send(SESSION, message("next"));
+        yield* until(() => started.length === 2);
+        started[1]?.finish();
+        yield* idle(turns);
+        assert.strictEqual(started[1]?.text, "next");
+        assert.strictEqual(opened.length, 1);
+      }),
   );
 
   it.effect(
-    "runs every turn of a Hosted Session with Fern's tools and steering",
+    "opens a Hosted Session's process with Fern's tools and steering, and resumes it with them",
     () =>
       Effect.gen(function* () {
-        started.length = 0;
+        yield* fresh;
         const turns = yield* Turns;
         const id = yield* turns.start("/repo", message("first"));
         yield* until(() => started.length === 1);
-        yield* turns.send(id, message("queued"));
+        yield* turns.send(id, message("into the turn"));
         started[0]?.finish();
         yield* until(() => started.length === 2);
         started[1]?.finish();
         yield* idle(turns, id);
 
-        // Resumed later, once the queue has run.
+        // Closed, as on archive, then resumed.
+        yield* turns.close(id);
         yield* turns.send(id, message("resumed"));
         yield* until(() => started.length === 3);
         started[2]?.finish();
@@ -225,23 +208,24 @@ layer(TestTurns, { excludeTestServices: true })("Turns", (it) => {
 
         assert.deepStrictEqual(
           started.map((turn) => turn.text),
-          ["/grill-with-docs first", "queued", "resumed"],
+          ["/grill-with-docs first", "into the turn", "resumed"],
         );
-        for (const turn of started)
-          assert.deepInclude(turn.options, hostedOptions(id));
+        assert.strictEqual(opened.length, 2);
+        assert.deepInclude(opened[0], { sessionId: id, ...hostedOptions(id) });
+        assert.deepInclude(opened[1], { resume: id, ...hostedOptions(id) });
       }),
   );
 
-  it.effect("runs an External Session's turns with nothing extra", () =>
+  it.effect("opens an External Session's process with nothing extra", () =>
     Effect.gen(function* () {
-      started.length = 0;
+      yield* fresh;
       const turns = yield* Turns;
       yield* turns.send(SESSION, message("hello"));
       yield* until(() => started.length === 1);
       started[0]?.finish();
       yield* idle(turns);
-      assert.notProperty(started[0]?.options, "mcpServers");
-      assert.notProperty(started[0]?.options, "systemPrompt");
+      assert.notProperty(opened[0], "mcpServers");
+      assert.notProperty(opened[0], "systemPrompt");
     }),
   );
 });
@@ -258,13 +242,14 @@ layer(
     () =>
       Effect.gen(function* () {
         started.length = 0;
+        opened.length = 0;
         const turns = yield* Turns;
         const id = yield* turns.start("/repo", message("first"));
         yield* until(() => started.length === 1);
         started[0]?.finish();
         yield* idle(turns, id);
 
-        const options = started[0]?.options;
+        const options = opened[0];
         assert.deepStrictEqual(options?.mcpServers, {});
         assert.deepInclude(options?.systemPrompt, {
           type: "preset",

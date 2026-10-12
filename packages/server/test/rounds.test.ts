@@ -99,44 +99,19 @@ const started: Array<StartedTurn> = [];
 
 // Only the Agent SDK's query() is faked: it records the turn, writes the transcript as Claude Code
 // would, and runs until the test, playing the agent, ends it.
-vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  query: ({
-    prompt,
-    options,
-  }: {
-    prompt: AsyncIterable<{ message: { content: Array<{ text?: string }> } }>;
-    options: TurnOptions;
-  }) => {
-    const { promise: ended, resolve: finish } = Promise.withResolvers<void>();
-    async function* events() {
-      const first = await prompt[Symbol.asyncIterator]().next();
-      const text = first.done
-        ? ""
-        : (first.value.message.content.find((part) => part.text)?.text ?? "");
-      const sessionId = options.sessionId ?? options.resume;
-      if (options.sessionId)
+vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => {
+  const { scriptedQuery } = await import("./fakeClaude");
+  return {
+    ...(await importOriginal<object>()),
+    query: scriptedQuery<TurnOptions>(({ sessionId, text, options, first }) => {
+      const { promise: ended, resolve: finish } = Promise.withResolvers<void>();
+      if (first && options.sessionId)
         transcript(options.cwd, options.sessionId, text, "sdk-ts");
       started.push({ sessionId, text, options, finish });
-      yield { type: "system", subtype: "init", model: "claude-test" };
-      await ended;
-      yield {
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        result: "",
-        modelUsage: { "claude-test": { contextWindow: 1_000 } },
-      };
-    }
-    return Object.assign(events(), {
-      interrupt: () => {
-        finish();
-        return Promise.resolve();
-      },
-      close: () => {},
-    });
-  },
-}));
+      return ended;
+    }),
+  };
+});
 
 const makeClient = HttpApiTest.groups(FernApi, ["sessions", "rounds"]);
 const makeLive = RpcTest.makeClient(LiveRpcs);
@@ -343,7 +318,7 @@ layer(fern, { excludeTestServices: true })("Rounds", (it) => {
       }),
   );
 
-  it.effect("queues the answers behind a turn that's still running", () =>
+  it.effect("sends the answers into a turn that's still running", () =>
     Effect.gen(function* () {
       const { id, turn } = yield* startSession("Add a dark mode toggle");
       const { round } = yield* postRound(id, turn);
@@ -364,7 +339,7 @@ layer(fern, { excludeTestServices: true })("Rounds", (it) => {
           })),
         },
       });
-      // Nothing new starts until the reply ends.
+      // This agent takes them in once its reply ends.
       yield* Effect.sleep("50 millis");
       assert.strictEqual(started.filter((t) => t.sessionId === id).length, 2);
 

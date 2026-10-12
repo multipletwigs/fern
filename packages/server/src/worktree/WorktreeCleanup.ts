@@ -29,8 +29,9 @@ export const CleanupInterval = Context.Reference<Duration.Input>(
 export class WorktreeCleanup extends Context.Service<
   WorktreeCleanup,
   {
-    // Stops the Session's turn, removes its worktree, and archives it, keeping its branch. Refuses
-    // while the worktree has uncommitted changes, unless `force`.
+    // Stops the Session's turn and closes its Claude Code process, removes its worktree, and
+    // archives it, keeping its branch. Refuses while the worktree has uncommitted changes, unless
+    // `force`.
     archive(
       id: string,
       options: { readonly force: boolean },
@@ -66,7 +67,7 @@ export class WorktreeCleanup extends Context.Service<
         if (!session) return yield* new SessionNotFound({ id });
         if (!force && (yield* worktrees.isDirty(session.worktree)))
           return yield* new UncommittedChanges({ id });
-        yield* turns.interrupt(id);
+        yield* turns.close(id);
         yield* worktrees.remove(session.projectRoot, session.worktree, {
           force,
         });
@@ -95,6 +96,7 @@ export class WorktreeCleanup extends Context.Service<
               if (yield* worktrees.isDirty(session.worktree)) return;
               // Looked at last, right before the worktree goes: a turn may have started meanwhile.
               if ((yield* turns.running).includes(session.id)) return;
+              yield* turns.close(session.id);
               yield* worktrees.remove(session.projectRoot, session.worktree, {
                 force: false,
               });

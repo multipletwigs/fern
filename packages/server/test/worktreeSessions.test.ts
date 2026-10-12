@@ -81,38 +81,18 @@ const started: Array<StartedTurn> = [];
 
 // Only the Agent SDK's query() is faked: it records the turn, writes the transcript as Claude Code
 // would, and ends the turn at once.
-vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  query: ({
-    prompt,
-    options,
-  }: {
-    prompt: AsyncIterable<{ message: { content: Array<{ text?: string }> } }>;
-    options: { cwd: string; sessionId?: string; resume?: string };
-  }) => {
-    async function* events() {
-      const first = await prompt[Symbol.asyncIterator]().next();
-      const text = first.done
-        ? ""
-        : (first.value.message.content.find((part) => part.text)?.text ?? "");
-      const sessionId = options.sessionId ?? options.resume;
-      started.push({ cwd: options.cwd, sessionId, text });
-      if (options.sessionId) transcript(options.cwd, options.sessionId, text);
-      yield { type: "system", subtype: "init", model: "claude-test" };
-      yield {
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        result: "",
-        modelUsage: { "claude-test": { contextWindow: 1_000 } },
-      };
-    }
-    return Object.assign(events(), {
-      interrupt: () => Promise.resolve(),
-      close: () => {},
-    });
-  },
-}));
+vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => {
+  const { scriptedQuery } = await import("./fakeClaude");
+  return {
+    ...(await importOriginal<object>()),
+    query: scriptedQuery(({ sessionId, text, options, first }) => {
+      const cwd = String(options.cwd);
+      started.push({ cwd, sessionId, text });
+      if (first && typeof options.sessionId === "string")
+        transcript(cwd, options.sessionId, text);
+    }),
+  };
+});
 
 const makeClient = HttpApiTest.groups(FernApi, ["sessions"]);
 const makeLive = RpcTest.makeClient(LiveRpcs);

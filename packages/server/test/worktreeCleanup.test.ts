@@ -19,6 +19,7 @@ import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
 import { CleanupInterval } from "../src/worktree/WorktreeCleanup";
 import { WorktreesDir } from "../src/worktree/Worktrees";
+import { closedSessions } from "./fakeClaude";
 import { NoWriter } from "./stubs";
 
 const git = (cwd: string, ...args: Array<string>) =>
@@ -69,38 +70,18 @@ const started: Array<{ cwd: string; sessionId: string | undefined }> = [];
 
 // Only the Agent SDK's query() is faked: it records the turn, writes the transcript as Claude Code
 // would, and ends the turn at once.
-vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  query: ({
-    prompt,
-    options,
-  }: {
-    prompt: AsyncIterable<{ message: { content: Array<{ text?: string }> } }>;
-    options: { cwd: string; sessionId?: string; resume?: string };
-  }) => {
-    async function* events() {
-      const first = await prompt[Symbol.asyncIterator]().next();
-      const text = first.done
-        ? ""
-        : (first.value.message.content.find((part) => part.text)?.text ?? "");
-      const sessionId = options.sessionId ?? options.resume;
-      if (options.sessionId) transcript(options.cwd, options.sessionId, text);
-      started.push({ cwd: options.cwd, sessionId });
-      yield { type: "system", subtype: "init", model: "claude-test" };
-      yield {
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        result: "",
-        modelUsage: { "claude-test": { contextWindow: 1_000 } },
-      };
-    }
-    return Object.assign(events(), {
-      interrupt: () => Promise.resolve(),
-      close: () => {},
-    });
-  },
-}));
+vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => {
+  const { scriptedQuery } = await import("./fakeClaude");
+  return {
+    ...(await importOriginal<object>()),
+    query: scriptedQuery(({ sessionId, text, options, first }) => {
+      const cwd = String(options.cwd);
+      if (first && typeof options.sessionId === "string")
+        transcript(cwd, options.sessionId, text);
+      started.push({ cwd, sessionId });
+    }),
+  };
+});
 
 const makeClient = HttpApiTest.groups(FernApi, ["sessions", "flows"]);
 
@@ -173,7 +154,7 @@ layer(
   { excludeTestServices: true },
 )("Worktree cleanup", (it) => {
   it.effect(
-    "archiving a clean Session removes its worktree and hides it from the sidebar, keeping its branch",
+    "archiving a clean Session closes its Claude Code process, removes its worktree and hides it from the sidebar, keeping its branch",
     () =>
       Effect.gen(function* () {
         const { id, worktree, branch } = yield* startSession("Clean work");
@@ -182,6 +163,7 @@ layer(
 
         yield* client.sessions.archive({ params: { id }, payload: {} });
 
+        assert.include(closedSessions, id);
         assert.isFalse(existsSync(worktree));
         assert.isTrue(branchExists(branch));
         yield* sidebarListing(id, false);
