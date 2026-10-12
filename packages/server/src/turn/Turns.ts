@@ -119,6 +119,48 @@ const report = (seen: TurnReport, message: SDKMessage): TurnReport => {
   };
 };
 
+// Where Claude Code is in a turn, from its messages. A result only ends the main loop: background
+// tasks keep running in Claude Code, and each one's notification runs as another turn with its own
+// result. The turn is over at a result with no background task left.
+interface Progress {
+  // Background tasks running. Each `background_tasks_changed` carries the whole set; ambient tasks
+  // aren't activity.
+  readonly background: number;
+  // Whether the agent has said anything yet.
+  readonly spoke: boolean;
+  // Whether a task notification came since the last result.
+  readonly notified: boolean;
+  readonly over: boolean;
+}
+const startProgress = (): Progress => ({
+  background: 0,
+  spoke: false,
+  notified: false,
+  over: false,
+});
+const progress = (seen: Progress, message: SDKMessage): Progress => {
+  if (message.type === "assistant") return { ...seen, spoke: true };
+  if (
+    message.type === "system" &&
+    message.subtype === "background_tasks_changed"
+  )
+    return {
+      ...seen,
+      background: message.tasks.filter((task) => !task.ambient).length,
+    };
+  if (message.type === "system" && message.subtype === "task_notification")
+    return { ...seen, notified: true };
+  if (message.type !== "result") return seen;
+  // Resumed after a background task was stopped, Claude Code answers its notification with an empty
+  // result before it reads the message.
+  const leftover = seen.notified && !seen.spoke && message.num_turns === 0;
+  return {
+    ...seen,
+    notified: false,
+    over: seen.background === 0 && !leftover,
+  };
+};
+
 // The message as the one user turn Claude Code resumes the Session with: images first, then text.
 // The input then stays open until `ended` aborts: once it closes, Claude Code can no longer take
 // control requests, so an interrupt would go unheard.
@@ -152,8 +194,9 @@ async function* userTurn(
 
 // Turns Fern runs on a Session itself, by resuming it through the Agent SDK, or by starting a new
 // Session. One turn at a time per Session: messages sent meanwhile queue up and run in order once
-// it ends. Tool permissions go through Claude Code's auto mode. Every turn of a Hosted Session also
-// gets Fern's tools and steering.
+// it ends. A turn lasts until the background subagents it started have finished and been answered.
+// Tool permissions go through Claude Code's auto mode. Every turn of a Hosted Session also gets
+// Fern's tools and steering.
 export class Turns extends Context.Service<
   Turns,
   {
@@ -284,8 +327,16 @@ export class Turns extends Context.Service<
               turn,
               (cause) => new TranscriptError({ message: String(cause) }),
             ).pipe(
-              // With its input open, Claude Code waits for more after the result; the turn is over.
-              Stream.takeUntil((event) => event.type === "result"),
+              // With its input open, Claude Code waits for more once the turn is over. A turn the
+              // developer stopped is over at its result, background tasks and all.
+              Stream.mapAccum(startProgress, (seen, event) => {
+                const next = progress(seen, event);
+                const over =
+                  next.over || (event.type === "result" && interrupted.has(id));
+                return [next, [{ event, over }]] as const;
+              }),
+              Stream.takeUntil(({ over }) => over),
+              Stream.map(({ event }) => event),
               Stream.runFold(
                 (): TurnReport => ({
                   error: undefined,
