@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
+import { Checkpoint, Flow, SessionPhase } from "./Flows";
 import {
   FileContent,
   FileNotFound,
@@ -63,6 +64,22 @@ export class LiveRpcs extends RpcGroup.make(
     payload: { session: Schema.NonEmptyString },
     success: Schema.Array(Walkthrough),
     error: WalkthroughError,
+    stream: true,
+  }),
+  // A Hosted Session's Flow, re-sent whenever it changes. Null for a Session outside the Flow.
+  Rpc.make("Flow", {
+    payload: { session: Schema.NonEmptyString },
+    success: Schema.NullOr(Flow),
+    stream: true,
+  }),
+  // Every Session's pending Checkpoint, oldest first: the one queue the developer clears.
+  Rpc.make("Checkpoints", {
+    success: Schema.Array(Checkpoint),
+    stream: true,
+  }),
+  // Every Hosted Session's current Phase, re-sent whenever one moves on.
+  Rpc.make("SessionPhases", {
+    success: Schema.Array(SessionPhase),
     stream: true,
   }),
 ) {}

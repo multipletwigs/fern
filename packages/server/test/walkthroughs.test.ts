@@ -28,6 +28,7 @@ import {
 } from "../src/walkthrough/WalkthroughWriter";
 import {
   UnusedCommands,
+  UnusedFlows,
   UnusedTranscripts,
   unusedTurns,
   UnusedWorkspace,
@@ -142,6 +143,7 @@ const hunkIn = (request: WriteRequest | undefined, path: string) =>
 
 const Services = Layer.mergeAll(
   UnusedTranscripts,
+  UnusedFlows,
   UnusedCommands,
   UnusedWorkspace,
   FakeTurns,

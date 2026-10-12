@@ -1,0 +1,449 @@
+import { assert, it as test, layer } from "@effect/vitest";
+import { FernApi, type Flow, LiveRpcs } from "@repo/api";
+import { Effect, Layer, Schedule, Stream } from "effect";
+import { HttpServer } from "effect/http";
+import { HttpApiTest } from "effect/http-api";
+import { RpcTest } from "effect/rpc";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { vi } from "vitest";
+import { DatabaseLive } from "../src/database/Database";
+import { handlersWith } from "../src/http";
+import { WorktreesDir } from "../src/worktree/Worktrees";
+import { NoWriter } from "./stubs";
+
+const git = (cwd: string, ...args: Array<string>) =>
+  execFileSync(
+    "git",
+    ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args],
+    { cwd, encoding: "utf8" },
+  ).trim();
+
+const configDir = mkdtempSync(join(tmpdir(), "fern-claude-"));
+process.env.CLAUDE_CONFIG_DIR = configDir;
+const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "fern-data-")));
+
+// What Claude Code writes when it starts a Session: its transcript, under the folder it runs in.
+const transcript = (
+  cwd: string,
+  id: string,
+  text: string,
+  entrypoint = "sdk-ts",
+) => {
+  const dir = join(configDir, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, `${id}.jsonl`),
+    `${JSON.stringify({
+      type: "user",
+      uuid: crypto.randomUUID(),
+      parentUuid: null,
+      sessionId: id,
+      timestamp: new Date(Date.now() - 60_000).toISOString(),
+      cwd,
+      entrypoint,
+      userType: "external",
+      message: { role: "user", content: text },
+    })}\n`,
+  );
+};
+
+// A Project: a repo on `main` with one commit, where the developer has run a Session.
+const repo = realpathSync(mkdtempSync(join(tmpdir(), "fern-repo-")));
+git(repo, "init", "-q", "-b", "main");
+writeFileSync(join(repo, "a.ts"), "export const a = 1;\n");
+git(repo, "add", "-A");
+git(repo, "commit", "-q", "-m", "Initial");
+transcript(repo, crypto.randomUUID(), "Earlier work", "cli");
+
+// A Fern tool as the agent sees it: called by name with its input, answering with text.
+type CallTool = (
+  name: string,
+  args: Record<string, unknown>,
+) => Promise<{ text: string; isError: boolean }>;
+
+// One turn Claude Code is asked to run: on which Session, and its first message.
+interface StartedTurn {
+  readonly sessionId: string;
+  readonly text: string;
+  readonly options: Record<string, unknown>;
+}
+const started: Array<StartedTurn> = [];
+// What the fake agent does in each turn before it ends; tests set it.
+let agent: (turn: StartedTurn, call: CallTool) => Promise<void> = () =>
+  Promise.resolve();
+// What Fern's tools answered the agent.
+const answers: Array<{ text: string; isError: boolean }> = [];
+
+interface ToolServer {
+  readonly instance: {
+    readonly _registeredTools: Record<
+      string,
+      {
+        readonly handler: (
+          args: Record<string, unknown>,
+          extra: unknown,
+        ) => Promise<{
+          content: Array<{ text: string }>;
+          isError?: boolean;
+        }>;
+      }
+    >;
+  };
+}
+
+// Calls a tool the way Claude Code would: through the in-process MCP server Fern passed.
+const callerFor =
+  (options: Record<string, unknown>): CallTool =>
+  async (name, args) => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const servers = options.mcpServers as Record<string, ToolServer>;
+    // oxlint-disable-next-line no-underscore-dangle
+    const tool = servers.fern?.instance._registeredTools[name];
+    if (!tool) throw new Error(`No Fern tool ${name}`);
+    const result = await tool.handler(args, {});
+    const answer = {
+      text: result.content.map((c) => c.text).join("\n"),
+      isError: result.isError === true,
+    };
+    answers.push(answer);
+    return answer;
+  };
+
+// Only the Agent SDK's query() is faked: it records the turn, writes the transcript as Claude Code
+// would, lets the fake agent act, then ends the turn.
+vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  query: ({
+    prompt,
+    options,
+  }: {
+    prompt: AsyncIterable<{ message: { content: Array<{ text?: string }> } }>;
+    options: Record<string, unknown> & {
+      cwd: string;
+      sessionId?: string;
+      resume?: string;
+    };
+  }) => {
+    async function* events() {
+      const first = await prompt[Symbol.asyncIterator]().next();
+      const text = first.done
+        ? ""
+        : (first.value.message.content.find((part) => part.text)?.text ?? "");
+      const sessionId = options.sessionId ?? options.resume ?? "";
+      const turn = { sessionId, text, options };
+      started.push(turn);
+      if (options.sessionId) transcript(options.cwd, options.sessionId, text);
+      yield { type: "system", subtype: "init", model: "claude-test" };
+      await agent(turn, callerFor(options));
+      yield {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "",
+        modelUsage: { "claude-test": { contextWindow: 1_000 } },
+      };
+    }
+    return Object.assign(events(), {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    });
+  },
+}));
+
+const makeClient = HttpApiTest.groups(FernApi, ["sessions", "flows"]);
+const makeLive = RpcTest.makeClient(LiveRpcs);
+
+// Fern's API on a database file, as the app runs it.
+const server = (database: string) =>
+  Layer.mergeAll(
+    handlersWith(NoWriter).pipe(
+      Layer.provide([
+        DatabaseLive(database),
+        Layer.succeed(WorktreesDir, { dir: dataDir }),
+      ]),
+    ),
+    HttpServer.layerServices,
+  );
+// Runs the effect against its own server on the database, shut down after: one run of Fern.
+const runOn =
+  (database: string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const context = yield* Layer.build(server(database));
+      return yield* effect.pipe(Effect.provideContext(context));
+    }).pipe(Effect.scoped);
+const freshDatabase = () =>
+  join(mkdtempSync(join(tmpdir(), "fern-db-")), "fern.db");
+
+// The first value of the stream that satisfies the predicate.
+const firstWhere = <A, E>(
+  stream: Stream.Stream<A, E>,
+  predicate: (a: A) => boolean,
+) =>
+  stream.pipe(
+    Stream.filter(predicate),
+    Stream.take(1),
+    Stream.runCollect,
+    Effect.map(([a]) => a),
+    Effect.timeout("5 seconds"),
+  );
+
+// Waits until Claude Code has been asked to run a turn on the Session that satisfies the predicate.
+const turnWhere = (
+  sessionId: string,
+  predicate: (turn: StartedTurn) => boolean = () => true,
+) =>
+  Effect.suspend(() =>
+    Effect.fromNullishOr(
+      started.find((t) => t.sessionId === sessionId && predicate(t)),
+    ),
+  ).pipe(
+    Effect.retry({ schedule: Schedule.spaced("5 millis"), times: 400 }),
+    Effect.orDie,
+  );
+
+const startSession = (text: string) =>
+  Effect.gen(function* () {
+    const client = yield* makeClient;
+    const { id } = yield* client.sessions.start({
+      payload: { root: repo, message: { text } },
+    });
+    yield* turnWhere(id);
+    return id;
+  });
+
+const statuses = (flow: Flow | null | undefined) =>
+  flow?.phases.map((p) => `${p.phase}:${p.status}`);
+
+// The agent ends the Grill: it reports the Phase done through Fern's tool in the Grill's turn.
+const reportsGrillDone: typeof agent = async (turn, call) => {
+  if (turn.text.startsWith("/grill-with-docs"))
+    await call("phase_done", {
+      phase: "grill",
+      summary: "We agreed on a toggle in the settings page.",
+    });
+};
+
+// Starts a Session whose agent reports the Grill done, and waits for its Checkpoint.
+const atGrillCheckpoint = Effect.gen(function* () {
+  agent = reportsGrillDone;
+  const id = yield* startSession("Add a dark mode toggle");
+  const live = yield* makeLive;
+  const flow = yield* firstWhere(
+    live.Flow({ session: id }),
+    (f) => f?.checkpoint !== undefined,
+  );
+  return { id, checkpoint: flow?.checkpoint?.id ?? "" };
+});
+
+layer(server(freshDatabase()), { excludeTestServices: true })("Flows", (it) => {
+  it.effect("starts a new Hosted Session's Flow with Grill current", () =>
+    Effect.gen(function* () {
+      agent = () => Promise.resolve();
+      const id = yield* startSession("Add a dark mode toggle");
+      const live = yield* makeLive;
+      const flow = yield* firstWhere(live.Flow({ session: id }), Boolean);
+
+      assert.deepStrictEqual(statuses(flow), [
+        "grill:current",
+        "spec:notStarted",
+        "implement:notStarted",
+        "retro:notStarted",
+      ]);
+      assert.isUndefined(flow?.checkpoint);
+    }),
+  );
+
+  it.effect(
+    "raises a Checkpoint on the Flow and in the shared queue when the agent reports its Phase done",
+    () =>
+      Effect.gen(function* () {
+        answers.length = 0;
+        agent = reportsGrillDone;
+        const id = yield* startSession("Add a dark mode toggle");
+        const live = yield* makeLive;
+        const flow = yield* firstWhere(
+          live.Flow({ session: id }),
+          (f) => f?.checkpoint !== undefined,
+        );
+
+        assert.strictEqual(flow?.checkpoint?.phase, "grill");
+        assert.strictEqual(flow?.checkpoint?.status, "pending");
+        assert.strictEqual(
+          flow?.checkpoint?.summary,
+          "We agreed on a toggle in the settings page.",
+        );
+        assert.strictEqual(statuses(flow)?.[0], "grill:current");
+        // The tool answered at once, telling the agent to end its turn.
+        assert.isFalse(answers[0]?.isError);
+        assert.match(answers[0]?.text ?? "", /end your turn/i);
+
+        const queue = yield* firstWhere(live.Checkpoints(), (all) =>
+          all.some((c) => c.sessionId === id),
+        );
+        assert.deepStrictEqual(
+          queue?.map((c) => [c.sessionId, c.phase]),
+          [[id, "grill"]],
+        );
+        const phases = yield* firstWhere(live.SessionPhases(), (all) =>
+          all.some((p) => p.sessionId === id),
+        );
+        assert.strictEqual(
+          phases?.find((p) => p.sessionId === id)?.current,
+          "grill",
+        );
+      }),
+  );
+
+  it.effect(
+    "gives a Hosted Session's turns the Phase-done tool, allowed to run, and the steering",
+    () =>
+      Effect.gen(function* () {
+        agent = () => Promise.resolve();
+        const id = yield* startSession("Add a dark mode toggle");
+        const turn = yield* turnWhere(id);
+
+        assert.deepStrictEqual(turn.options.allowedTools, [
+          "mcp__fern__phase_done",
+        ]);
+        const append = JSON.stringify(turn.options.systemPrompt);
+        assert.match(append, /phase_done/);
+        assert.match(append, /Never start the next Phase's skill yourself/);
+      }),
+  );
+
+  it.effect(
+    "answers a report for a Phase that isn't current with what's current, and raises nothing",
+    () =>
+      Effect.gen(function* () {
+        answers.length = 0;
+        agent = async (turn, call) => {
+          if (turn.text.startsWith("/grill-with-docs"))
+            await call("phase_done", { phase: "spec", summary: "Done." });
+        };
+        const id = yield* startSession("Add a dark mode toggle");
+        yield* Effect.suspend(() =>
+          answers.length > 0 ? Effect.void : Effect.fail("waiting"),
+        ).pipe(
+          Effect.retry({ schedule: Schedule.spaced("5 millis"), times: 400 }),
+          Effect.orDie,
+        );
+
+        assert.isTrue(answers[0]?.isError);
+        assert.match(answers[0]?.text ?? "", /current Phase is Grill/);
+        const live = yield* makeLive;
+        const flow = yield* firstWhere(live.Flow({ session: id }), Boolean);
+        assert.isUndefined(flow?.checkpoint);
+      }),
+  );
+
+  it.effect(
+    "on approval, marks the Phase done, makes the next current and sends its commands in order",
+    () =>
+      Effect.gen(function* () {
+        const { id, checkpoint } = yield* atGrillCheckpoint;
+        const client = yield* makeClient;
+        yield* client.flows.approve({ params: { id: checkpoint } });
+
+        const live = yield* makeLive;
+        const flow = yield* firstWhere(
+          live.Flow({ session: id }),
+          (f) => f?.checkpoint === undefined,
+        );
+        assert.deepStrictEqual(statuses(flow), [
+          "grill:done",
+          "spec:current",
+          "implement:notStarted",
+          "retro:notStarted",
+        ]);
+        yield* turnWhere(id, (t) => t.text === "/to-tickets");
+        assert.deepStrictEqual(
+          started.filter((t) => t.sessionId === id).map((t) => t.text),
+          [
+            "/grill-with-docs Add a dark mode toggle",
+            "/to-spec",
+            "/to-tickets",
+          ],
+        );
+        const queue = yield* firstWhere(live.Checkpoints(), () => true);
+        assert.isFalse(queue?.some((c) => c.sessionId === id));
+        const phases = yield* firstWhere(live.SessionPhases(), (all) =>
+          all.some((p) => p.sessionId === id),
+        );
+        assert.strictEqual(
+          phases?.find((p) => p.sessionId === id)?.current,
+          "spec",
+        );
+
+        // Decided once: approving again is refused.
+        const again = yield* client.flows
+          .approve({ params: { id: checkpoint } })
+          .pipe(Effect.flip);
+        assert.strictEqual(again._tag, "CheckpointClosed");
+      }),
+  );
+
+  it.effect(
+    "on decline, sends the note as a Redirect and keeps the Phase current",
+    () =>
+      Effect.gen(function* () {
+        const { id, checkpoint } = yield* atGrillCheckpoint;
+        const client = yield* makeClient;
+        yield* client.flows.decline({
+          params: { id: checkpoint },
+          payload: { note: "We haven't settled where the toggle lives." },
+        });
+
+        const redirect = yield* turnWhere(id, (t) =>
+          t.text.includes("We haven't settled where the toggle lives."),
+        );
+        assert.match(redirect.text, /declined/);
+        const live = yield* makeLive;
+        const flow = yield* firstWhere(
+          live.Flow({ session: id }),
+          (f) => f?.checkpoint === undefined,
+        );
+        assert.strictEqual(statuses(flow)?.[0], "grill:current");
+        assert.strictEqual(statuses(flow)?.[1], "spec:notStarted");
+        const queue = yield* firstWhere(live.Checkpoints(), () => true);
+        assert.isFalse(queue?.some((c) => c.sessionId === id));
+      }),
+  );
+});
+
+test.live("keeps the Flow and its pending Checkpoint after Fern restarts", () =>
+  Effect.gen(function* () {
+    const database = freshDatabase();
+    const { id } = yield* Effect.gen(function* () {
+      const session = yield* atGrillCheckpoint;
+      const client = yield* makeClient;
+      yield* client.flows.approve({ params: { id: session.checkpoint } });
+      yield* turnWhere(session.id, (t) => t.text === "/to-tickets");
+      // The agent then reports Spec done.
+      const call = callerFor(
+        started.find((t) => t.sessionId === session.id)?.options ?? {},
+      );
+      yield* Effect.promise(() =>
+        call("phase_done", { phase: "spec", summary: "Brief #12 written." }),
+      );
+      return session;
+    }).pipe(runOn(database));
+
+    // A new server on the same database.
+    const flow = yield* Effect.gen(function* () {
+      const live = yield* makeLive;
+      return yield* firstWhere(live.Flow({ session: id }), Boolean);
+    }).pipe(runOn(database));
+    assert.deepStrictEqual(statuses(flow), [
+      "grill:done",
+      "spec:current",
+      "implement:notStarted",
+      "retro:notStarted",
+    ]);
+    assert.strictEqual(flow?.checkpoint?.phase, "spec");
+    assert.strictEqual(flow?.checkpoint?.status, "pending");
+  }),
+);
