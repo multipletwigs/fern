@@ -42,19 +42,43 @@ interface Transcript {
   readonly metadata: SubagentMetadata | undefined;
 }
 
-// The Agent calls in the transcripts read, by the agent they started and by their own id.
+// The Agent calls in the transcripts read, by the agent they started and by their own id, and the
+// Subagent whose transcript each call is in, by the call's id.
 interface Calls {
   readonly byAgent: Map<string, SubagentItem>;
   readonly byCall: Map<string, SubagentItem>;
+  readonly callers: Map<string, string>;
 }
 
-const collectCalls = (items: ReadonlyArray<TranscriptItem>, calls: Calls) => {
+const noCalls = (): Calls => ({
+  byAgent: new Map(),
+  byCall: new Map(),
+  callers: new Map(),
+});
+
+// `caller` is the Subagent whose work the items are; none for the Session's own.
+const collectCalls = (
+  items: ReadonlyArray<TranscriptItem>,
+  calls: Calls,
+  caller?: string,
+) => {
   for (const item of items) {
     if (item._tag !== "Subagent") continue;
     calls.byCall.set(item.callId, item);
     if (item.agentId !== undefined) calls.byAgent.set(item.agentId, item);
+    if (caller !== undefined) calls.callers.set(item.callId, caller);
   }
 };
+
+// The Agent call that started a Subagent, matched by its metadata or the call's result.
+const callOf = (
+  { agentId, metadata }: Pick<Transcript, "agentId" | "metadata">,
+  calls: Calls,
+) =>
+  calls.byAgent.get(agentId) ??
+  (metadata?.toolUseId === undefined
+    ? undefined
+    : calls.byCall.get(metadata.toolUseId));
 
 // The Assignment is the Subagent's first message; its work is everything after it.
 const assignmentOf = (messages: ReadonlyArray<StoredMessage>) => {
@@ -70,15 +94,12 @@ const summarize = (
   { agentId, messages, metadata }: Transcript,
   calls: Calls,
 ) => {
-  const call =
-    calls.byAgent.get(agentId) ??
-    (metadata?.toolUseId === undefined
-      ? undefined
-      : calls.byCall.get(metadata.toolUseId));
+  const call = callOf({ agentId, metadata }, calls);
+  const callId = metadata?.toolUseId ?? call?.callId;
   const startedAt = messages.find((m) => m.timestamp)?.timestamp;
   return {
     agentId,
-    callId: metadata?.toolUseId ?? call?.callId,
+    callId,
     agentType: metadata?.agentType ?? call?.agentType ?? "Subagent",
     description:
       metadata?.description ||
@@ -91,7 +112,7 @@ const summarize = (
     parentAgentId:
       metadata?.parentAgentId ??
       messages.find((m) => m.parent_agent_id)?.parent_agent_id ??
-      undefined,
+      (callId === undefined ? undefined : calls.callers.get(callId)),
   };
 };
 
@@ -195,10 +216,14 @@ export class Subagents extends Context.Service<
         );
         // A Subagent whose first message isn't written yet shows on a later poll.
         const started = read.filter((t) => t.messages.length > 0);
-        const calls: Calls = { byAgent: new Map(), byCall: new Map() };
+        const calls = noCalls();
         collectCalls(buildItems(session.messages, context), calls);
         for (const t of started)
-          collectCalls(buildItems(workOf(t.messages), context), calls);
+          collectCalls(
+            buildItems(workOf(t.messages), context),
+            calls,
+            t.agentId,
+          );
         return started
           .map((t) => SubagentSummary.make(summarize(t, calls)))
           .toSorted((a, b) => startMillis(a) - startMillis(b));
@@ -214,17 +239,29 @@ export class Subagents extends Context.Service<
           subagents: session.metadata,
         };
         const own = yield* readSubagent(sessionId, agentId, session.metadata);
-        const calls: Calls = { byAgent: new Map(), byCall: new Map() };
+        const calls = noCalls();
         collectCalls(buildItems(session.messages, context), calls);
-        // A nested Subagent's Agent call is in the transcript of the Subagent that started it.
-        const parentId = summarize(own, calls).parentAgentId;
-        if (parentId !== undefined) {
-          const parent = yield* readSubagent(
-            sessionId,
-            parentId,
-            session.metadata,
+        // A nested Subagent's Agent call is in the transcript of the Subagent that started it: the
+        // one it names, else whichever has the call.
+        if (callOf(own, calls) === undefined) {
+          const parentId = summarize(own, calls).parentAgentId;
+          const others =
+            parentId === undefined
+              ? (yield* sdk("listSubagents", () =>
+                  listSubagents(sessionId),
+                )).filter((id) => id !== agentId)
+              : [parentId];
+          const read = yield* Effect.forEach(
+            others,
+            (id) => readSubagent(sessionId, id, session.metadata),
+            { concurrency: 4 },
           );
-          collectCalls(buildItems(workOf(parent.messages), context), calls);
+          for (const t of read)
+            collectCalls(
+              buildItems(workOf(t.messages), context),
+              calls,
+              t.agentId,
+            );
         }
         return {
           header: SubagentHeader.make(summarize(own, calls)),
