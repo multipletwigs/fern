@@ -280,12 +280,20 @@ export class Subagents extends Context.Service<
       const files = yield* SubagentFiles;
       const turns = yield* Turns;
       const sql = yield* SqlClient.SqlClient;
-      // Bumped after every close and reopen, so open lists show it at once.
-      const closings = yield* SubscriptionRef.make(0);
-      const noteClosing = (_sessionId: string) =>
-        SubscriptionRef.update(closings, (n) => n + 1);
-      const closingsOf = (_sessionId: string) =>
-        SubscriptionRef.changes(closings);
+      // How many times each Session's tabs were closed or reopened, so its open lists show it at
+      // once.
+      const closings = yield* SubscriptionRef.make<ReadonlyMap<string, number>>(
+        new Map(),
+      );
+      const noteClosing = (sessionId: string) =>
+        SubscriptionRef.update(closings, (counts) =>
+          new Map(counts).set(sessionId, (counts.get(sessionId) ?? 0) + 1),
+        );
+      const closingsOf = (sessionId: string) =>
+        SubscriptionRef.changes(closings).pipe(
+          Stream.map((counts) => counts.get(sessionId) ?? 0),
+          Stream.changes,
+        );
 
       const closedOf = (sessionId: string) =>
         sql<{ agentId: string }>`
