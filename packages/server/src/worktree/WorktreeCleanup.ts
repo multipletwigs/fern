@@ -32,7 +32,10 @@ export class WorktreeCleanup extends Context.Service<
     archive(
       id: string,
       options: { readonly force: boolean },
-    ): Effect.Effect<void, SessionNotFound | UncommittedChanges | WorktreeError>;
+    ): Effect.Effect<
+      void,
+      SessionNotFound | UncommittedChanges | WorktreeError
+    >;
   }
 >()("@repo/server/worktree/WorktreeCleanup") {
   static readonly layer = Layer.effect(
