@@ -1,22 +1,45 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import type { BoundaryAutonomy, Phase } from "@repo/api";
+import type { BoundaryState } from "@repo/ui/FlowBoundary";
 import { FlowChecklist } from "@repo/ui/FlowChecklist";
 import { SkipPhase } from "@repo/ui/SkipPhase";
 import { Exit } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
+import { autonomyAtom } from "../autonomy/atoms";
 import { flowAtom, skipPhaseAtom } from "./atoms";
 import { PHASE_TITLES } from "./phases";
+
+// Who passes the boundary at the end of a Phase: the developer, with the streak where Autonomy
+// can be earned, or Fern.
+const boundaryState = (at: BoundaryAutonomy | undefined): BoundaryState =>
+  at === undefined
+    ? { kind: "needsYou" }
+    : at.approvedByFern
+      ? { kind: "approvedByFern" }
+      : at.granted
+        ? { kind: "byFern" }
+        : {
+            kind: "needsYou",
+            streak: { count: at.streak, threshold: at.threshold },
+          };
 
 // The Session's Flow, pinned at the top of the Session; nothing for a Session outside the Flow.
 // The current Phase can be skipped with a reason, unless it's waiting at a Checkpoint.
 export function SessionChecklist({ sessionId }: { sessionId: string }) {
   const result = useAtomValue(flowAtom(sessionId));
+  const autonomyResult = useAtomValue(autonomyAtom(sessionId));
   const skip = useAtomSet(skipPhaseAtom, { mode: "promiseExit" });
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const flow = AsyncResult.isSuccess(result) ? result.value : null;
   if (!flow) return null;
   const current = flow.phases.find((p) => p.status === "current")?.phase;
+  const autonomy = AsyncResult.isSuccess(autonomyResult)
+    ? autonomyResult.value
+    : null;
+  const at = (phase: Phase) =>
+    autonomy?.boundaries.find((b) => b.boundary === phase);
 
   return (
     <FlowChecklist
@@ -25,6 +48,9 @@ export function SessionChecklist({ sessionId }: { sessionId: string }) {
         status,
         reason,
       }))}
+      boundaries={flow.phases
+        .slice(0, -1)
+        .map(({ phase }) => boundaryState(at(phase)))}
     >
       {current && !flow.checkpoint && (
         <SkipPhase

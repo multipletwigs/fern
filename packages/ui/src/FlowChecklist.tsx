@@ -3,11 +3,11 @@ import {
   CheckCircleIcon,
   CircleDashedIcon,
   CircleIcon,
-  LockSimpleIcon,
   MinusCircleIcon,
 } from "@phosphor-icons/react";
 import { clsx } from "clsx";
 import { Fragment, type ReactNode } from "react";
+import { type BoundaryState, FlowBoundary } from "./FlowBoundary";
 import { TooltipPanel } from "./TooltipPanel";
 
 export type ChecklistStatus = "notStarted" | "current" | "done" | "skipped";
@@ -27,10 +27,13 @@ const LABELS = {
 } as const;
 
 // A Session's Phases in order, pinned at the top of the Session: each not started, current, done
-// or skipped, with a lock on every boundary between two Phases that needs the developer. Resting
-// the pointer on a skipped Phase shows why it was skipped. `children` go at the end of the row.
+// or skipped. Between each two, the boundary: locked while it needs the developer, checked once
+// Fern approves it. `boundaries[i]` is the one after step i; missing ones need the developer.
+// Resting the pointer on a skipped Phase shows why it was skipped. `children` go at the end of
+// the row.
 export function FlowChecklist({
   steps,
+  boundaries = [],
   children,
 }: {
   steps: ReadonlyArray<{
@@ -38,6 +41,7 @@ export function FlowChecklist({
     status: ChecklistStatus;
     reason?: string | undefined;
   }>;
+  boundaries?: ReadonlyArray<BoundaryState>;
   children?: ReactNode;
 }) {
   return (
@@ -71,15 +75,9 @@ export function FlowChecklist({
           return (
             <Fragment key={title}>
               {i > 0 && (
-                <li aria-hidden className="flex items-center gap-2 text-faint">
-                  <span className="h-px w-4 bg-hairline" />
-                  <LockSimpleIcon
-                    weight="bold"
-                    className="size-3"
-                    aria-label="Needs you"
-                  />
-                  <span className="h-px w-4 bg-hairline" />
-                </li>
+                <FlowBoundary
+                  state={boundaries[i - 1] ?? { kind: "needsYou" }}
+                />
               )}
               {reason ? (
                 <Tooltip.Root>

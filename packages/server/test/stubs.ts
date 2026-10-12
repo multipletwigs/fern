@@ -1,4 +1,5 @@
 import { Effect, Layer, Option, Stream } from "effect";
+import { Autonomy } from "../src/autonomy/Autonomy";
 import { Commands } from "../src/commands/Commands";
 import { Flows } from "../src/flow/Flows";
 import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
@@ -121,5 +122,19 @@ export const FakeIssues = Layer.succeed(
   IssueTracker.of({
     issue: (_cwd, number) =>
       Effect.succeed(Option.fromNullishOr(ISSUES.get(number))),
+  }),
+);
+
+export const UnusedAutonomy = Layer.succeed(
+  Autonomy,
+  Autonomy.of({
+    covers: () => Effect.die("unused"),
+    approved: () => Effect.die("unused"),
+    declined: () => Effect.die("unused"),
+    approvedByFern: () => Effect.die("unused"),
+    withdraw: () => Effect.die("unused"),
+    autonomy: () => Stream.die("unused"),
+    accept: () => Effect.die("unused"),
+    decline: () => Effect.die("unused"),
   }),
 );

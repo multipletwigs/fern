@@ -1,6 +1,7 @@
 import { LiveRpcs } from "@repo/api";
 import { Effect, Layer, Stream } from "effect";
 import { RpcSerialization, RpcServer } from "effect/rpc";
+import { Autonomy } from "./autonomy/Autonomy";
 import { Flows } from "./flow/Flows";
 import { Rounds } from "./round/Rounds";
 import { Transcripts } from "./transcript/Transcripts";
@@ -15,6 +16,7 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
     const walkthroughs = yield* Walkthroughs;
     const flows = yield* Flows;
     const rounds = yield* Rounds;
+    const autonomy = yield* Autonomy;
     return LiveRpcs.of({
       Projects: () => transcripts.projects,
       Transcript: ({ id }) => Stream.unwrap(transcripts.live(id)),
@@ -27,6 +29,7 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
       Checkpoints: () => flows.checkpoints,
       SessionPhases: () => flows.phases,
       Rounds: ({ session }) => rounds.list(session),
+      Autonomy: ({ session }) => autonomy.autonomy(session),
     });
   }),
 );
