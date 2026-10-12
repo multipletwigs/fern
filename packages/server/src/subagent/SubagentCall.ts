@@ -21,6 +21,11 @@ const tag = (text: string, name: string) =>
 // background.
 const AGENT_ID = /agentId: ([\w-]+)|message from "([^"]+)"/;
 const LAUNCHED = /^\s*Async agent launched/;
+// What Claude Code puts in an Agent call's result when the developer stops the call.
+const INTERRUPTED = /^\s*\[Request interrupted by user/;
+
+const NOTIFICATIONS = /<task-notification>([\s\S]*?)<\/task-notification>/g;
+const HAND_BACKS = /<agent-message from="([^"]+)">/g;
 
 // How the Session learned that a background Subagent ended, by Agent call id or agent id.
 export interface Endings {
@@ -32,9 +37,9 @@ export interface Endings {
 // task notification, naming the Agent call and how it ended, or the Hand-back it delivers as a
 // message from the Subagent.
 export const readEnding = (text: string, endings: Endings) => {
-  const notification = tag(text, "task-notification");
-  const call = notification && tag(notification, "tool-use-id");
-  if (notification && call) {
+  for (const [, notification = ""] of text.matchAll(NOTIFICATIONS)) {
+    const call = tag(notification, "tool-use-id");
+    if (!call) continue;
     const status = tag(notification, "status");
     endings.byCall.set(
       call,
@@ -46,8 +51,8 @@ export const readEnding = (text: string, endings: Endings) => {
           : "failed",
     );
   }
-  const from = /<agent-message from="([^"]+)">/.exec(text)?.[1];
-  if (from) endings.byAgent.set(from, "done");
+  for (const [, from = ""] of text.matchAll(HAND_BACKS))
+    endings.byAgent.set(from, "done");
 };
 
 export const subagentItem = (
@@ -64,7 +69,9 @@ export const subagentItem = (
     endings.byCall.get(block.id) ??
     (agentId === undefined ? undefined : endings.byAgent.get(agentId));
   const status: SubagentStatus = result?.isError
-    ? "failed"
+    ? INTERRUPTED.test(result.text)
+      ? "stopped"
+      : "failed"
     : result && !LAUNCHED.test(result.text)
       ? "done"
       : (ended ?? "running");
