@@ -10,8 +10,9 @@ import path from "node:path";
 // lives for as long as its layer, so it starts with the app and stops when the app quits.
 
 // Dev serves the API on a fixed port because Vite's proxy (apps/web/vite.config.ts) points at it.
+// Both ports can be moved, so a second, isolated Fern can run beside the developer's.
 const DEV_API_PORT = Number(process.env.FERN_API_PORT ?? 7420);
-const DEV_WEB_URL = "http://localhost:5173";
+const DEV_WEB_URL = `http://localhost:${process.env.FERN_WEB_PORT ?? 5173}`;
 
 // The API with Fern's database and its Sessions' worktrees, kept with the app's other data (ADR
 // 0004, ADR 0005). Built once the app is ready, which is when Electron can say where that is.
