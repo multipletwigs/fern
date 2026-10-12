@@ -5,7 +5,7 @@ import {
   LiveRpcs,
   type SessionAutonomy,
 } from "@repo/api";
-import { Effect, Layer, Schedule, Stream } from "effect";
+import { Deferred, Effect, Layer, Schedule, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { RpcTest } from "effect/rpc";
@@ -131,6 +131,8 @@ const restoring = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       retroFindings = [];
       silent = new Set();
       editing = false;
+      if (gate) Deferred.doneUnsafe(gate, Effect.void);
+      gate = undefined;
     }),
   );
 
@@ -213,26 +215,57 @@ const makeClient = HttpApiTest.groups(FernApi, [
   "walkthroughs",
 ]);
 
-// The Walkthrough's Fork, faked: one Section explains every changed line.
+// The Walkthrough's Fork, faked: one Section explains every changed line, once `gate` (if a test
+// set one) opens.
+let gate: Deferred.Deferred<void> | undefined;
 const Writer = Layer.succeed(
   WalkthroughWriter,
   WalkthroughWriter.of({
     write: (request) =>
-      Effect.succeed({
-        draft: {
-          sections: [
-            {
-              title: "Add the dark theme",
-              explanation: "The theme the toggle switches to.",
-              hunks: request.hunks.map((h) => h.id),
-            },
-          ],
-          notFromSession: [],
-        },
-        revise: () => Effect.die("unused"),
+      Effect.gen(function* () {
+        if (gate) yield* Deferred.await(gate);
+        return {
+          draft: {
+            sections: [
+              {
+                title: "Add the dark theme",
+                explanation: "The theme the toggle switches to.",
+                hunks: request.hunks.map((h) => h.id),
+              },
+            ],
+            notFromSession: [],
+          },
+          revise: () => Effect.die("unused"),
+        };
       }),
   }),
 );
+
+// Waits until Fern has told the Session's agent it holds Implement's Checkpoint for the Walkthrough.
+const holding = (sessionId: string) =>
+  Effect.suspend(() =>
+    Effect.fromNullishOr(
+      answers.find(
+        (a) =>
+          a.sessionId === sessionId &&
+          a.text.includes("writing the Session's Walkthrough"),
+      ),
+    ),
+  ).pipe(
+    Effect.retry({ schedule: Schedule.spaced("5 millis"), times: 400 }),
+    Effect.orDie,
+  );
+
+// Holds the Walkthrough writer until `open` runs.
+const holdingWriter = Effect.gen(function* () {
+  const held = yield* Deferred.make<void>();
+  gate = held;
+  return {
+    open: Deferred.succeed(held, undefined).pipe(
+      Effect.andThen(Effect.sync(() => (gate = undefined))),
+    ),
+  };
+});
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
 const server = Layer.mergeAll(
@@ -769,7 +802,8 @@ layer(server, { excludeTestServices: true })("Escapes", (it) => {
           Effect.promise(() =>
             call(options, "phase_done", { phase, summary: `${phase} done.` }),
           );
-        assert.match((yield* reportDone("implement")).text, /Fern approved/);
+        // Fern approves it at once, or once a Walkthrough write the turn's end started is done.
+        assert.isFalse((yield* reportDone("implement")).isError);
         yield* turnWhere(id, (t) => t.text === "/retro");
         // "Continue" corrects nothing.
         yield* say(id, "continue");
@@ -806,6 +840,49 @@ layer(server, { excludeTestServices: true })("Escapes", (it) => {
         assert.isUndefined(at(after, "implement")?.withdrawn);
         assert.isUndefined(at(after, "spec")?.withdrawn);
         assert.deepStrictEqual(streaks(after), ["spec:2/5", "implement:0/5"]);
+      }).pipe(restoring),
+  );
+
+  it.effect(
+    "keeps the window open while Implement's Checkpoint is held for its Walkthrough, and closes it once the Checkpoint is raised",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* autonomousSpec;
+        const client = yield* makeClient;
+        const say = (id: string, text: string) =>
+          client.sessions.send({ params: { id }, payload: { text } });
+        editing = true;
+
+        // Implement reports done while Fern writes the Walkthrough; once it's written, the
+        // developer has the Checkpoint, and a Redirect after that is no Escape.
+        const raised = yield* startSession(root);
+        const first = yield* holdingWriter;
+        yield* approveAt(raised, "grill");
+        yield* holding(raised);
+        yield* first.open;
+        yield* checkpointAt(raised, "implement");
+        yield* say(raised, "Use the theme hook we already have");
+        const kept = yield* autonomyOf(
+          raised,
+          (a) => at(a, "spec")?.approvedByFern === true,
+        );
+        assert.isTrue(at(kept, "spec")?.granted);
+        assert.isUndefined(at(kept, "spec")?.withdrawn);
+
+        // While the Checkpoint is still held, a Redirect is an Escape.
+        const held = yield* startSession(root);
+        yield* holdingWriter;
+        yield* approveAt(held, "grill");
+        yield* holding(held);
+        yield* say(held, "Use the theme hook we already have");
+        const withdrawn = yield* autonomyOf(
+          held,
+          (a) => at(a, "spec")?.granted === false,
+        );
+        assert.strictEqual(
+          at(withdrawn, "spec")?.withdrawn?.reason,
+          "you redirected the Session after Fern approved it",
+        );
       }).pipe(restoring),
   );
 

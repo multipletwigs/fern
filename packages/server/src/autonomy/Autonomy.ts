@@ -157,8 +157,9 @@ export class Autonomy extends Context.Service<
           ) WHERE kind = 'withdrawn'`,
       });
       // The Session's Project, while an Escape at the boundary is possible: Fern approved it in the
-      // Session, and since then the next Phase hasn't reported done (raising its Checkpoint) or been
-      // skipped, the Session hasn't been archived, and no Escape has been counted there yet.
+      // Session, and since then the next Phase's Checkpoint hasn't been raised or approved (one held
+      // for its Walkthrough doesn't count yet) nor the Phase skipped, the Session hasn't been
+      // archived, and no Escape has been counted there yet.
       const escapable = SqlSchema.findOneOption({
         Request: Schema.Struct({
           sessionId: Schema.String,
@@ -172,7 +173,7 @@ export class Autonomy extends Context.Service<
           WHERE e.session_id = ${sessionId} AND e.boundary = ${boundary} AND e.kind = 'fern'
             AND h.archived_at IS NULL
             AND NOT EXISTS (SELECT 1 FROM checkpoints
-              WHERE session_id = ${sessionId} AND phase = ${next})
+              WHERE session_id = ${sessionId} AND phase = ${next} AND status != 'held')
             AND NOT EXISTS (SELECT 1 FROM skips
               WHERE session_id = ${sessionId} AND phase = ${next})
             AND NOT EXISTS (SELECT 1 FROM autonomy_events
