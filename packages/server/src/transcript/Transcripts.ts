@@ -24,6 +24,7 @@ import {
   Stream,
 } from "effect";
 import { sdk } from "../agentSdk";
+import { SubagentFiles } from "../subagent/SubagentFiles";
 import { HostedSessions, type HostedWorktree } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { buildView } from "./View";
@@ -112,6 +113,7 @@ export class Transcripts extends Context.Service<
     Effect.gen(function* () {
       const turns = yield* Turns;
       const sessions = yield* HostedSessions;
+      const subagentFiles = yield* SubagentFiles;
       return Transcripts.of({
         current: sdk("listSessions", () => listSessions({ limit: 1 })).pipe(
           Effect.map(([newest]) => newest),
@@ -176,9 +178,14 @@ export class Transcripts extends Context.Service<
               Effect.all([
                 sdk("getSessionMessages", () => getSessionMessages(id)),
                 turns.contextWindow(id),
+                subagentFiles.metadata(id),
               ]).pipe(
-                Effect.map(([messages, contextWindow]) =>
-                  buildView(latest, messages, hostedTurn, contextWindow),
+                Effect.map(([messages, contextWindow, subagents]) =>
+                  buildView(latest, messages, {
+                    hostedTurn,
+                    contextWindow,
+                    subagents,
+                  }),
                 ),
               ),
             ),
