@@ -14,6 +14,7 @@ import {
 } from "./atoms";
 import { outgoing, useCommands } from "./commands";
 import { SessionTools } from "./SessionTools";
+import { SessionMilestones } from "../autonomy/SessionMilestones";
 import { SessionCheckpoint } from "../flow/SessionCheckpoint";
 import { SessionWalkthrough } from "../walkthrough/SessionWalkthrough";
 
@@ -73,6 +74,7 @@ export function SessionComposer({
       tools={<SessionTools header={header} disabled={inUse} />}
       above={
         <>
+          <SessionMilestones sessionId={header.id} />
           <SessionCheckpoint sessionId={header.id} />
           <SessionWalkthrough sessionId={header.id} />
           <QueuedMessages

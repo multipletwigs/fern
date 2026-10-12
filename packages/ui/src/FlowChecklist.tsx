@@ -2,11 +2,11 @@ import {
   CheckCircleIcon,
   CircleDashedIcon,
   CircleIcon,
-  LockSimpleIcon,
   MinusCircleIcon,
 } from "@phosphor-icons/react";
 import { clsx } from "clsx";
 import { Fragment } from "react";
+import { type BoundaryState, FlowBoundary } from "./FlowBoundary";
 
 export type ChecklistStatus = "notStarted" | "current" | "done" | "skipped";
 
@@ -25,11 +25,14 @@ const LABELS = {
 } as const;
 
 // A Session's Phases in order, pinned at the top of the Session: each not started, current, done
-// or skipped, with a lock on every boundary between two Phases that needs the developer.
+// or skipped. Between each two, the boundary: locked while it needs the developer, checked once
+// Fern approves it. `boundaries[i]` is the one after step i; missing ones need the developer.
 export function FlowChecklist({
   steps,
+  boundaries = [],
 }: {
   steps: ReadonlyArray<{ title: string; status: ChecklistStatus }>;
+  boundaries?: ReadonlyArray<BoundaryState>;
 }) {
   return (
     <ol
@@ -41,15 +44,7 @@ export function FlowChecklist({
         return (
           <Fragment key={title}>
             {i > 0 && (
-              <li aria-hidden className="flex items-center gap-2 text-faint">
-                <span className="h-px w-4 bg-hairline" />
-                <LockSimpleIcon
-                  weight="bold"
-                  className="size-3"
-                  aria-label="Needs you"
-                />
-                <span className="h-px w-4 bg-hairline" />
-              </li>
+              <FlowBoundary state={boundaries[i - 1] ?? { kind: "needsYou" }} />
             )}
             <li
               aria-label={`${title}: ${LABELS[status]}`}
