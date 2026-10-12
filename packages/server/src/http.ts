@@ -9,6 +9,7 @@ import { Flows } from "./flow/Flows";
 import { IssueTracker } from "./issue/IssueTracker";
 import { Transcripts } from "./transcript/Transcripts";
 import { Snapshots } from "./snapshot/Snapshots";
+import { SubagentFiles } from "./subagent/SubagentFiles";
 import { LiveHandlersNoDeps } from "./live";
 import { Rounds } from "./round/Rounds";
 import { FernTools } from "./turn/FernTools";
@@ -165,6 +166,7 @@ export const handlersWith = (
       Workspace.layer,
       Commands.layer,
       Autonomy.layer,
+      SubagentFiles.layer,
     ]),
     Layer.provide([
       Snapshots.layer,

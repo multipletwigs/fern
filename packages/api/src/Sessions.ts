@@ -188,6 +188,24 @@ export const ToolCall = Schema.TaggedStruct("ToolCall", {
   questions: Schema.optional(Schema.Array(Question)),
 });
 
+// Where a Subagent stands: still working, handed back, or ended in an error.
+export const SubagentStatus = Schema.Literals(["running", "done", "failed"]);
+export type SubagentStatus = typeof SubagentStatus.Type;
+
+// An Agent call: the Subagent it started, in place of a ToolCall. Its type and description come
+// from the metadata Claude Code keeps beside the Subagent's transcript, else from the call's input.
+export const Subagent = Schema.TaggedStruct("Subagent", {
+  id: Schema.String,
+  // The Agent call's tool_use id.
+  callId: Schema.String,
+  // Claude Code's id for the Subagent, once known.
+  agentId: Schema.optional(Schema.String),
+  // E.g. "Explore" or "general-purpose".
+  agentType: Schema.String,
+  description: Schema.String,
+  status: SubagentStatus,
+});
+
 export const TranscriptItem = Schema.Union([
   Prompt,
   Command,
@@ -196,6 +214,7 @@ export const TranscriptItem = Schema.Union([
   Text,
   Thinking,
   ToolCall,
+  Subagent,
 ]);
 export type TranscriptItem = typeof TranscriptItem.Type;
 

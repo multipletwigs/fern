@@ -7,6 +7,7 @@ import { Markdown } from "@repo/ui/Markdown";
 import { MessageCard } from "@repo/ui/MessageCard";
 import { Pre } from "@repo/ui/Pre";
 import { QuestionCard } from "@repo/ui/QuestionCard";
+import { SubagentRow } from "@repo/ui/SubagentRow";
 import { ToolCallRow } from "@repo/ui/ToolCallRow";
 import { useFileOpener } from "../code/useFileOpener";
 import { displayName } from "./toolName";
@@ -75,6 +76,14 @@ export function ItemView({
         </ToolCallRow>
       );
     }
+    case "Subagent":
+      return (
+        <SubagentRow
+          agentType={item.agentType}
+          description={item.description}
+          status={item.status}
+        />
+      );
     case "Interrupt":
       return <Chip className="text-amber">Interrupted</Chip>;
     case "Notice":

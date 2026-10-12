@@ -5,6 +5,7 @@ import { assert, layer } from "@effect/vitest";
 import type { HostedTurn, TranscriptUpdate } from "@repo/api";
 import { DateTime, Effect, Fiber, Layer, Stream } from "effect";
 import { vi } from "vitest";
+import { SubagentFiles } from "../src/subagent/SubagentFiles";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { HostedSessions } from "../src/turn/HostedSessions";
 import { Turns } from "../src/turn/Turns";
@@ -34,6 +35,13 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 
 const TestTranscripts = Transcripts.layer.pipe(
   Layer.provide([
+    Layer.succeed(
+      SubagentFiles,
+      SubagentFiles.of({
+        folder: () => Effect.succeedNone,
+        metadata: () => Effect.succeed([]),
+      }),
+    ),
     Layer.succeed(
       Turns,
       Turns.of({

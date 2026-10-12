@@ -35,7 +35,8 @@ const FOOTER = 56;
 const isRunningCall = (row: Row | undefined) =>
   row?._tag === "ToolRun"
     ? row.calls.some((call) => !call.result)
-    : row?.item._tag === "ToolCall" && !row.item.result;
+    : (row?.item._tag === "ToolCall" && !row.item.result) ||
+      (row?.item._tag === "Subagent" && row.item.status === "running");
 
 const isDeveloperTurn = (row: Row) =>
   row._tag === "Item" &&

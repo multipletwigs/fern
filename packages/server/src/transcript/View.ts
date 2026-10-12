@@ -10,6 +10,13 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages";
 import { type HostedTurn, SessionHeader, type TranscriptItem } from "@repo/api";
 import { DateTime, Duration, Option, Predicate, Schema } from "effect";
+import {
+  type Endings,
+  isAgentCall,
+  readEnding,
+  subagentItem,
+} from "../subagent/SubagentCall";
+import type { SubagentMetadata } from "../subagent/SubagentFiles";
 
 // Turns the messages the Agent SDK reads from a transcript into renderable items. The SDK has
 // already resolved the active branch and dropped injected skill bodies.
@@ -41,7 +48,7 @@ const isNoResponsePlaceholder = (message: Message) =>
   message.content[0]?.type === "text" &&
   message.content[0].text === "No response requested.";
 
-const decodeQuestions =Schema.decodeUnknownOption(
+const decodeQuestions = Schema.decodeUnknownOption(
   Schema.Struct({
     questions: Schema.Array(
       Schema.Struct({
@@ -178,19 +185,31 @@ const fromUser = (
   };
 };
 
-// `contextWindow` is the window's size as a turn Fern ran on the Session last reported it, if one
-// has: the transcript doesn't record it.
 export const buildView = (
   info: SDKSessionInfo,
   messages: ReadonlyArray<StoredMessage>,
-  hostedTurn?: HostedTurn,
-  contextWindow?: number,
+  context: {
+    readonly hostedTurn?: HostedTurn;
+    // The window's size as a turn Fern ran on the Session last reported it, if one has: the
+    // transcript doesn't record it.
+    readonly contextWindow?: number;
+    // What Claude Code recorded of the Session's Subagents beside its transcript.
+    readonly subagents?: ReadonlyArray<SubagentMetadata>;
+  } = {},
 ) => {
+  const { hostedTurn, contextWindow } = context;
   const cwd = info.cwd ?? "";
+  const subagents = new Map(
+    (context.subagents ?? []).flatMap((s) =>
+      s.toolUseId === undefined ? [] : [[s.toolUseId, s] as const],
+    ),
+  );
+  const endings: Endings = { byCall: new Map(), byAgent: new Map() };
   const results = new Map<string, { text: string; isError: boolean }>();
   for (const m of messages) {
     if (m.type !== "user") continue;
     const { content } = userMessage(m);
+    readEnding(textOf(content), endings);
     if (Predicate.isString(content)) continue;
     for (const block of content)
       if (block.type === "tool_result")
@@ -247,7 +266,17 @@ export const buildView = (
         else if (block.type === "thinking" && block.thinking.trim())
           items.push({ _tag: "Thinking", id, text: block.thinking });
         else if (block.type === "tool_use")
-          items.push(toolCall(block, id, results.get(block.id), cwd));
+          items.push(
+            isAgentCall(block)
+              ? subagentItem(
+                  block,
+                  id,
+                  results.get(block.id),
+                  subagents.get(block.id),
+                  endings,
+                )
+              : toolCall(block, id, results.get(block.id), cwd),
+          );
       });
     }
   }
