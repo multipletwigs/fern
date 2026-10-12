@@ -88,15 +88,33 @@ export class SubagentFiles extends Context.Service<
       );
 
       // Which project folder holds the Session isn't recorded anywhere the SDK exposes, so each is
-      // looked in.
+      // looked in for its transcript, once: a Session's transcript stays where it was written.
+      const projectOf = new Map<string, string>();
+      const holds = (project: string, sessionId: string) =>
+        fs.exists(path.join(project, `${sessionId}.jsonl`));
+      const projectFolder = Effect.fn("SubagentFiles.projectFolder")(function* (
+        sessionId: string,
+      ) {
+        const known = projectOf.get(sessionId);
+        if (known !== undefined && (yield* holds(known, sessionId)))
+          return Option.some(known);
+        const projects = path.join(yield* configDir, "projects");
+        for (const name of yield* fs.readDirectory(projects)) {
+          const project = path.join(projects, name);
+          if (yield* holds(project, sessionId)) {
+            projectOf.set(sessionId, project);
+            return Option.some(project);
+          }
+        }
+        return Option.none<string>();
+      });
+
       const folder = Effect.fn("SubagentFiles.folder")(
         function* (sessionId: string) {
-          const projects = path.join(yield* configDir, "projects");
-          for (const project of yield* fs.readDirectory(projects)) {
-            const dir = path.join(projects, project, sessionId, "subagents");
-            if (yield* fs.exists(dir)) return Option.some(dir);
-          }
-          return Option.none<string>();
+          const project = yield* projectFolder(sessionId);
+          if (Option.isNone(project)) return project;
+          const dir = path.join(project.value, sessionId, "subagents");
+          return (yield* fs.exists(dir)) ? Option.some(dir) : Option.none();
         },
         Effect.orElseSucceed(() => Option.none<string>()),
       );
