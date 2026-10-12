@@ -610,37 +610,35 @@ layer(server(freshDatabase()), { excludeTestServices: true })("Flows", (it) => {
       }),
   );
 
-  it.effect(
-    "refuses to approve, decline or skip at an archived Session",
-    () =>
-      Effect.gen(function* () {
-        const { id, checkpoint } = yield* atGrillCheckpoint;
-        const client = yield* makeClient;
-        yield* client.sessions.archive({
-          params: { id },
-          payload: { force: true },
-        });
-        const turns = started.length;
+  it.effect("refuses to approve, decline or skip at an archived Session", () =>
+    Effect.gen(function* () {
+      const { id, checkpoint } = yield* atGrillCheckpoint;
+      const client = yield* makeClient;
+      yield* client.sessions.archive({
+        params: { id },
+        payload: { force: true },
+      });
+      const turns = started.length;
 
-        const approved = yield* client.flows
-          .approve({ params: { id: checkpoint } })
-          .pipe(Effect.flip);
-        const declined = yield* client.flows
-          .decline({ params: { id: checkpoint }, payload: { note: "No." } })
-          .pipe(Effect.flip);
-        const skipped = yield* client.flows
-          .skip({
-            params: { session: id },
-            payload: { phase: "grill", reason: "Not needed" },
-          })
-          .pipe(Effect.flip);
+      const approved = yield* client.flows
+        .approve({ params: { id: checkpoint } })
+        .pipe(Effect.flip);
+      const declined = yield* client.flows
+        .decline({ params: { id: checkpoint }, payload: { note: "No." } })
+        .pipe(Effect.flip);
+      const skipped = yield* client.flows
+        .skip({
+          params: { session: id },
+          payload: { phase: "grill", reason: "Not needed" },
+        })
+        .pipe(Effect.flip);
 
-        assert.deepStrictEqual(
-          [approved._tag, declined._tag, skipped._tag],
-          ["SessionArchived", "SessionArchived", "SessionArchived"],
-        );
-        assert.strictEqual(started.length, turns);
-      }),
+      assert.deepStrictEqual(
+        [approved._tag, declined._tag, skipped._tag],
+        ["SessionArchived", "SessionArchived", "SessionArchived"],
+      );
+      assert.strictEqual(started.length, turns);
+    }),
   );
 
   it.effect(

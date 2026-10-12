@@ -235,6 +235,50 @@ layer(
       }),
   );
 
+  it.effect(
+    "starts a Session in place, in the Grill, in a folder outside git or in a repo with no commits yet",
+    () =>
+      Effect.gen(function* () {
+        const outside = realpathSync(
+          mkdtempSync(join(tmpdir(), "fern-plain-")),
+        );
+        const empty = realpathSync(mkdtempSync(join(tmpdir(), "fern-empty-")));
+        git(empty, "init", "-q", "-b", "main");
+        const client = yield* makeClient;
+        const live = yield* makeLive;
+        for (const folder of [outside, empty]) {
+          transcript(folder, crypto.randomUUID(), "Earlier work", "cli");
+          const { id } = yield* client.sessions.start({
+            payload: { root: folder, message: { text: "Tidy up" } },
+          });
+          const turn = yield* Effect.suspend(() =>
+            Effect.fromNullishOr(started.find((t) => t.sessionId === id)),
+          ).pipe(
+            Effect.retry({ schedule: Schedule.spaced("5 millis"), times: 200 }),
+            Effect.orDie,
+          );
+
+          assert.strictEqual(turn.cwd, folder);
+          assert.strictEqual(turn.text, "/grill-with-docs Tidy up");
+          const flow = yield* first(live.Flow({ session: id }));
+          assert.deepStrictEqual(
+            flow?.phases.map((p) => `${p.phase}:${p.status}`),
+            [
+              "grill:current",
+              "spec:notStarted",
+              "implement:notStarted",
+              "retro:notStarted",
+            ],
+          );
+          const phases = yield* first(live.SessionPhases());
+          assert.strictEqual(
+            phases?.find((p) => p.sessionId === id)?.current,
+            "grill",
+          );
+        }
+      }),
+  );
+
   // As /clear does from a Session already in a worktree.
   it.effect(
     "starts a Session from a worktree Session's folder on main, under the same Project",

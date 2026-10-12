@@ -70,6 +70,7 @@ const KnownSessions = Layer.succeed(
     record: (id) => Effect.sync(() => hostedIds.add(id)),
     archive: () => Effect.die("unused"),
     worktrees: Effect.succeed([]),
+    sessions: Effect.succeed([]),
     session: () => Effect.undefined,
     changes: Stream.never,
     listed: Effect.succeed([]),
@@ -82,6 +83,7 @@ const KnownSessions = Layer.succeed(
 const FakeWorktrees = Layer.succeed(
   Worktrees,
   Worktrees.of({
+    branchable: () => Effect.succeed(true),
     create: (root) =>
       Effect.succeed({
         projectRoot: root,

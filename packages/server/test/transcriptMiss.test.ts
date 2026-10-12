@@ -44,6 +44,7 @@ const TestTranscripts = Transcripts.layer.pipe(
         record: () => Effect.void,
         archive: () => Effect.die("unused"),
         worktrees: Effect.succeed([]),
+        sessions: Effect.succeed([]),
         session: () => Effect.undefined,
         changes: Stream.never,
         listed: Effect.succeed([]),

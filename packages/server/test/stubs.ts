@@ -71,6 +71,7 @@ export const NoWorktreesDir = Layer.succeed(WorktreesDir, {
 export const UnusedWorktrees = Layer.succeed(
   Worktrees,
   Worktrees.of({
+    branchable: () => Effect.die("unused"),
     create: () => Effect.die("unused"),
     isMerged: () => Effect.die("unused"),
     isDirty: () => Effect.die("unused"),

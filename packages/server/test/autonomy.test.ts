@@ -784,7 +784,7 @@ layer(server, { excludeTestServices: true })("Escapes", (it) => {
   );
 
   it.effect(
-    "an image on its own, a slash command, or \"continue\" corrects nothing, so it's no Escape",
+    'an image on its own, a slash command, or "continue" corrects nothing, so it\'s no Escape',
     () =>
       Effect.gen(function* () {
         const root = yield* autonomousSpec;

@@ -30,9 +30,7 @@ export const SystemHandlers = HttpApiBuilder.group(
 // a slash command, or only "continue".
 const isRedirect = (text: string) => {
   const said = text.trim();
-  return (
-    said !== "" && !said.startsWith("/") && !/^continue[.!]*$/i.test(said)
-  );
+  return said !== "" && !said.startsWith("/") && !/^continue[.!]*$/i.test(said);
 };
 
 export const SessionsHandlers = HttpApiBuilder.group(

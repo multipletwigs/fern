@@ -208,8 +208,8 @@ export class Turns extends Context.Service<
     // Takes a message out of the Session's queue, if it's still there.
     unqueue(id: string, item: string): Effect.Effect<void>;
     // Starts a Hosted Session on a piece of work in a Project, and returns its id. It runs on a
-    // branch of its own from `main`, in its own worktree, and its opening prompt goes into the
-    // Grill.
+    // branch of its own from `main`, in its own worktree, or in place outside git or before the
+    // first commit. Its opening prompt goes into the Grill.
     start(
       root: string,
       openingPrompt: OutgoingMessage,
@@ -471,11 +471,14 @@ export class Turns extends Context.Service<
         const project =
           (yield* hosted.worktrees).find((w) => w.cwd === root)?.projectRoot ??
           root;
-        const worktree = yield* worktrees.create(project, openingPrompt.text);
+        // In a folder outside git, or a repo with no commit to branch from, it runs in place.
+        const where = (yield* worktrees.branchable(project))
+          ? yield* worktrees.create(project, openingPrompt.text)
+          : { cwd: project };
         const id = crypto.randomUUID();
-        yield* hosted.record(id, worktree);
+        yield* hosted.record(id, where);
         yield* setTurn(id, { running: true });
-        yield* markStart(worktree.cwd, id);
+        yield* markStart(where.cwd, id);
         // Only the developer can start a skill, so Fern sends the Grill's for them.
         const message = {
           ...openingPrompt,
@@ -484,7 +487,7 @@ export class Turns extends Context.Service<
         yield* FiberMap.run(
           fibers,
           id,
-          serve(id, message, { sessionId: id, cwd: worktree.cwd }),
+          serve(id, message, { sessionId: id, cwd: where.cwd }),
         );
         return id;
       });

@@ -40,6 +40,8 @@ const failed = (message: string) => new WorktreeError({ message });
 export class Worktrees extends Context.Service<
   Worktrees,
   {
+    // Whether the folder is in a git repository with a commit to start a branch from.
+    branchable(root: string): Effect.Effect<boolean>;
     // A new branch from the tip of `main`, named after the opening prompt plus a short id, checked
     // out in a new worktree under Fern's app data.
     create(
@@ -75,10 +77,8 @@ export class Worktrees extends Context.Service<
       const path = yield* Path.Path;
       const { dir } = yield* WorktreesDir;
 
-      const create = Effect.fn("Worktrees.create")(function* (
-        root: string,
-        openingPrompt: string,
-      ) {
+      // The folder's real path, its repository's root, and the commit a branch would start from.
+      const origin = Effect.fn("Worktrees.origin")(function* (root: string) {
         const real = yield* fs
           .realPath(root)
           .pipe(Effect.mapError(() => failed(`${root} doesn't exist`)));
@@ -98,6 +98,20 @@ export class Worktrees extends Context.Service<
               failed(`${root} has no commit to start a branch from`),
             ),
           );
+        return { real, top, base };
+      });
+
+      const branchable = (root: string) =>
+        origin(root).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+
+      const create = Effect.fn("Worktrees.create")(function* (
+        root: string,
+        openingPrompt: string,
+      ) {
+        const { real, top, base } = yield* origin(root);
         const id = crypto.randomUUID().replaceAll("-", "").slice(0, 6);
         const branch = `${slug(openingPrompt)}-${id}`;
         const worktree = path.join(
@@ -175,7 +189,7 @@ export class Worktrees extends Context.Service<
           .pipe(Effect.mapError((error) => failed(error.message)));
       });
 
-      return Worktrees.of({ create, isMerged, isDirty, remove });
+      return Worktrees.of({ branchable, create, isMerged, isDirty, remove });
     }),
   ).pipe(Layer.provide(Git.layer));
 }

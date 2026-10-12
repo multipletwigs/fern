@@ -45,6 +45,7 @@ import {
   type TrackedIssue,
 } from "../issue/IssueTracker";
 import { Autonomy } from "../autonomy/Autonomy";
+import { Snapshots } from "../snapshot/Snapshots";
 import { FernTools } from "../turn/FernTools";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
@@ -262,7 +263,9 @@ const unwritten = (why: string): Answer => ({
   isError: true,
 });
 const whyUnwritten = (error: SessionNotFound | WalkthroughError) =>
-  error._tag === "SessionNotFound" ? "it can't find the Session" : error.message;
+  error._tag === "SessionNotFound"
+    ? "it can't find the Session"
+    : error.message;
 
 // Each Hosted Session's Flow (Grill, Spec, Implement, Retro) and the Checkpoints between its
 // Phases. The agent reports a Phase done through the `phase_done` tool; Fern raises a Checkpoint,
@@ -340,6 +343,7 @@ export class Flows extends Context.Service<
       const hosted = yield* HostedSessions;
       const turns = yield* Turns;
       const walkthroughs = yield* Walkthroughs;
+      const snapshots = yield* Snapshots;
       const tools = yield* FernTools;
       const issues = yield* IssueTracker;
       const autonomy = yield* Autonomy;
@@ -627,15 +631,28 @@ export class Flows extends Context.Service<
       // Implement's other exit criterion: a written Walkthrough that covers the working tree as it
       // is now. Fern writes one of whatever changed since the last: "writing" while it does. Else
       // what the Checkpoint links to, or what to tell the agent instead.
-      const walkthroughExit = (sessionId: string) =>
-        walkthroughs.write(sessionId).pipe(
-          Effect.as("writing" as const),
-          Effect.catchTags({
-            WalkthroughInProgress: () => Effect.succeed("writing" as const),
-            NothingToReview: () => covering(sessionId),
-          }),
-          Effect.catch((error) => Effect.succeed(unwritten(whyUnwritten(error)))),
+      const inGit = (cwd: string) =>
+        snapshots.repo(cwd).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
         );
+      // A Session in place outside git has nothing Fern can review, so there's nothing to link.
+      const walkthroughExit = (sessionId: string) =>
+        Effect.gen(function* () {
+          const session = yield* hosted.session(sessionId);
+          if (session?.worktree === null && !(yield* inGit(session.cwd)))
+            return { link: undefined };
+          return yield* walkthroughs.write(sessionId).pipe(
+            Effect.as("writing" as const),
+            Effect.catchTags({
+              WalkthroughInProgress: () => Effect.succeed("writing" as const),
+              NothingToReview: () => covering(sessionId),
+            }),
+            Effect.catch((error) =>
+              Effect.succeed(unwritten(whyUnwritten(error))),
+            ),
+          );
+        });
 
       const savePhases = (
         sessionId: string,
@@ -843,7 +860,11 @@ export class Flows extends Context.Service<
               text: `The developer already has a Checkpoint for the end of ${TITLES[now]}. End your turn; their decision arrives as your next message.`,
               isError: false,
             } satisfies Answer;
-          if (Option.isSome(yield* heldOf({ sessionId, phase }).pipe(Effect.orDie)))
+          if (
+            Option.isSome(
+              yield* heldOf({ sessionId, phase }).pipe(Effect.orDie),
+            )
+          )
             return HOLDING;
           return undefined;
         });
@@ -1073,12 +1094,12 @@ export class Flows extends Context.Service<
       }, deciding.withPermits(1));
 
       const phases = Effect.gen(function* () {
-        const [worktrees, rows] = yield* Effect.all([
-          hosted.worktrees,
+        const [sessions, rows] = yield* Effect.all([
+          hosted.sessions,
           flowRows().pipe(Effect.orDie),
         ]);
         const byId = new Map(rows.map((row) => [row.sessionId, row.phases]));
-        return worktrees.map(({ id }): SessionPhase => ({
+        return sessions.map(({ id }): SessionPhase => ({
           sessionId: id,
           current: current(byId.get(id) ?? opening),
         }));

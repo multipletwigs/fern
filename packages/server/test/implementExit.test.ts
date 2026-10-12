@@ -517,6 +517,20 @@ layer(server(freshDatabase()), { excludeTestServices: true })(
         }).pipe(Effect.ensuring(Effect.sync(() => (failing = false)))),
     );
 
+    it.effect(
+      "in a folder outside git, where nothing can be reviewed, raises the Checkpoint without a Walkthrough",
+      () =>
+        Effect.gen(function* () {
+          const folder = realpathSync(mkdtempSync(join(tmpdir(), "fern-plain-")));
+          transcript(folder, crypto.randomUUID(), "Earlier work", "cli");
+          const id = yield* implemented(folder);
+
+          const flow = yield* flowOf(id, (f) => f?.checkpoint !== undefined);
+          assert.strictEqual(flow?.checkpoint?.phase, "implement");
+          assert.isUndefined(flow?.checkpoint?.walkthrough);
+        }),
+    );
+
     it.effect("approving the Implement Checkpoint sends /retro", () =>
       Effect.gen(function* () {
         const id = yield* implemented(project());

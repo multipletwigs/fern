@@ -51,15 +51,20 @@ export type FlowSession = typeof FlowSession.Type;
 export class HostedSessions extends Context.Service<
   HostedSessions,
   {
-    // Remembers a Session Fern started in a worktree, so it's listed from then on, under the
-    // Project it was started from.
-    record(id: string, worktree: Worktree): Effect.Effect<void>;
+    // Remembers a Session Fern started, in a worktree or in place in the folder, so it's listed
+    // from then on, under the Project it was started from, and follows the Flow.
+    record(
+      id: string,
+      where: Worktree | { readonly cwd: string },
+    ): Effect.Effect<void>;
     // Leaves the Session out of every listing from now on.
     archive(id: string): Effect.Effect<void>;
     // Each time a Session is recorded or archived from now on.
     readonly changes: Stream.Stream<void>;
     // Every Session Fern started in a worktree, archived or not.
     readonly worktrees: Effect.Effect<ReadonlyArray<HostedWorktree>>;
+    // Every Session following the Flow, archived or not.
+    readonly sessions: Effect.Effect<ReadonlyArray<FlowSession>>;
     // The Session following the Flow with the id, archived or not.
     session(id: string): Effect.Effect<FlowSession | undefined>;
     // Every listed Session, most recently active first.
@@ -103,6 +108,15 @@ export class HostedSessions extends Context.Service<
           WHERE project_root IS NOT NULL AND branch IS NOT NULL
             AND worktree IS NOT NULL AND base_commit IS NOT NULL`,
       })().pipe(Effect.orDie);
+      // A Session Fern started follows the Flow, unless it predates the Flow: those have no
+      // Project of their own recorded.
+      const flowSessions = SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: FlowSession,
+        execute: () => sql`
+          SELECT id, cwd, project_root, worktree, archived_at FROM hosted_sessions
+          WHERE project_root IS NOT NULL`,
+      })().pipe(Effect.orDie);
       const flowSession = SqlSchema.findOneOption({
         Request: Schema.String,
         Result: FlowSession,
@@ -134,17 +148,19 @@ export class HostedSessions extends Context.Service<
 
       const record = Effect.fn("HostedSessions.record")(function* (
         id: string,
-        { cwd, projectRoot, branch, base, path }: Worktree,
+        where: Worktree | { readonly cwd: string },
       ) {
         const startedAt = yield* Clock.currentTimeMillis;
+        // In place, the folder is the Project.
+        const worktree = "branch" in where ? where : undefined;
         yield* sql`INSERT OR IGNORE INTO hosted_sessions ${sql.insert({
           id,
-          cwd,
+          cwd: where.cwd,
           startedAt,
-          projectRoot,
-          branch,
-          baseCommit: base,
-          worktree: path,
+          projectRoot: worktree?.projectRoot ?? where.cwd,
+          branch: worktree?.branch ?? null,
+          baseCommit: worktree?.base ?? null,
+          worktree: worktree?.path ?? null,
         })}`;
         yield* PubSub.publish(changed, undefined);
       }, Effect.orDie);
@@ -228,6 +244,7 @@ export class HostedSessions extends Context.Service<
         archive,
         changes: Stream.fromPubSub(changed),
         worktrees,
+        sessions: flowSessions,
         session,
         listed,
         isProject,

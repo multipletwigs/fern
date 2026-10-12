@@ -65,7 +65,7 @@ A recognised point in a Setup's track record, often carrying an offer of more Au
 _Avoid_: Gem, badge, achievement, streak
 
 **Hosted Session**:
-A Session Fern drives itself, in its own git worktree, so its Redirects, Checkpoints, and Phases are recorded exactly. Each Hosted Session carries one piece of work through the whole Flow.
+A Session Fern drives itself, in its own git worktree (in place, for a folder outside git or a repo with no commits yet), so its Redirects, Checkpoints, and Phases are recorded exactly. Each Hosted Session carries one piece of work through the whole Flow.
 _Avoid_: Fern session, managed session
 
 **Archived**:
