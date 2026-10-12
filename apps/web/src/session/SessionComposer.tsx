@@ -90,8 +90,8 @@ export function SessionComposer({
           return header.cwd !== undefined;
         }
         const payload = outgoing(message, model);
-        // Behind a running turn the message queues, and shows in the queue rather than the
-        // transcript.
+        // Into a running turn the message shows in the queue until the agent takes it in, at its
+        // next tool call, and then in the transcript where it did.
         if (turn?.running) {
           const exit = await send({ params: { id: header.id }, payload });
           if (Exit.isSuccess(exit)) return true;
@@ -120,8 +120,14 @@ export function SessionComposer({
       }}
       onStop={() => {
         interrupt({ params: { id: header.id } });
-        // Stopping drops the queue; what it said goes back in the box. Its images don't.
-        return queued.map((item) => item.text).join("\n\n") || undefined;
+        // Stopping drops what Claude Code doesn't have yet; what it said goes back in the box. Its
+        // images don't. What Claude Code has runs next.
+        return (
+          queued
+            .filter((item) => !item.delivered)
+            .map((item) => item.text)
+            .join("\n\n") || undefined
+        );
       }}
     />
   );

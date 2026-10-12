@@ -5,10 +5,12 @@ export type QueuedItem = {
   readonly text: string;
   // How many images it carries.
   readonly images: number;
+  // Whether Claude Code has it already, so it can't be taken back.
+  readonly delivered: boolean;
 };
 
-// Messages waiting for the running turn, in the order they'll run, stacked just above the
-// composer. Each can be taken back before it runs.
+// Messages sent into the running turn that the agent hasn't taken in yet, in order, stacked just
+// above the composer. Each can be taken back until Claude Code has it.
 export function QueuedMessages({
   items,
   onRemove,
@@ -36,14 +38,18 @@ export function QueuedMessages({
               +{item.images} {item.images === 1 ? "image" : "images"}
             </span>
           )}
-          <button
-            type="button"
-            onClick={() => onRemove(item.id)}
-            title="Remove from queue"
-            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-white/[0.06] hover:text-ink"
-          >
-            <XIcon className="size-3.5" />
-          </button>
+          {item.delivered ? (
+            <span className="size-7 shrink-0" />
+          ) : (
+            <button
+              type="button"
+              onClick={() => onRemove(item.id)}
+              title="Remove from queue"
+              className="flex size-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-white/[0.06] hover:text-ink"
+            >
+              <XIcon className="size-3.5" />
+            </button>
+          )}
         </li>
       ))}
     </ol>
