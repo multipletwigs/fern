@@ -1,6 +1,7 @@
 import { Effect, Predicate, Schedule, Stream } from "effect";
 import { Atom } from "effect/reactivity";
 import { LiveClient } from "../LiveClient";
+import { resubscribe } from "../resubscribe";
 
 // Reconnect after a dropped connection, but not when the server has said why it can't serve this.
 const reconnect = Schedule.spaced("2 seconds").pipe(
@@ -20,7 +21,7 @@ export const projectFilesAtom = Atom.family((root: string) =>
         const client = yield* LiveClient;
         return client("ProjectFiles", { root });
       }),
-    ).pipe(Stream.retry(reconnect)),
+    ).pipe(resubscribe(reconnect)),
   ),
 );
 
@@ -33,7 +34,7 @@ export const fileAtom = Atom.family((root: string) =>
           const client = yield* LiveClient;
           return client("File", { root, path });
         }),
-      ).pipe(Stream.retry(reconnect)),
+      ).pipe(resubscribe(reconnect)),
     ),
   ),
 );
@@ -50,7 +51,7 @@ const changesFamily = Atom.family((key: string) => {
           const client = yield* LiveClient;
           return client("Changes", { root, session });
         }),
-      ).pipe(Stream.retry(reconnect)),
+      ).pipe(resubscribe(reconnect)),
     )
     .pipe(Atom.setIdleTTL("1 minute"));
 });
