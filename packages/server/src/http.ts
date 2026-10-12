@@ -6,6 +6,7 @@ import { Commands } from "./commands/Commands";
 import { Transcripts } from "./transcript/Transcripts";
 import { Snapshots } from "./snapshot/Snapshots";
 import { LiveHandlersNoDeps } from "./live";
+import { FernTools } from "./turn/FernTools";
 import { HostedSessions } from "./turn/HostedSessions";
 import { Turns } from "./turn/Turns";
 import { Walkthroughs } from "./walkthrough/Walkthroughs";
@@ -78,7 +79,12 @@ export const handlersWith = (writer: Layer.Layer<WalkthroughWriter>) =>
   Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
     Layer.provide([Transcripts.layer, Walkthroughs.layer]),
     Layer.provide([Turns.layer, Workspace.layer, Commands.layer]),
-    Layer.provide([Snapshots.layer, HostedSessions.layer, writer]),
+    Layer.provide([
+      Snapshots.layer,
+      HostedSessions.layer,
+      FernTools.layer,
+      writer,
+    ]),
     Layer.provide(NodeServices.layer),
   );
 

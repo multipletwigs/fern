@@ -33,6 +33,7 @@ import {
 } from "effect";
 import { sdk } from "../agentSdk";
 import { Snapshots } from "../snapshot/Snapshots";
+import { FernTools } from "./FernTools";
 import { HostedSessions } from "./HostedSessions";
 
 type TurnMap = Map<string, HostedTurn>;
@@ -149,7 +150,8 @@ async function* userTurn(
 
 // Turns Fern runs on a Session itself, by resuming it through the Agent SDK, or by starting a new
 // Session. One turn at a time per Session: messages sent meanwhile queue up and run in order once
-// it ends. Tool permissions go through Claude Code's auto mode.
+// it ends. Tool permissions go through Claude Code's auto mode. Every turn of a Hosted Session also
+// gets Fern's tools and steering.
 export class Turns extends Context.Service<
   Turns,
   {
@@ -187,6 +189,7 @@ export class Turns extends Context.Service<
     Effect.gen(function* () {
       const snapshots = yield* Snapshots;
       const hosted = yield* HostedSessions;
+      const tools = yield* FernTools;
       const fibers = yield* FiberMap.make<string, void, TranscriptError>();
       const turns = yield* Ref.make<TurnMap>(new Map());
       const windows: Array<TurnWindow> = [];
@@ -227,6 +230,22 @@ export class Turns extends Context.Service<
           ),
         );
 
+      // What the Session's next turn runs with besides the message: nothing for an External
+      // Session, Fern's tools and steering for a Hosted one.
+      const extras = (id: string) =>
+        Effect.gen(function* () {
+          if (!(yield* hosted.isHosted(id))) return {};
+          const { mcpServers, appendSystemPrompt } = yield* tools.options(id);
+          return {
+            mcpServers: { ...mcpServers },
+            systemPrompt: {
+              type: "preset",
+              preset: "claude_code",
+              append: appendSystemPrompt,
+            },
+          } satisfies Options;
+        });
+
       // `session` either resumes the Session or names the new one.
       const run = (
         id: string,
@@ -234,7 +253,7 @@ export class Turns extends Context.Service<
         session: Pick<Options, "resume" | "sessionId"> & { cwd: string },
       ) =>
         Effect.acquireUseRelease(
-          Effect.sync(() => {
+          Effect.map(extras(id), (extra) => {
             windows.push({
               id,
               cwd: session.cwd,
@@ -246,6 +265,7 @@ export class Turns extends Context.Service<
             const turn = query({
               prompt: userTurn(message, ended.signal),
               options: {
+                ...extra,
                 ...session,
                 permissionMode: "auto",
                 ...(message.model ? { model: message.model } : {}),

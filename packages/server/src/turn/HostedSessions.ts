@@ -3,7 +3,7 @@ import {
   type SDKSessionInfo,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { TranscriptError } from "@repo/api";
-import { Clock, Context, Effect, Layer, Ref, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Option, Ref, Schema } from "effect";
 import { SqlClient, SqlSchema } from "effect/sql";
 import { sdk } from "../agentSdk";
 
@@ -23,6 +23,8 @@ export class HostedSessions extends Context.Service<
     // Whether a listed Session ran in the folder, which is what makes it a Project. A folder once
     // seen as one stays one, so only a folder not yet seen costs a listing.
     isProject(cwd: string): Effect.Effect<boolean, TranscriptError>;
+    // Whether Fern started the Session, which makes it a Hosted Session.
+    isHosted(id: string): Effect.Effect<boolean>;
   }
 >()("@repo/server/turn/HostedSessions") {
   static readonly layer = Layer.effect(
@@ -87,7 +89,18 @@ export class HostedSessions extends Context.Service<
         return (yield* Ref.get(projects)).has(cwd);
       });
 
-      return HostedSessions.of({ record, listed, isProject });
+      const hostedId = SqlSchema.findOneOption({
+        Request: Schema.String,
+        Result: Schema.Struct({ id: Schema.String }),
+        execute: (id) => sql`SELECT id FROM hosted_sessions WHERE id = ${id}`,
+      });
+      const isHosted = Effect.fn("HostedSessions.isHosted")(function* (
+        id: string,
+      ) {
+        return Option.isSome(yield* hostedId(id));
+      }, Effect.orDie);
+
+      return HostedSessions.of({ record, listed, isProject, isHosted });
     }),
   );
 }
