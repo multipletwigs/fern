@@ -1,12 +1,10 @@
 import type { Section } from "@repo/api";
-import { FileHunks } from "@repo/ui/FileHunks";
-import { HunkView } from "@repo/ui/HunkView";
 import { Markdown } from "@repo/ui/Markdown";
 import { ReviewCard } from "@repo/ui/ReviewCard";
 import { ItemVerdict } from "./ItemVerdict";
-import { byFile } from "./review";
+import { SectionFiles } from "./SectionFiles";
 
-// One Section: the change explained, the hunks it claims, and the developer's verdict.
+// One Section: the change explained, the files it claims hunks in, and the developer's verdict.
 export function WalkthroughSection({
   walkthroughId,
   section,
@@ -45,18 +43,7 @@ export function WalkthroughSection({
           {section.dropped}
         </p>
       )}
-      {byFile(section.hunks).map(([path, hunks]) => (
-        <FileHunks key={path} path={path}>
-          {hunks.map((hunk) => (
-            <HunkView
-              key={hunk.id}
-              header={hunk.header}
-              lines={hunk.lines}
-              omitted={hunk.omitted}
-            />
-          ))}
-        </FileHunks>
-      ))}
+      <SectionFiles hunks={section.hunks} />
     </ReviewCard>
   );
 }

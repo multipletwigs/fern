@@ -33,6 +33,7 @@ export function UnexplainedItem({
         label={hunk.notFromSession ? "Not from this Session" : undefined}
       >
         <HunkView
+          path={hunk.path}
           header={hunk.header}
           lines={hunk.lines}
           omitted={hunk.omitted}

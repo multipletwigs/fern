@@ -1,6 +1,6 @@
 import { assert, layer } from "@effect/vitest";
 import { FernApi, LiveRpcs } from "@repo/api";
-import { Effect, Layer, Stream } from "effect";
+import { DateTime, Duration, Effect, Layer, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { RpcTest } from "effect/rpc";
@@ -162,7 +162,25 @@ layer(
       assert.strictEqual(update.header.contextTokens, 1052);
       // No turn Fern ran has reported the window yet.
       assert.isUndefined(update.header.contextWindow);
-      assert.isDefined(update.header.cacheExpiresAt);
+      // The request wrote to the hour-long cache, so the cache lives an hour past it.
+      const cache = update.header.cache;
+      assert.isDefined(cache);
+      if (!cache) return;
+      assert.strictEqual(Duration.toMillis(cache.ttl), 3_600_000);
+      assert.strictEqual(
+        DateTime.toEpochMillis(cache.expiresAt) -
+          DateTime.toEpochMillis(cache.lastRequestAt),
+        3_600_000,
+      );
+      assert.deepStrictEqual(
+        [
+          cache.readTokens,
+          cache.writtenTokens,
+          cache.uncachedTokens,
+          cache.outputTokens,
+        ],
+        [1000, 50, 1, 1],
+      );
     }),
   );
 
