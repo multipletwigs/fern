@@ -49,7 +49,7 @@ A developer message mid-Session that corrects the agent's course. Opening tasks,
 _Avoid_: Correction, steer, intervention
 
 **Escape**:
-A Redirect that follows the agent claiming done with passing Checks; evidence that a Check is too loose.
+A Redirect that follows the agent claiming done with passing Checks; evidence that a Check is too loose. An Escape withdraws any Autonomy earned at the Phase boundaries it slipped past.
 _Avoid_: Miss, false pass
 
 **Trust score**:
@@ -57,7 +57,7 @@ A single quantified measure of how far a Setup can be relied on without Redirect
 _Avoid_: Confidence, health
 
 **Autonomy**:
-The set of Checkpoints Fern resolves on the developer's behalf, earned through the Trust score, so the developer's attention is spent only where it is needed.
+The set of Checkpoints Fern resolves on the developer's behalf, earned through the Trust score, so the developer's attention is spent only where it is needed. Ending a Grill and accepting Findings are never part of it.
 _Avoid_: Auto mode (Claude Code's permission mode), autopilot, self-driving
 
 **Milestone**:
@@ -65,7 +65,7 @@ A recognised point in a Setup's track record, often carrying an offer of more Au
 _Avoid_: Gem, badge, achievement, streak
 
 **Hosted Session**:
-A Session Fern drives itself, so its Redirects, Checkpoints, and Phases are recorded exactly.
+A Session Fern drives itself, in its own git worktree, so its Redirects, Checkpoints, and Phases are recorded exactly. Each Hosted Session carries one piece of work through the whole Flow.
 _Avoid_: Fern session, managed session
 
 **Subagent**:
@@ -98,12 +98,16 @@ _Avoid_: Diff, summary, changelog, report
 One semantic change within a Walkthrough, explained in prose and claiming the hunks that implement it, across as many files as it touches. It notes in one line any approach tried and dropped on the way. The developer approves or rejects each Section on its own.
 _Avoid_: Step (Phase avoids it), chunk, file group
 
+**Round**:
+A batch of questions the agent puts to the developer at once during Grill, each with the agent's recommended answer.
+_Avoid_: Questionnaire, form, survey
+
 **Decision**:
-A question settled with the developer, usually during Grill, recorded so later Sections can cite it. A Decision belongs to the Project, so a Section can cite one settled in an earlier Session.
+A question settled with the developer, usually an answered question from a Round, recorded so later Sections can cite it. A Decision belongs to the Project, so a Section can cite one settled in an earlier Session.
 _Avoid_: Answer, choice, requirement
 
 **Brief**:
-The outcomes a Session is meant to deliver, agreed with the developer when a Grill ends, each citing the Decisions behind it. Fern judges that a Session's work is complete against its Brief.
+The outcomes a Session is meant to deliver, each citing the Decisions behind it, written in the Spec Phase together with the tickets that implement it. The developer approves it before Implement begins, and Fern judges that a Session's work is complete against it.
 _Avoid_: Plan (Claude Code's plan mode), ticket, spec, task list
 
 **Reviewed**:
@@ -125,12 +129,16 @@ _Avoid_: Decline, revert
 ### Workflow
 
 **Flow**:
-The ordered Phases every Session in a repo follows, built by the developer and versioned as part of the Setup.
+The ordered Phases every Hosted Session follows: Grill, Spec, Implement, then Retro. It is versioned as part of the Setup.
 _Avoid_: Pipeline, workflow, process
 
 **Phase**:
-A named stage of a Flow, such as Grill, Execute, or Ship.
+A named stage of a Flow: Grill, Spec, Implement, or Retro. The agent decides when its Phase is done, and moving to the next Phase is a Checkpoint unless Autonomy covers it.
 _Avoid_: Step, stage, mode
+
+**Skip**:
+A Phase passed over with a one-line reason from the developer, shown on the Flow and kept in the Session's record.
+_Avoid_: Bypass, override
 
 **Verifier**:
 A Check that hands verification to a separate Worker agent and returns only a fixed-format Report, guarded by a Preflight and hard Stops.
@@ -142,6 +150,10 @@ Reserved for CI runs on the code host; never a Fern concept.
 **Timebox**:
 An optional duration on a Phase; overrunning it raises a Checkpoint, never stops the agent.
 _Avoid_: Timeout, deadline, budget
+
+**Preview**:
+The developer's app running from one Session's worktree, frontend and backend both, shown in Fern beside that Session.
+_Avoid_: Dev server, browser tab, sandbox
 
 **Checkpoint**:
 A point where a Session is waiting on the developer's decision. Checkpoints from all Sessions share one queue.
