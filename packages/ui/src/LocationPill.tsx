@@ -7,10 +7,10 @@ export function LocationPill({
   secondary?: string;
 }) {
   return (
-    <div className="flex h-9 items-center gap-1.5 truncate rounded-lg bg-white/[0.05] px-3 text-[13px]">
+    <div className="flex h-9 items-center gap-1.5 truncate rounded-lg bg-side-field px-3 text-[13px]">
       <span className="truncate text-ink/90">{primary}</span>
       {secondary && (
-        <span className="truncate font-mono text-[11px] text-faint">
+        <span className="truncate font-mono text-[11px] text-muted/80">
           {secondary}
         </span>
       )}

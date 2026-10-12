@@ -79,7 +79,7 @@ export function ProjectCode({
         }
       />
       <div className="flex min-h-0 flex-1">
-        <div className="w-64 shrink-0 border-r border-hairline">
+        <div className="w-64 shrink-0 bg-side-panel">
           <SessionFiles
             header={
               <WalkthroughList

@@ -13,8 +13,8 @@ export function FileGroup({
   children: ReactNode;
 }) {
   return (
-    <Collapsible.Root className="mt-2">
-      <Collapsible.Trigger className="group flex h-7 w-full items-center gap-1.5 rounded-lg px-2.5 text-left text-xs text-faint transition-colors hover:text-muted">
+    <Collapsible.Root className="mt-3">
+      <Collapsible.Trigger className="group side-heading w-full gap-1.5 text-left hover:text-ink/85">
         <CaretRightIcon
           weight="bold"
           className="size-3 shrink-0 transition-transform group-data-[panel-open]:rotate-90"
@@ -22,7 +22,7 @@ export function FileGroup({
         {label}
         <span className="font-mono text-[11px] tabular-nums">{count}</span>
       </Collapsible.Trigger>
-      <Collapsible.Panel className="space-y-px">{children}</Collapsible.Panel>
+      <Collapsible.Panel className="mt-0.5 space-y-0.5">{children}</Collapsible.Panel>
     </Collapsible.Root>
   );
 }

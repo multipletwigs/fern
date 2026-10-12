@@ -1,5 +1,3 @@
-import { clsx } from "clsx";
-
 // A file Claude touched in this Session: its name, its folder, and for a changed file the lines
 // added and removed. Lifted like a sidebar tab while it's the file on screen.
 export function FileRow({
@@ -25,15 +23,11 @@ export function FileRow({
       onClick={onSelect}
       title={path}
       aria-current={active ? "true" : undefined}
-      className={clsx(
-        "flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors",
-        active
-          ? "bg-white/[0.09] text-ink shadow-[0_1px_2px_rgb(0_0_0/0.5),inset_0_1px_0_rgb(255_255_255/0.06)]"
-          : "text-ink/65 hover:bg-white/[0.04] hover:text-ink",
-      )}
+      data-active={active || undefined}
+      className="side-row gap-2 px-2.5 text-left"
     >
       <span className="shrink-0 truncate">{name}</span>
-      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-faint">
+      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted/70">
         {folder}
       </span>
       <span className="flex shrink-0 gap-1.5 font-mono text-[11px] tabular-nums">

@@ -21,6 +21,24 @@
   --color-mint: #7ee2a8;
   --color-danger: #ff7a7a;
 
+  /* Arc-style window: the sidebar sits on the frame, a lighter, faintly cool grey, and the
+     workspace is a darker card floating on it. Side lists anywhere (the sidebar, the code panel's
+     files) share one row language, `side-row` below: no borders, a soft fill on hover and a
+     brighter lifted pill when selected. */
+  --color-frame: #1b1c20;
+  --color-panel: #0a0a0a;
+  /* A side column inside the card, a shade lighter than the card itself. */
+  --color-side-panel: #0f1012;
+  --color-side-hover: rgb(255 255 255 / 0.04);
+  /* A resting fill for fields and buttons in a side list, such as the address pill. */
+  --color-side-field: rgb(255 255 255 / 0.06);
+  --color-side-active: rgb(255 255 255 / 0.12);
+  --shadow-panel:
+    0 0 0 1px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3),
+    0 10px 30px rgb(0 0 0 / 0.3);
+  --shadow-side-active:
+    0 1px 2px rgb(0 0 0 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.07);
+
   --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-pixel: "Geist Pixel Square", "Geist Mono", ui-monospace, monospace;
@@ -60,6 +78,42 @@
   font-display: swap;
 }
 
+/* A row in a side list. Rows set their own padding and gap; `data-active` lifts the selected one. */
+@utility side-row {
+  display: flex;
+  height: --spacing(8);
+  width: 100%;
+  align-items: center;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  color: --alpha(var(--color-ink) / 70%);
+  transition-property: background-color, color, box-shadow;
+  transition-duration: 150ms;
+  &:hover {
+    background-color: var(--color-side-hover);
+    color: var(--color-ink);
+  }
+  &[data-active] {
+    background-color: var(--color-side-active);
+    color: var(--color-ink);
+    box-shadow: var(--shadow-side-active);
+  }
+}
+
+/* A side list's quiet section heading: small, muted, brightening when its group is hovered. */
+@utility side-heading {
+  display: flex;
+  height: --spacing(7);
+  align-items: center;
+  gap: --spacing(2);
+  padding-inline: --spacing(2.5);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  transition-property: color;
+  transition-duration: 150ms;
+}
+
 /* Tokens Streamdown's components read (shadcn naming). */
 :root {
   --background: #050505;
@@ -81,7 +135,10 @@ body,
 #root {
   height: 100%;
   overflow: hidden;
-  background: var(--color-canvas);
+  /* The frame shows around the workspace card and behind the sidebar, lit faintly from the top. */
+  background:
+    linear-gradient(rgb(255 255 255 / 0.025), transparent 40%),
+    var(--color-frame);
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;

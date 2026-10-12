@@ -17,7 +17,7 @@ export function ArchiveButton({
       aria-label={`Archive ${name}`}
       disabled={disabled}
       onClick={onClick}
-      className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-white/[0.06] hover:text-ink disabled:pointer-events-none disabled:opacity-40"
+      className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-side-field hover:text-ink disabled:pointer-events-none disabled:opacity-40"
     >
       <ArchiveIcon className="size-3.5" />
     </button>

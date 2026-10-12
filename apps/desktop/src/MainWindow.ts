@@ -9,11 +9,11 @@ const openWindow = Effect.fn("MainWindow.open")(function* (url: string) {
         new BrowserWindow({
           width: 1200,
           height: 800,
-          // One continuous dark surface: no title bar, traffic lights inset into the canvas, and a
-          // background that matches the app so nothing flashes white while it loads.
+          // No title bar, traffic lights inset into the sidebar, and a background that matches the
+          // app's frame (--color-frame) so nothing flashes white while it loads.
           titleBarStyle: "hiddenInset",
           trafficLightPosition: { x: 18, y: 16 },
-          backgroundColor: "#050505",
+          backgroundColor: "#1b1c20",
           webPreferences: { contextIsolation: true, sandbox: true },
         }),
     ),

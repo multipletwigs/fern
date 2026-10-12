@@ -36,13 +36,8 @@ export function SessionRow({
   return (
     <div
       onPointerEnter={onPreload}
-      className={clsx(
-        "group flex h-8 w-full items-center rounded-lg pr-1 text-[13px] transition-colors",
-        active
-          ? "bg-white/[0.09] text-ink shadow-[0_1px_2px_rgb(0_0_0/0.5),inset_0_1px_0_rgb(255_255_255/0.06)]"
-          : "text-ink/65 hover:bg-white/[0.04] hover:text-ink",
-        !action && "pr-2.5",
-      )}
+      data-active={active || undefined}
+      className={clsx("group side-row pr-1", !action && "pr-2.5")}
     >
       <button
         type="button"
@@ -53,7 +48,7 @@ export function SessionRow({
         <span className="min-w-0 flex-1 truncate">{title}</span>
         {badge}
         {phase && (
-          <span className="shrink-0 font-mono text-[10px] tracking-wide text-faint uppercase">
+          <span className="shrink-0 font-mono text-[10px] tracking-wide text-muted/80 uppercase">
             {phase}
           </span>
         )}
@@ -67,7 +62,7 @@ export function SessionRow({
         {live ? (
           <Loader label="Live" className="shrink-0 text-base text-ink" />
         ) : (
-          <span className="hidden shrink-0 font-mono text-[11px] text-faint tabular-nums group-hover:block">
+          <span className="hidden shrink-0 font-mono text-[11px] text-muted/80 tabular-nums group-hover:block">
             {lastActive}
           </span>
         )}

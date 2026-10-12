@@ -40,7 +40,7 @@ export function SubagentView({
     [sessionId, view, onOpenSubagent],
   );
   return (
-    <div className="absolute inset-0 z-[1] flex flex-col bg-[#0a0a0a]">
+    <div className="absolute inset-0 z-[1] flex flex-col bg-panel">
       {context?.view.header ? (
         <Virtuoso
           className="flex-1"

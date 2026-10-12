@@ -102,7 +102,7 @@ export function Sidebar() {
             <NewSessionButton
               name={projectName(activeProject.path)}
               onClick={() => setNew(activeProject.path)}
-              className="size-9 rounded-lg bg-white/[0.05]"
+              className="size-9 rounded-lg bg-side-field"
             />
           </div>
         )

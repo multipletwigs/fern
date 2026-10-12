@@ -21,18 +21,18 @@ export function CheckpointQueue({
       : [],
   );
   return (
-    <section aria-label="Checkpoints" className="mb-2">
-      <p className="flex h-8 items-center gap-2 px-2.5 font-mono text-[11px] tracking-wide text-faint uppercase">
+    <section aria-label="Checkpoints" className="mb-3">
+      <p className="side-heading">
         <span className="size-1.5 rounded-full bg-amber" />
         Waiting on you · {checkpoints.value.length}
       </p>
-      <ul className="space-y-px">
+      <ul className="space-y-0.5">
         {checkpoints.value.map((checkpoint) => (
           <li key={checkpoint.id}>
             <button
               type="button"
               onClick={() => onSelect(checkpoint.sessionId)}
-              className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-ink/75 transition-colors hover:bg-white/[0.04] hover:text-ink"
+              className="side-row gap-2.5 px-2.5 text-left"
             >
               <span className="min-w-0 flex-1 truncate">
                 {titles.get(checkpoint.sessionId) ?? "Session"}
