@@ -27,7 +27,8 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 4. Use **implementer subagents** to implement each ticket, each in its own worktree on its own branch. Each implementer subagent:
    - confirms its worktree is based on the integration branch before starting, and resets onto it if not;
    - calls the Skill tool with `tdd` to build the ticket;
-   - merges the integration branch tip into its own branch before reporting done
+   - merges the integration branch tip into its own branch before reporting done;
+   - when it notices a bug outside its ticket, reports the exact steps, the Session or fixture used, the window size, and a screenshot path, so it can be reproduced
 
 5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent**.
 

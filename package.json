@@ -2,17 +2,20 @@
   "name": "fern",
   "private": true,
   "scripts": {
-    "prepare": "effect-tsgo patch --typescript --oxlint",
+    "prepare": "effect-tsgo patch --typescript --oxlint && husky",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "oxlint --deny-warnings",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
     "package": "turbo run package --filter=desktop",
-    "test": "turbo run test"
+    "test": "turbo run test",
+    "verify:up": "node scripts/verify/up.ts",
+    "verify:down": "node scripts/verify/down.ts"
   },
   "devDependencies": {
     "@effect/tsgo": "0.51.1",
+    "husky": "^9.1.7",
     "oxlint": "1.87.0",
     "oxlint-tsgolint": "7.0.2003",
     "prettier": "3.9.6",

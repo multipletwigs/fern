@@ -20,6 +20,8 @@ Application logic is written with [Effect v4](https://effect.website/docs/v4/get
 
 `pnpm lint` runs oxlint with the Effect rules from `@effect/tsgo`; `pnpm install` patches TypeScript and oxlint for them via `prepare`.
 
+Reading Claude Code's transcript or Subagent files: `packages/server/docs/claude-code-files.md`.
+
 ## Agent skills
 
 ### Issue tracker
