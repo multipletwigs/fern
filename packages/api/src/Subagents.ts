@@ -24,10 +24,17 @@ export class SubagentSummary extends Schema.Class<SubagentSummary>(
   "SubagentSummary",
 )(subagentFields) {}
 
-// The top of a Subagent's view.
+// The top of a Subagent's view, with what its own transcript says of its work.
 export class SubagentHeader extends Schema.Class<SubagentHeader>(
   "SubagentHeader",
-)(subagentFields) {}
+)({
+  ...subagentFields,
+  // From its first message to its last.
+  durationMs: Schema.Finite,
+  toolCalls: Schema.Finite,
+  // Its last request's usage: what it read, cached or not, and what it wrote.
+  tokens: Schema.Finite,
+}) {}
 
 // One live update of a Subagent's view: its header and Assignment, then its work as the full item
 // order plus only the items that are new or changed since the previous update on the same stream,
@@ -40,6 +47,8 @@ export class SubagentUpdate extends Schema.Class<SubagentUpdate>(
   assignment: Schema.String,
   order: Schema.Array(Schema.String),
   upserts: Schema.Array(TranscriptItem),
+  // Its final answer, once it has one.
+  handBack: Schema.optional(Schema.String),
 }) {}
 
 // The Session has no Subagent by this id.

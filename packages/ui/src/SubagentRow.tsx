@@ -3,8 +3,8 @@ import { clsx } from "clsx";
 import { Loader } from "./Loader";
 
 // A Subagent the agent delegated to: its type, what it was asked to do, and where it stands. A
-// running one trails a loader; a failed one shows its type in red. Given `onOpen`, the row is a
-// button that opens the Subagent.
+// running one trails a loader, a finished one how it ended; a failed one shows its type in red.
+// Given `onOpen`, the row is a button that opens the Subagent.
 export function SubagentRow({
   agentType,
   description,
@@ -13,7 +13,7 @@ export function SubagentRow({
 }: {
   agentType: string;
   description: string;
-  status: "running" | "done" | "failed";
+  status: "running" | "done" | "failed" | "stopped";
   onOpen?: () => void;
 }) {
   const content = (
@@ -37,7 +37,7 @@ export function SubagentRow({
             status === "failed" ? "text-danger" : "text-faint",
           )}
         >
-          {status === "failed" ? "failed" : "done"}
+          {status}
         </span>
       )}
     </>

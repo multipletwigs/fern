@@ -170,6 +170,7 @@ export interface SubagentView {
   readonly header: SubagentHeader | undefined;
   readonly assignment: string;
   readonly items: ReadonlyArray<TranscriptItem>;
+  readonly handBack: string | undefined;
 }
 
 // The key of one Subagent's view: its Session and its agent id.
@@ -190,11 +191,17 @@ export const subagentAtom = Atom.family((key: string) => {
       ).pipe(
         resubscribe(Schedule.spaced("1 second")),
         Stream.scan<SubagentView, SubagentUpdate>(
-          () => ({ header: undefined, assignment: "", items: [] }),
+          () => ({
+            header: undefined,
+            assignment: "",
+            items: [],
+            handBack: undefined,
+          }),
           (state, update) => ({
             header: update.header,
             assignment: update.assignment,
             items: applyItems(state.items, update),
+            handBack: update.handBack,
           }),
         ),
       ),

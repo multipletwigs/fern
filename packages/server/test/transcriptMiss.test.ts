@@ -6,6 +6,7 @@ import type { HostedTurn, TranscriptUpdate } from "@repo/api";
 import { DateTime, Effect, Fiber, Layer, Stream } from "effect";
 import { vi } from "vitest";
 import { SubagentFiles } from "../src/subagent/SubagentFiles";
+import { Subagents } from "../src/subagent/Subagents";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { HostedSessions } from "../src/turn/HostedSessions";
 import { Turns } from "../src/turn/Turns";
@@ -40,7 +41,17 @@ const TestTranscripts = Transcripts.layer.pipe(
       SubagentFiles.of({
         folder: () => Effect.succeedNone,
         metadata: () => Effect.succeed([]),
+        writtenAt: () => Effect.succeed(new Map()),
         stamp: () => Effect.succeed(""),
+      }),
+    ),
+    // The Session has no Subagents.
+    Layer.succeed(
+      Subagents,
+      Subagents.of({
+        list: () => Effect.die("unused"),
+        live: () => Effect.die("unused"),
+        settleRows: (_info, _messages, items) => Effect.succeed(items),
       }),
     ),
     Layer.succeed(

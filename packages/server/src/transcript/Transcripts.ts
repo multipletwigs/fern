@@ -14,6 +14,7 @@ import {
   TranscriptUpdate,
 } from "@repo/api";
 import {
+  Clock,
   Context,
   DateTime,
   Effect,
@@ -24,7 +25,8 @@ import {
   Stream,
 } from "effect";
 import { sdk } from "../agentSdk";
-import { SubagentFiles } from "../subagent/SubagentFiles";
+import { isJustWritten, SubagentFiles } from "../subagent/SubagentFiles";
+import { Subagents } from "../subagent/Subagents";
 import { HostedSessions, type HostedWorktree } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { diffItems, type Sent } from "./diff";
@@ -115,6 +117,7 @@ export class Transcripts extends Context.Service<
       const turns = yield* Turns;
       const sessions = yield* HostedSessions;
       const subagentFiles = yield* SubagentFiles;
+      const subagents = yield* Subagents;
       return Transcripts.of({
         current: sdk("listSessions", () => listSessions({ limit: 1 })).pipe(
           Effect.map(([newest]) => newest),
@@ -162,6 +165,7 @@ export class Transcripts extends Context.Service<
               latest: info,
               hostedTurn: turns.turn(id),
               subagents: subagentFiles.stamp(id),
+              now: Clock.currentTimeMillis,
             }).pipe(
               // A poll that misses the file (the SDK returns undefined on any read error) skips a
               // beat. Ending the stream would leave the page on its last header.
@@ -172,29 +176,34 @@ export class Transcripts extends Context.Service<
           ).pipe(
             Stream.filter(Option.isSome),
             Stream.map((polled) => polled.value),
-            // Re-read when the transcript or one of its Subagents' files changes, or a turn Fern
-            // runs starts or ends.
+            // Re-read when the transcript or one of its Subagents' files changes or goes quiet, or
+            // a turn Fern runs starts or ends: each can change where a Subagent stands.
             Stream.changesWith(
               (a, b) =>
                 a.latest.lastModified === b.latest.lastModified &&
                 a.latest.fileSize === b.latest.fileSize &&
+                isJustWritten(a.latest.lastModified, a.now) ===
+                  isJustWritten(b.latest.lastModified, b.now) &&
                 a.hostedTurn === b.hostedTurn &&
                 a.subagents === b.subagents,
             ),
-            Stream.mapEffect(({ latest, hostedTurn }) =>
-              Effect.all([
-                sdk("getSessionMessages", () => getSessionMessages(id)),
-                turns.contextWindow(id),
-                subagentFiles.metadata(id),
-              ]).pipe(
-                Effect.map(([messages, contextWindow, subagents]) =>
-                  buildView(latest, messages, {
-                    hostedTurn,
-                    contextWindow,
-                    subagents,
-                  }),
-                ),
-              ),
+            Stream.mapEffect(
+              Effect.fnUntraced(function* ({ latest, hostedTurn }) {
+                const [messages, contextWindow, metadata] = yield* Effect.all([
+                  sdk("getSessionMessages", () => getSessionMessages(id)),
+                  turns.contextWindow(id),
+                  subagentFiles.metadata(id),
+                ]);
+                const { header, items } = buildView(latest, messages, {
+                  hostedTurn,
+                  contextWindow,
+                  subagents: metadata,
+                });
+                return {
+                  header,
+                  items: yield* subagents.settleRows(latest, messages, items),
+                };
+              }),
             ),
             // Only send items that changed since the previous update on this stream.
             Stream.mapAccum(

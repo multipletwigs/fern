@@ -188,8 +188,14 @@ export const ToolCall = Schema.TaggedStruct("ToolCall", {
   questions: Schema.optional(Schema.Array(Question)),
 });
 
-// Where a Subagent stands: still working, handed back, or ended in an error.
-export const SubagentStatus = Schema.Literals(["running", "done", "failed"]);
+// Where a Subagent stands: still working, handed back, ended in an error, or ended without a
+// Hand-back, such as when it was cut off.
+export const SubagentStatus = Schema.Literals([
+  "running",
+  "done",
+  "failed",
+  "stopped",
+]);
 export type SubagentStatus = typeof SubagentStatus.Type;
 
 // An Agent call: the Subagent it started, in place of a ToolCall. Its type and description come

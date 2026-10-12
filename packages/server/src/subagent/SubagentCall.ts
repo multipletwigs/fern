@@ -34,11 +34,18 @@ export interface Endings {
 export const readEnding = (text: string, endings: Endings) => {
   const notification = tag(text, "task-notification");
   const call = notification && tag(notification, "tool-use-id");
-  if (notification && call)
+  if (notification && call) {
+    const status = tag(notification, "status");
     endings.byCall.set(
       call,
-      tag(notification, "status") === "completed" ? "done" : "failed",
+      status === "completed"
+        ? "done"
+        : // Stopped by the developer, which Claude Code also calls killed.
+          status === "killed" || status === "stopped"
+          ? "stopped"
+          : "failed",
     );
+  }
   const from = /<agent-message from="([^"]+)">/.exec(text)?.[1];
   if (from) endings.byAgent.set(from, "done");
 };

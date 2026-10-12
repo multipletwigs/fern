@@ -1,4 +1,6 @@
+import { LIVE_WINDOW_MS } from "@repo/api";
 import {
+  Clock,
   Config,
   Context,
   Effect,
@@ -46,6 +48,11 @@ const decodeMetadata = Schema.decodeUnknownOption(
 );
 
 const META = /^agent-(.+)\.meta\.json$/;
+const TRANSCRIPT = /^agent-(.+)\.jsonl$/;
+
+// Whether a transcript was written so lately that whatever writes it may still be at work.
+export const isJustWritten = (mtime: number | undefined, nowMs: number) =>
+  mtime !== undefined && nowMs - mtime < LIVE_WINDOW_MS;
 
 export class SubagentFiles extends Context.Service<
   SubagentFiles,
@@ -54,7 +61,10 @@ export class SubagentFiles extends Context.Service<
     folder(sessionId: string): Effect.Effect<Option.Option<string>>;
     // The metadata of each of the Session's Subagents that has it, nested ones included.
     metadata(sessionId: string): Effect.Effect<ReadonlyArray<SubagentMetadata>>;
-    // A key that changes whenever one of the Session's Subagent files is written, added or removed.
+    // When each of the Session's Subagent transcripts was last written, in epoch millis, by agent id.
+    writtenAt(sessionId: string): Effect.Effect<ReadonlyMap<string, number>>;
+    // A key that changes whenever one of the Session's Subagent files is written, added or removed,
+    // or a transcript stops counting as just written.
     stamp(sessionId: string): Effect.Effect<string>;
   }
 >()("@repo/server/subagent/SubagentFiles") {
@@ -120,26 +130,55 @@ export class SubagentFiles extends Context.Service<
         return read.flatMap((m) => (Option.isSome(m) ? [m.value] : []));
       });
 
-      const stamp = Effect.fn("SubagentFiles.stamp")(
+      // Each of the Session's Subagent files, with when it was last written and its size.
+      const files = Effect.fn("SubagentFiles.files")(
         function* (sessionId: string) {
           const dir = yield* folder(sessionId);
-          if (Option.isNone(dir)) return "";
+          if (Option.isNone(dir)) return [];
           const names = yield* fs.readDirectory(dir.value);
-          const stats = yield* Effect.forEach(names.toSorted(), (name) =>
+          return yield* Effect.forEach(names.toSorted(), (name) =>
             fs.stat(path.join(dir.value, name)).pipe(
-              Effect.map(
-                (info) =>
-                  `${name}:${Option.getOrUndefined(info.mtime)?.getTime()}:${info.size}`,
-              ),
-              Effect.orElseSucceed(() => name),
+              Effect.map((info) => ({
+                name,
+                mtime: Option.getOrUndefined(info.mtime)?.getTime(),
+                size: info.size,
+              })),
+              Effect.orElseSucceed(() => ({
+                name,
+                mtime: undefined,
+                size: undefined,
+              })),
             ),
           );
-          return stats.join("\n");
         },
-        Effect.orElseSucceed(() => ""),
+        Effect.orElseSucceed(() => []),
       );
 
-      return SubagentFiles.of({ folder, metadata, stamp });
+      const writtenAt = Effect.fn("SubagentFiles.writtenAt")(function* (
+        sessionId: string,
+      ) {
+        const written = new Map<string, number>();
+        for (const { name, mtime } of yield* files(sessionId)) {
+          const agentId = TRANSCRIPT.exec(name)?.[1];
+          if (agentId !== undefined && mtime !== undefined)
+            written.set(agentId, mtime);
+        }
+        return written;
+      });
+
+      const stamp = Effect.fn("SubagentFiles.stamp")(function* (
+        sessionId: string,
+      ) {
+        const now = yield* Clock.currentTimeMillis;
+        return (yield* files(sessionId))
+          .map(
+            ({ name, mtime, size }) =>
+              `${name}:${mtime}:${size}:${isJustWritten(mtime, now)}`,
+          )
+          .join("\n");
+      });
+
+      return SubagentFiles.of({ folder, metadata, writtenAt, stamp });
     }),
   );
 }

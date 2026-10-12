@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AssignmentCard } from "@repo/ui/AssignmentCard";
 import { Empty } from "@repo/ui/Empty";
+import { HandBackCard } from "@repo/ui/HandBackCard";
+import { SubagentHeading } from "@repo/ui/SubagentHeading";
 import { ThinkingLine } from "@repo/ui/ThinkingLine";
 import { TranscriptRow } from "@repo/ui/TranscriptRow";
 import { AsyncResult } from "effect/reactivity";
@@ -17,8 +19,9 @@ interface ListContext {
   readonly onOpenSubagent: (agentId: string) => void;
 }
 
-// A Subagent's tab, in place of the chat: its Assignment, then its work drawn as the chat draws
-// it, kept current while it runs. Read-only: a Subagent can't be messaged.
+// A Subagent's tab, in place of the chat: its header and Assignment, then its work drawn as the
+// chat draws it, kept current while it runs, then its Hand-back. Read-only: a Subagent can't be
+// messaged.
 export function SubagentView({
   sessionId,
   agentId,
@@ -57,20 +60,32 @@ export function SubagentView({
 }
 
 const listComponents: Components<Row, ListContext> = {
-  Header: ({ context }) => (
+  Header: ({ context: { view } }) => (
     <TranscriptRow id="assignment">
-      <AssignmentCard
-        agentType={context.view.header?.agentType ?? "Subagent"}
-        description={context.view.header?.description ?? ""}
-      >
-        {context.view.assignment}
-      </AssignmentCard>
+      {view.header && (
+        <SubagentHeading
+          agentType={view.header.agentType}
+          description={view.header.description}
+          status={view.header.status}
+          durationMs={view.header.durationMs}
+          toolCalls={view.header.toolCalls}
+          tokens={view.header.tokens}
+        />
+      )}
+      <AssignmentCard>{view.assignment}</AssignmentCard>
     </TranscriptRow>
   ),
-  Footer: ({ context }) => (
-    <div className="h-14">
-      {context.view.header?.status === "running" && <ThinkingLine />}
-    </div>
+  Footer: ({ context: { view } }) => (
+    <>
+      {view.handBack !== undefined && (
+        <TranscriptRow id="hand-back">
+          <HandBackCard>{view.handBack}</HandBackCard>
+        </TranscriptRow>
+      )}
+      <div className="h-14">
+        {view.header?.status === "running" && <ThinkingLine />}
+      </div>
+    </>
   ),
 };
 
