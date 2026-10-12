@@ -54,6 +54,14 @@ export const SpecIssues = Schema.Struct({
   tickets: Schema.Array(Issue),
 });
 export type SpecIssues = typeof SpecIssues.Type;
+
+// The Session's Walkthrough an Implement Checkpoint links to.
+export const CheckpointWalkthrough = Schema.Struct({
+  id: Schema.String,
+  // 1 for the Session's first Walkthrough.
+  number: Schema.Int,
+});
+export type CheckpointWalkthrough = typeof CheckpointWalkthrough.Type;
 // The developer's call on a Finding. Declining may carry a note.
 export const FindingVerdict = Schema.Struct({
   kind: Schema.Literals(["accepted", "declined"]),
@@ -84,6 +92,8 @@ export class Checkpoint extends Schema.Class<Checkpoint>("Checkpoint")({
   summary: Schema.String,
   // At the end of Spec, the Brief and its tickets the developer approves.
   spec: Schema.optional(SpecIssues),
+  // At the end of Implement, the Session's Walkthrough, written before the Checkpoint is raised.
+  walkthrough: Schema.optional(CheckpointWalkthrough),
   status: CheckpointStatus,
   // The developer's note on a declined Checkpoint, sent back to the Session as a Redirect.
   note: Schema.optional(Schema.String),

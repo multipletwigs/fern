@@ -139,11 +139,12 @@ export const handlersWith = (
   Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
     Layer.provide([
       Transcripts.layer,
-      Walkthroughs.layer,
       WorktreeCleanup.layer,
       Flows.layer,
       Rounds.layer,
     ]),
+    // Flows writes the Walkthrough the end of Implement waits on.
+    Layer.provideMerge(Walkthroughs.layer),
     Layer.provide([
       Turns.layer,
       Workspace.layer,

@@ -9,6 +9,7 @@ import {
   declineCheckpointAtom,
   flowAtom,
 } from "./atoms";
+import { CheckpointWalkthrough } from "./CheckpointWalkthrough";
 import { CHECKPOINT_QUESTIONS, PHASE_TITLES } from "./phases";
 import { RetroFindings } from "./RetroFindings";
 
@@ -59,6 +60,12 @@ export function SessionCheckpoint({ sessionId }: { sessionId: string }) {
         <SpecIssues
           brief={checkpoint.spec.brief}
           tickets={checkpoint.spec.tickets}
+        />
+      )}
+      {checkpoint.walkthrough && (
+        <CheckpointWalkthrough
+          sessionId={sessionId}
+          walkthrough={checkpoint.walkthrough}
         />
       )}
     </CheckpointCard>
