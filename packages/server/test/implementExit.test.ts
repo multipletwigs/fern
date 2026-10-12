@@ -1,6 +1,14 @@
 import { assert, it as test, layer } from "@effect/vitest";
 import { FernApi, type Flow, LiveRpcs, WalkthroughError } from "@repo/api";
-import { Deferred, Effect, Layer, Option, Schedule, Stream } from "effect";
+import {
+  Deferred,
+  type Duration,
+  Effect,
+  Layer,
+  Option,
+  Schedule,
+  Stream,
+} from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { RpcTest } from "effect/rpc";
@@ -10,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vitest";
 import { DatabaseLive } from "../src/database/Database";
+import { IssueTrackerTimeout } from "../src/flow/Flows";
 import { handlersWith } from "../src/http";
 import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
 import {
@@ -93,11 +102,19 @@ const closeTickets = (...open: Array<number>) => {
   );
 };
 closeTickets();
+// While `hanging`, the tracker never answers; `asked` counts the questions it left hanging.
+let hanging = false;
+let asked = 0;
 const Issues = Layer.succeed(
   IssueTracker,
   IssueTracker.of({
     issue: (_cwd, number) =>
-      Effect.sync(() => Option.fromNullishOr(issues.get(number))),
+      Effect.suspend(() => {
+        if (!hanging)
+          return Effect.succeed(Option.fromNullishOr(issues.get(number)));
+        asked++;
+        return Effect.never;
+      }),
   }),
 );
 
@@ -254,23 +271,27 @@ const makeClient = HttpApiTest.groups(FernApi, [
 ]);
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
-// Fern's API on a database file, as the app runs it.
-const server = (database: string) =>
+// Fern's API on a database file, as the app runs it, waiting on the issue tracker as long as
+// `patience`, if given.
+const server = (database: string, patience?: Duration.Input) =>
   Layer.mergeAll(
     handlersWith(Writer, Issues).pipe(
       Layer.provide([
         DatabaseLive(database),
         Layer.succeed(WorktreesDir, { dir: dataDir }),
+        ...(patience === undefined
+          ? []
+          : [Layer.succeed(IssueTrackerTimeout, patience)]),
       ]),
     ),
     HttpServer.layerServices,
   );
 // Runs the effect against its own server on the database, shut down after: one run of Fern.
 const runOn =
-  (database: string) =>
+  (database: string, patience?: Duration.Input) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
-      const context = yield* Layer.build(server(database));
+      const context = yield* Layer.build(server(database, patience));
       return yield* effect.pipe(Effect.provideContext(context));
     }).pipe(Effect.scoped);
 const freshDatabase = () =>
@@ -599,4 +620,41 @@ test.live(
         number: written?.number ?? 0,
       });
     }),
+);
+
+test.live(
+  "while the issue tracker keeps one Session waiting, other Sessions' Checkpoints are still decided, and the agent hears once Fern gives up",
+  () =>
+    Effect.gen(function* () {
+      const root = project();
+      const client = yield* makeClient;
+      const other = yield* client.sessions.start({
+        payload: { root, message: { text: "Rename the settings page" } },
+      });
+      const waiting = yield* flowOf(
+        other.id,
+        (f) => f?.checkpoint?.phase === "grill",
+      );
+
+      // This Session reports Spec done, and the tracker never answers Fern's check.
+      hanging = true;
+      const { id } = yield* client.sessions.start({
+        payload: { root, message: { text: "Add a dark mode toggle" } },
+      });
+      yield* approveAt(id, "grill");
+      yield* eventually(() => (asked > 0 ? true : undefined));
+
+      yield* client.flows
+        .approve({ params: { id: waiting?.checkpoint?.id ?? "" } })
+        .pipe(Effect.timeout("300 millis"));
+
+      const answer = yield* answerTo(id, "spec");
+      assert.isTrue(answer.isError);
+      assert.include(answer.text, "didn't answer");
+      const flow = yield* flowOf(id, () => true);
+      assert.isUndefined(flow?.checkpoint);
+    }).pipe(
+      runOn(freshDatabase(), "1 second"),
+      Effect.ensuring(Effect.sync(() => (hanging = false))),
+    ),
 );

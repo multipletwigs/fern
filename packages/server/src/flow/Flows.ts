@@ -26,6 +26,7 @@ import {
 import {
   Clock,
   Context,
+  Duration,
   Effect,
   FiberMap,
   Layer,
@@ -38,12 +39,22 @@ import {
 } from "effect";
 import { SqlClient, type SqlError, SqlSchema } from "effect/sql";
 import { z } from "zod";
-import { IssueTracker, type TrackedIssue } from "../issue/IssueTracker";
+import {
+  IssueTracker,
+  IssueTrackerError,
+  type TrackedIssue,
+} from "../issue/IssueTracker";
 import { Autonomy } from "../autonomy/Autonomy";
 import { FernTools } from "../turn/FernTools";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { Walkthroughs } from "../walkthrough/Walkthroughs";
+
+// How long Fern waits on the issue tracker when it checks a Phase's exit criteria.
+export const IssueTrackerTimeout = Context.Reference<Duration.Input>(
+  "@repo/server/flow/IssueTrackerTimeout",
+  { defaultValue: () => "15 seconds" },
+);
 
 const TITLES: Record<Phase, string> = {
   grill: "Grill",
@@ -332,6 +343,20 @@ export class Flows extends Context.Service<
       const tools = yield* FernTools;
       const issues = yield* IssueTracker;
       const autonomy = yield* Autonomy;
+      const patience = Duration.fromInputUnsafe(yield* IssueTrackerTimeout);
+      // An issue on the tracker, unless it keeps Fern waiting too long.
+      const lookUp = (cwd: string, number: number) =>
+        issues.issue(cwd, number).pipe(
+          Effect.timeoutOrElse({
+            duration: patience,
+            orElse: () =>
+              Effect.fail(
+                new IssueTrackerError({
+                  message: `it didn't answer within ${Duration.format(patience)}`,
+                }),
+              ),
+          }),
+        );
       // Bumped after every write, so open streams reload.
       const version = yield* SubscriptionRef.make(0);
       const bump = SubscriptionRef.update(version, (n) => n + 1);
@@ -490,7 +515,7 @@ export class Flows extends Context.Service<
             } satisfies Answer;
           const cwd = yield* cwdOf(sessionId);
           const look = (number: number) =>
-            issues.issue(cwd, number).pipe(Effect.map(Option.getOrUndefined));
+            lookUp(cwd, number).pipe(Effect.map(Option.getOrUndefined));
           const [brief, tickets] = yield* Effect.all(
             [
               look(report.brief),
@@ -543,7 +568,7 @@ export class Flows extends Context.Service<
           const unclosed = yield* Effect.forEach(
             spec.value.spec.tickets,
             (ticket) =>
-              issues.issue(cwd, ticket.number).pipe(
+              lookUp(cwd, ticket.number).pipe(
                 Effect.map(
                   Option.match({
                     onNone: () => [
@@ -793,7 +818,39 @@ export class Flows extends Context.Service<
               );
         });
 
-      // The agent says its Phase is done: raise a Checkpoint for the developer.
+      // Why Fern can't take a report that the Phase is done right now, if it can't.
+      const refusal = (sessionId: string, phase: Phase) =>
+        Effect.gen(function* () {
+          const flow = yield* load(sessionId);
+          if (flow === null)
+            return {
+              text: "This Session doesn't follow Fern's Flow.",
+              isError: true,
+            } satisfies Answer;
+          const now = current(flow.phases);
+          if (now === undefined)
+            return {
+              text: "The Flow is already over.",
+              isError: true,
+            } satisfies Answer;
+          if (now !== phase)
+            return {
+              text: `The current Phase is ${TITLES[now]}, not ${TITLES[phase]}. Report ${TITLES[now]} done when it is.`,
+              isError: true,
+            } satisfies Answer;
+          if (flow.checkpoint)
+            return {
+              text: `The developer already has a Checkpoint for the end of ${TITLES[now]}. End your turn; their decision arrives as your next message.`,
+              isError: false,
+            } satisfies Answer;
+          if (Option.isSome(yield* heldOf({ sessionId, phase }).pipe(Effect.orDie)))
+            return HOLDING;
+          return undefined;
+        });
+
+      // The agent says its Phase is done: raise a Checkpoint for the developer. The exit criteria
+      // are checked first, outside the lock, since the issue tracker and the Walkthrough take a
+      // while; the Checkpoint is then raised under it, if the report still stands.
       const phaseDone = (
         sessionId: string,
         report: {
@@ -804,41 +861,29 @@ export class Flows extends Context.Service<
         },
       ) =>
         Effect.gen(function* () {
-          const flow = yield* load(sessionId);
-          if (flow === null)
-            return {
-              text: "This Session doesn't follow Fern's Flow.",
-              isError: true,
-            };
-          const now = current(flow.phases);
-          if (now === undefined)
-            return { text: "The Flow is already over.", isError: true };
-          if (now !== report.phase)
-            return {
-              text: `The current Phase is ${TITLES[now]}, not ${TITLES[report.phase]}. Report ${TITLES[now]} done when it is.`,
-              isError: true,
-            };
-          if (flow.checkpoint)
-            return {
-              text: `The developer already has a Checkpoint for the end of ${TITLES[now]}. End your turn; their decision arrives as your next message.`,
-              isError: false,
-            };
-          if (
-            Option.isSome(
-              yield* heldOf({ sessionId, phase: now }).pipe(Effect.orDie),
-            )
-          )
-            return HOLDING;
+          const now = report.phase;
+          const refused = yield* refusal(sessionId, now);
+          if (refused) return refused;
           const findings = report.findings ?? [];
           if (findings.length > 0 && now !== "retro")
             return {
               text: "Only Retro reports Findings. Report the Phase done without them.",
               isError: true,
-            };
+            } satisfies Answer;
           // Spec's exit criteria come first: a failed check raises nothing, and Autonomy can't pass it.
           const spec =
             now === "spec" ? yield* specExit(sessionId, report.spec) : null;
           if (spec !== null && "isError" in spec) return spec;
+          // So do Implement's: no Checkpoint while a ticket is open, nor without a Walkthrough of
+          // the work as it is. While Fern writes one, the Checkpoint is held.
+          let walkthrough: CheckpointWalkthrough | "writing" | undefined;
+          if (now === "implement") {
+            const open = yield* ticketsExit(sessionId);
+            if (open) return open;
+            const exit = yield* walkthroughExit(sessionId);
+            if (exit !== "writing" && "isError" in exit) return exit;
+            walkthrough = exit === "writing" ? exit : exit.link;
+          }
           const checkpoint = {
             id: crypto.randomUUID(),
             sessionId,
@@ -847,13 +892,11 @@ export class Flows extends Context.Service<
             spec,
             findings,
           };
-          if (now !== "implement") return yield* raise(checkpoint, undefined);
-          // So do Implement's: no Checkpoint while a ticket is open, nor before the Session has a
-          // Walkthrough. While Fern writes one, the Checkpoint is held.
-          const open = yield* ticketsExit(sessionId);
-          if (open) return open;
-          const walkthrough = yield* walkthroughExit(sessionId);
-          if (walkthrough === "writing") {
+          return yield* Effect.gen(function* () {
+            const refusedNow = yield* refusal(sessionId, now);
+            if (refusedNow) return refusedNow;
+            if (walkthrough !== "writing")
+              return yield* raise(checkpoint, walkthrough);
             const raisedAt = yield* Clock.currentTimeMillis;
             yield* sql`INSERT INTO checkpoints ${sql.insert({
               id: checkpoint.id,
@@ -865,10 +908,8 @@ export class Flows extends Context.Service<
             })}`.pipe(Effect.orDie);
             yield* FiberMap.run(holds, checkpoint.id, release(checkpoint.id));
             return HOLDING;
-          }
-          if ("isError" in walkthrough) return walkthrough;
-          return yield* raise(checkpoint, walkthrough.link);
-        }).pipe(deciding.withPermits(1));
+          }).pipe(deciding.withPermits(1));
+        });
 
       // The pending Checkpoint with the id.
       const open = (id: string) =>
