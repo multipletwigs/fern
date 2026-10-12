@@ -1,10 +1,6 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
-import {
-  SessionInUse,
-  SessionNotFound,
-  TranscriptError,
-} from "./Sessions";
+import { SessionInUse, SessionNotFound, TranscriptError } from "./Sessions";
 
 // Every Hosted Session follows the Flow: Grill, Spec, Implement, then Retro. The agent reports its
 // Phase done through a tool Fern gives it; Fern then raises a Checkpoint for the developer, and

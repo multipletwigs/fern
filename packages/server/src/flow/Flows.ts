@@ -96,13 +96,12 @@ const current = (phases: ReadonlyArray<FlowPhase>) =>
 // The Flow after the Phase is done: the next one, if any, is current.
 const advance = (phases: ReadonlyArray<FlowPhase>, done: Phase) => {
   const next = PHASES[PHASES.indexOf(done) + 1];
-  return phases.map(
-    (p): FlowPhase =>
-      p.phase === done
-        ? { phase: p.phase, status: "done" }
-        : p.phase === next
-          ? { phase: p.phase, status: "current" }
-          : p,
+  return phases.map((p): FlowPhase =>
+    p.phase === done
+      ? { phase: p.phase, status: "done" }
+      : p.phase === next
+        ? { phase: p.phase, status: "current" }
+        : p,
   );
 };
 
@@ -233,13 +232,13 @@ export class Flows extends Context.Service<
 
       // Reloads after every write, and every few seconds for Sessions started meanwhile.
       const reloading = <A>(read: Effect.Effect<A>) =>
-        Stream.merge(SubscriptionRef.changes(version), Stream.tick("2 seconds"))
-          .pipe(
-            Stream.mapEffect(() => read),
-            Stream.changesWith(
-              (a, b) => JSON.stringify(a) === JSON.stringify(b),
-            ),
-          );
+        Stream.merge(
+          SubscriptionRef.changes(version),
+          Stream.tick("2 seconds"),
+        ).pipe(
+          Stream.mapEffect(() => read),
+          Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+        );
 
       const savePhases = (
         sessionId: string,
@@ -305,51 +304,47 @@ export class Flows extends Context.Service<
           return row.value;
         });
 
-      const approve = Effect.fn("Flows.approve")(
-        function* (id: string) {
-          const checkpoint = yield* open(id);
-          const phases = yield* phasesOf(checkpoint.sessionId);
-          const next = PHASES[PHASES.indexOf(checkpoint.phase) + 1];
-          const [first, ...rest] =
-            next && next !== "grill" ? COMMANDS[next] : [];
-          // Sent before anything is recorded, so a send that fails leaves the Checkpoint to retry.
-          if (first) yield* turns.send(checkpoint.sessionId, { text: first });
-          const decidedAt = yield* Clock.currentTimeMillis;
-          yield* sql
-            .withTransaction(
-              Effect.all([
-                savePhases(
-                  checkpoint.sessionId,
-                  advance(phases, checkpoint.phase),
-                  decidedAt,
-                ),
-                sql`UPDATE checkpoints SET status = 'approved', decided_at = ${decidedAt}
+      const approve = Effect.fn("Flows.approve")(function* (id: string) {
+        const checkpoint = yield* open(id);
+        const phases = yield* phasesOf(checkpoint.sessionId);
+        const next = PHASES[PHASES.indexOf(checkpoint.phase) + 1];
+        const [first, ...rest] = next && next !== "grill" ? COMMANDS[next] : [];
+        // Sent before anything is recorded, so a send that fails leaves the Checkpoint to retry.
+        if (first) yield* turns.send(checkpoint.sessionId, { text: first });
+        const decidedAt = yield* Clock.currentTimeMillis;
+        yield* sql
+          .withTransaction(
+            Effect.all([
+              savePhases(
+                checkpoint.sessionId,
+                advance(phases, checkpoint.phase),
+                decidedAt,
+              ),
+              sql`UPDATE checkpoints SET status = 'approved', decided_at = ${decidedAt}
                   WHERE id = ${id}`,
-              ]),
-            )
-            .pipe(Effect.orDie);
-          yield* bump;
-          for (const text of rest)
-            yield* turns.send(checkpoint.sessionId, { text });
-        },
-        deciding.withPermits(1),
-      );
+            ]),
+          )
+          .pipe(Effect.orDie);
+        yield* bump;
+        for (const text of rest)
+          yield* turns.send(checkpoint.sessionId, { text });
+      }, deciding.withPermits(1));
 
-      const decline = Effect.fn("Flows.decline")(
-        function* (id: string, note: string) {
-          const checkpoint = yield* open(id);
-          const title = TITLES[checkpoint.phase];
-          yield* turns.send(checkpoint.sessionId, {
-            text: `The developer declined the Checkpoint at the end of ${title}, so ${title} isn't done yet:\n\n${note.trim()}`,
-          });
-          const decidedAt = yield* Clock.currentTimeMillis;
-          yield* sql`UPDATE checkpoints
+      const decline = Effect.fn("Flows.decline")(function* (
+        id: string,
+        note: string,
+      ) {
+        const checkpoint = yield* open(id);
+        const title = TITLES[checkpoint.phase];
+        yield* turns.send(checkpoint.sessionId, {
+          text: `The developer declined the Checkpoint at the end of ${title}, so ${title} isn't done yet:\n\n${note.trim()}`,
+        });
+        const decidedAt = yield* Clock.currentTimeMillis;
+        yield* sql`UPDATE checkpoints
             SET status = 'declined', note = ${note.trim()}, decided_at = ${decidedAt}
             WHERE id = ${id}`.pipe(Effect.orDie);
-          yield* bump;
-        },
-        deciding.withPermits(1),
-      );
+        yield* bump;
+      }, deciding.withPermits(1));
 
       const phases = Effect.gen(function* () {
         const [worktrees, rows] = yield* Effect.all([
@@ -357,12 +352,10 @@ export class Flows extends Context.Service<
           flowRows().pipe(Effect.orDie),
         ]);
         const byId = new Map(rows.map((row) => [row.sessionId, row.phases]));
-        return worktrees.map(
-          ({ id }): SessionPhase => ({
-            sessionId: id,
-            current: current(byId.get(id) ?? opening),
-          }),
-        );
+        return worktrees.map(({ id }): SessionPhase => ({
+          sessionId: id,
+          current: current(byId.get(id) ?? opening),
+        }));
       });
 
       // The tools answer for the Session they were made for, from a plain async call.

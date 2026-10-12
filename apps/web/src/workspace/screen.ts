@@ -1,6 +1,7 @@
 import type { SessionChanges } from "@repo/api";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { sessionChangesAtom } from "../code/atoms";
+import { flowAtom } from "../flow/atoms";
 import { transcriptAtom } from "../session/atoms";
 import { walkthroughsAtom } from "../walkthrough/atoms";
 
@@ -10,10 +11,11 @@ export const noChangesAtom: Atom.Atom<
 > = Atom.make(AsyncResult.initial());
 
 // What a Session's screen needs before it can be laid out: its transcript, its changes in the
-// Project, and its Walkthroughs.
+// Project, its Walkthroughs and its Flow.
 export const screenAtoms = (sessionId: string, root: string | undefined) =>
   [
     transcriptAtom(sessionId),
     root ? sessionChangesAtom(root, sessionId) : noChangesAtom,
     walkthroughsAtom(sessionId),
+    flowAtom(sessionId),
   ] as const;

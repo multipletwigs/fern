@@ -9,6 +9,9 @@ import { isWorking } from "@repo/api";
 import { DateTime } from "effect";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { useContext } from "react";
+import { checkpointsAtom, sessionPhasesAtom } from "../flow/atoms";
+import { CheckpointQueue } from "../flow/CheckpointQueue";
+import { PHASE_TITLES } from "../flow/phases";
 import {
   activeProjectAtom,
   activeSessionIdAtom,
@@ -33,6 +36,22 @@ export function Sidebar() {
     setNew(undefined);
   };
   const now = useNow();
+  const phases = useAtomValue(sessionPhasesAtom);
+  const checkpoints = useAtomValue(checkpointsAtom);
+  // Each Hosted Session's current Phase's name, "Done" once its Flow is over.
+  const phaseOf = new Map(
+    AsyncResult.isSuccess(phases)
+      ? phases.value.map((p) => [
+          p.sessionId,
+          p.current ? PHASE_TITLES[p.current] : "Done",
+        ])
+      : [],
+  );
+  const waiting = new Set(
+    AsyncResult.isSuccess(checkpoints)
+      ? checkpoints.value.map((c) => c.sessionId)
+      : [],
+  );
   // Subscribing for a moment starts a Session's streams; they stay open a while after.
   const registry = useContext(RegistryContext);
   const setPreloaded = useAtomSet(preloadedSessionAtom);
@@ -80,6 +99,7 @@ export function Sidebar() {
         )
       }
     >
+      <CheckpointQueue onSelect={select} />
       {projects.value.length === 0 && <Hint text="No sessions yet." />}
       {projects.value.map((project) => (
         <ProjectGroup
@@ -98,6 +118,8 @@ export function Sidebar() {
                 active={session.id === activeId}
                 live={isWorking(lastActivityMs, session.hostedTurn, now)}
                 lastActive={ago(now - lastActivityMs)}
+                phase={phaseOf.get(session.id)}
+                waiting={waiting.has(session.id)}
                 onSelect={() => select(session.id)}
                 onPreload={() =>
                   preload(session.id, session.worktree ?? project.path)

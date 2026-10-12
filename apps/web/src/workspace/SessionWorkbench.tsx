@@ -21,18 +21,20 @@ export function SessionWorkbench({
   sessionId: string;
   root: string | undefined;
 }) {
-  const [nextTranscript, nextChanges, nextWalkthroughs] = screenAtoms(
+  const [nextTranscript, nextChanges, nextWalkthroughs, nextFlow] = screenAtoms(
     pickedId,
     pickedRoot,
   );
   const nextTranscriptResult = useAtomValue(nextTranscript);
   const nextChangesResult = useAtomValue(nextChanges);
   const nextWalkthroughsResult = useAtomValue(nextWalkthroughs);
+  const nextFlowResult = useAtomValue(nextFlow);
   // Without a Project there are no changes to wait for.
   const ready =
     !AsyncResult.isInitial(nextTranscriptResult) &&
     (!pickedRoot || !AsyncResult.isInitial(nextChangesResult)) &&
-    !AsyncResult.isInitial(nextWalkthroughsResult);
+    !AsyncResult.isInitial(nextWalkthroughsResult) &&
+    !AsyncResult.isInitial(nextFlowResult);
   const [shown, setShown] = useState({ sessionId: pickedId, root: pickedRoot });
   // The Session shown before this one, kept drawn so switching back shows it at once.
   const [previous, setPrevious] = useState<string>();
