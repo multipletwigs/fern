@@ -170,15 +170,23 @@ export function Session({
       // Room for the anchor to sit at the top of the view, shrinking as the reply fills it.
       const room = top ? view.clientHeight - (last.bottom - top.top) : 0;
       // Never less than what's showing now: the browser would pull the view down to make up a
-      // shortfall, which is what made collapsing an output jump.
+      // shortfall, which is what made collapsing an output jump. Unless no row shows at all, as
+      // once rows turn out shorter than the list estimated: holding still would hold the view on
+      // empty space for good, the chat gone blank.
+      const viewTop = view.getBoundingClientRect().top;
       const showing =
-        view.getBoundingClientRect().top + view.clientHeight - last.bottom;
+        last.bottom > viewTop ? viewTop + view.clientHeight - last.bottom : 0;
       height = Math.max(FOOTER, Math.round(Math.max(room, showing)));
     } else if (sending) {
       // A just-sent message not on the page yet: reserve a whole view so it can go up at once;
       // the next measurement trims that to fit.
       height = view.clientHeight;
     } else return;
+    // Undoing a pull (below) grows the space out of React's sight, so set it here too: React
+    // leaves it be while the height it renders stays the same.
+    const footer = view.querySelector<HTMLElement>("[data-transcript-footer]");
+    if (footer && footer.offsetHeight !== height)
+      footer.style.height = `${height}px`;
     const target = anchorId ?? "";
     setSpacer((current) =>
       current.for === target && current.height === height
