@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -10,11 +11,11 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { FIXTURE_SESSION, writeFixture } from "./fixture.ts";
-import { slotOf } from "./slot.ts";
+import { type SlotManifest, slotOf } from "./slot.ts";
 
 // Starts an isolated Fern from this worktree: its own ports, userData and CLAUDE_CONFIG_DIR,
-// seeded with the Subagent fixture. Not `pnpm dev`: its readiness check would pass on the
-// developer's own page at 5173, and it can't pass `--user-data-dir`.
+// seeded with the Subagent fixture, and writes the slot's manifest. Not `pnpm dev`: its readiness
+// check would pass on the developer's own page at 5173, and it can't pass `--user-data-dir`.
 
 const slot = slotOf(process.argv[2]);
 const root = resolve(import.meta.dirname, "../..");
@@ -34,6 +35,17 @@ for (const port of [slot.apiPort, slot.webPort])
     );
     process.exit(1);
   }
+
+// The branch the worktree has checked out, for the manifest; none on a detached HEAD.
+const current = spawnSync("git", ["branch", "--show-current"], {
+  cwd: root,
+  encoding: "utf8",
+});
+if (current.status !== 0) {
+  console.error(`Couldn't read the branch of ${root}:\n${current.stderr}`);
+  process.exit(1);
+}
+const branch = current.stdout.trim() || null;
 
 if (!existsSync(join(root, "node_modules")))
   spawnSync("pnpm", ["install", "--frozen-lockfile"], {
@@ -69,6 +81,10 @@ const start = (name: string, cwd: string, args: Array<string>) => {
     stdio: ["ignore", log, log],
   });
   child.unref();
+  if (child.pid === undefined) {
+    console.error(`Couldn't start ${name}; see ${slot.logs}/${name}.log`);
+    process.exit(1);
+  }
   return child.pid;
 };
 
@@ -86,7 +102,19 @@ const pids = {
     `--user-data-dir=${slot.userData}`,
   ]),
 };
-writeFileSync(slot.pids, JSON.stringify(pids));
+const manifest: SlotManifest = {
+  slot: slot.n,
+  worktree: root,
+  branch,
+  apiPort: slot.apiPort,
+  webPort: slot.webPort,
+  pageUrl: `http://localhost:${slot.webPort}`,
+  pids,
+  startedAt: new Date().toISOString(),
+};
+// Written whole, then moved into place, so a reader never sees half of it.
+writeFileSync(`${slot.manifest}.tmp`, JSON.stringify(manifest, null, 2));
+renameSync(`${slot.manifest}.tmp`, slot.manifest);
 
 const healthy = async () => {
   try {
@@ -106,8 +134,9 @@ while (!(await healthy())) {
 }
 
 console.log(`Isolated Fern, slot ${slot.n}:
-  page     http://localhost:${slot.webPort}
+  page     ${manifest.pageUrl}
   browser  export AGENT_BROWSER_SESSION=${slot.browserSession}
   fixture  Session ${FIXTURE_SESSION} in ${slot.configDir}
   logs     ${slot.logs}
+  manifest ${slot.manifest}
   stop     pnpm verify:down ${slot.n}`);

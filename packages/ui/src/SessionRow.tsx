@@ -6,7 +6,7 @@ import { Loader } from "./Loader";
 // hover. A live Session shows a loader where the others show time-ago on hover. A Session in the
 // Flow shows its current Phase, and a dot while it waits at a Checkpoint. Pointing at it calls
 // `onPreload`, so the Session can start loading before it's clicked. An `action`, such as
-// archiving, shows at its end on hover.
+// archiving, shows at its end on hover. A `badge`, such as the worktree mark, sits after the title.
 export function SessionRow({
   title,
   active,
@@ -17,6 +17,7 @@ export function SessionRow({
   onSelect,
   onPreload,
   action,
+  badge,
 }: {
   title: string;
   active: boolean;
@@ -30,6 +31,7 @@ export function SessionRow({
   onSelect: () => void;
   onPreload?: () => void;
   action?: ReactNode;
+  badge?: ReactNode;
 }) {
   return (
     <div
@@ -49,6 +51,7 @@ export function SessionRow({
         className="flex h-full min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-left"
       >
         <span className="min-w-0 flex-1 truncate">{title}</span>
+        {badge}
         {phase && (
           <span className="shrink-0 font-mono text-[10px] tracking-wide text-faint uppercase">
             {phase}

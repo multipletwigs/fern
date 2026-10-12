@@ -7,6 +7,7 @@ import { Rounds } from "../src/round/Rounds";
 import { Subagents } from "../src/subagent/Subagents";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { Turns } from "../src/turn/Turns";
+import { VerifySlots } from "../src/verify/VerifySlots";
 import { Walkthroughs } from "../src/walkthrough/Walkthroughs";
 import { WalkthroughWriter } from "../src/walkthrough/WalkthroughWriter";
 import { Workspace } from "../src/workspace/Workspace";
@@ -92,6 +93,11 @@ export const UnusedWorktrees = Layer.succeed(
     isDirty: () => Effect.die("unused"),
     remove: () => Effect.die("unused"),
   }),
+);
+
+export const UnusedVerifySlots = Layer.succeed(
+  VerifySlots,
+  VerifySlots.of({ running: Effect.die("unused") }),
 );
 
 export const UnusedWorktreeCleanup = Layer.succeed(

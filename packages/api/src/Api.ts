@@ -6,6 +6,7 @@ import { RoundsApi } from "./Rounds";
 import { SessionsApi } from "./Sessions";
 import { SubagentsApi } from "./Subagents";
 import { SystemApi } from "./System";
+import { VerifySlotsApi } from "./VerifySlots";
 import { WalkthroughsApi } from "./Walkthroughs";
 
 // Client-safe contract shared by @repo/server and the frontend. Keep server code out of this package.
@@ -19,5 +20,6 @@ export class FernApi extends HttpApi.make("fern")
   .add(RoundsApi)
   .add(AutonomyApi)
   .add(SubagentsApi)
+  .add(VerifySlotsApi)
   .prefix("/api")
   .annotateMerge(OpenApi.annotations({ title: "Fern API" })) {}

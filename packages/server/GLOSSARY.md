@@ -167,6 +167,10 @@ _Avoid_: Timeout, deadline, budget
 The developer's app running from one Session's worktree, frontend and backend both, shown in Fern beside that Session.
 _Avoid_: Dev server, browser tab, sandbox
 
+**Verify slot**:
+An isolated Fern an agent starts from its worktree with `pnpm verify:up`, to check its change to Fern in the running app: its own ports, data and Claude config, recorded in a manifest so every Fern lists it as running. Unlike a Preview, it runs Fern itself, and exists only for work on Fern.
+_Avoid_: Sandbox, instance
+
 **Checkpoint**:
 A point where a Session is waiting on the developer's decision. Checkpoints from all Sessions share one queue.
 _Avoid_: Prompt, approval, interrupt, blocker

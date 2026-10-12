@@ -24,6 +24,7 @@ import { ItemView } from "./ItemView";
 import { type Row, toRows } from "./rows";
 import { SessionComposer } from "./SessionComposer";
 import { SessionTabs } from "./SessionTabs";
+import { SessionWorktree } from "./SessionWorktree";
 import { SubagentView } from "./SubagentView";
 import { useNow } from "./time";
 import { ToolRun } from "./ToolRun";
@@ -342,6 +343,7 @@ export function Session({
             onClose={tabs.close}
           />
         </div>
+        <SessionWorktree sessionId={id} />
       </TopBar>
       <SessionChecklist sessionId={id} />
       <div className="relative flex min-h-0 flex-1 flex-col">

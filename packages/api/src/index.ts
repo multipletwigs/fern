@@ -8,4 +8,5 @@ export * from "./Sessions";
 export * from "./States";
 export * from "./Subagents";
 export * from "./System";
+export * from "./VerifySlots";
 export * from "./Walkthroughs";

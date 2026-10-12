@@ -16,6 +16,7 @@ import { Rounds } from "./round/Rounds";
 import { FernTools } from "./turn/FernTools";
 import { HostedSessions } from "./turn/HostedSessions";
 import { Turns } from "./turn/Turns";
+import { VerifySlots } from "./verify/VerifySlots";
 import { Walkthroughs } from "./walkthrough/Walkthroughs";
 import { WalkthroughWriter } from "./walkthrough/WalkthroughWriter";
 import { Workspace } from "./workspace/Workspace";
@@ -147,6 +148,15 @@ export const SubagentsHandlers = HttpApiBuilder.group(
   }),
 );
 
+export const VerifySlotsHandlers = HttpApiBuilder.group(
+  FernApi,
+  "verifySlots",
+  Effect.fn(function* (handlers) {
+    const slots = yield* VerifySlots;
+    return handlers.handleAll({ running: () => slots.running });
+  }),
+);
+
 // Handlers with their services still required, so tests can swap implementations.
 export const HandlersNoDeps = Layer.mergeAll(
   SystemHandlers,
@@ -157,6 +167,7 @@ export const HandlersNoDeps = Layer.mergeAll(
   RoundsHandlers,
   AutonomyHandlers,
   SubagentsHandlers,
+  VerifySlotsHandlers,
 );
 
 // FernApi's handlers and the live streams', on one set of the real services, with a Walkthrough
@@ -171,7 +182,12 @@ export const handlersWith = (
   > = IssueTracker.layer,
 ) =>
   Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
-    Layer.provide([Transcripts.layer, WorktreeCleanup.layer, Rounds.layer]),
+    Layer.provide([
+      Transcripts.layer,
+      WorktreeCleanup.layer,
+      Rounds.layer,
+      VerifySlots.layer,
+    ]),
     // The chat's Agent call rows show where each Subagent stands as its tab does.
     Layer.provideMerge(Subagents.layer),
     // The merge sweep waits for a Session's Flow to be over.
