@@ -1,6 +1,5 @@
 import {
   getSessionInfo,
-  getSessionMessages,
   listSessions,
   type SDKSessionInfo,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -30,7 +29,7 @@ import {
   mayBeInToolCall,
   SubagentFiles,
 } from "../subagent/SubagentFiles";
-import { Subagents } from "../subagent/Subagents";
+import { settleRows, Subagents } from "../subagent/Subagents";
 import { HostedSessions, type HostedWorktree } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { diffItems, type Sent } from "./diff";
@@ -196,32 +195,31 @@ export class Transcripts extends Context.Service<
                 a.subagents === b.subagents,
             ),
             Stream.mapEffect(
-              Effect.fnUntraced(function* ({ latest, hostedTurn }) {
-                const [messages, contextWindow, metadata] = yield* Effect.all([
-                  sdk("getSessionMessages", () => getSessionMessages(id)),
-                  turns.contextWindow(id),
-                  subagentFiles.metadata(id),
-                ]);
-                const { header, items } = buildView(latest, messages, {
-                  hostedTurn,
-                  contextWindow,
-                  subagents: metadata,
-                });
-                // Subagents' files that can't be read leave the rows as the transcript says.
-                const settled = yield* subagents
-                  .settleRows(latest, messages, items)
-                  .pipe(
-                    Effect.catchDefect((defect) => Effect.fail(String(defect))),
-                    Effect.catch((error) =>
-                      Effect.logWarning(
-                        "Subagents unread; rows left unsettled",
-                        error,
-                      ).pipe(Effect.as(items)),
-                    ),
+              Effect.fnUntraced(
+                function* ({ hostedTurn }) {
+                  const [read, contextWindow] = yield* Effect.all([
+                    subagents.read(id),
+                    turns.contextWindow(id),
+                  ]);
+                  const { header, items } = buildView(
+                    read.info,
+                    read.messages,
+                    {
+                      hostedTurn,
+                      contextWindow,
+                      subagents: read.metadata,
+                    },
                   );
-                return { header, items: settled };
-              }),
+                  return Option.some({
+                    header,
+                    items: settleRows(items, read),
+                  });
+                },
+                Effect.catchTag("SessionNotFound", () => Effect.succeedNone),
+              ),
             ),
+            Stream.filter(Option.isSome),
+            Stream.map((read) => read.value),
             // Only send items that changed since the previous update on this stream.
             Stream.mapAccum(
               (): Sent => new Map(),

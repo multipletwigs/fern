@@ -5,6 +5,7 @@ import { assert, layer } from "@effect/vitest";
 import type { HostedTurn, TranscriptUpdate } from "@repo/api";
 import { DateTime, Effect, Fiber, Layer, Stream } from "effect";
 import { vi } from "vitest";
+import { DatabaseLive } from "../src/database/Database";
 import { SubagentFiles } from "../src/subagent/SubagentFiles";
 import { Subagents } from "../src/subagent/Subagents";
 import { Transcripts } from "../src/transcript/Transcripts";
@@ -32,10 +33,14 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
     });
   },
   getSessionMessages: () => Promise.resolve([]),
+  // The Session has no Subagents.
+  listSubagents: () => Promise.resolve([]),
 }));
 
 const TestTranscripts = Transcripts.layer.pipe(
+  Layer.provideMerge(Subagents.layer),
   Layer.provide([
+    DatabaseLive(":memory:"),
     Layer.succeed(
       SubagentFiles,
       SubagentFiles.of({
@@ -43,17 +48,6 @@ const TestTranscripts = Transcripts.layer.pipe(
         metadata: () => Effect.succeed([]),
         writtenAt: () => Effect.succeed(new Map()),
         stamp: () => Effect.succeed(""),
-      }),
-    ),
-    // The Session has no Subagents.
-    Layer.succeed(
-      Subagents,
-      Subagents.of({
-        list: () => Effect.die("unused"),
-        live: () => Effect.die("unused"),
-        settleRows: (_info, _messages, items) => Effect.succeed(items),
-        close: () => Effect.die("unused"),
-        reopen: () => Effect.die("unused"),
       }),
     ),
     Layer.succeed(

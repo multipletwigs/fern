@@ -34,7 +34,7 @@ export const UnusedSubagents = Layer.succeed(
   Subagents.of({
     list: () => Effect.die("unused"),
     live: () => Effect.die("unused"),
-    settleRows: () => Effect.die("unused"),
+    read: () => Effect.die("unused"),
     close: () => Effect.die("unused"),
     reopen: () => Effect.die("unused"),
   }),
