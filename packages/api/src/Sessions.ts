@@ -93,6 +93,21 @@ export class SessionRef extends Schema.Class<SessionRef>("SessionRef")({
   id: Schema.String,
 }) {}
 
+// The prompt cache as Claude's latest request left it. A request reads the start of its context from
+// the cache and writes what's new to it; the cache lives for its TTL past the last request, and the
+// next request after that pays to write it all again.
+export class PromptCache extends Schema.Class<PromptCache>("PromptCache")({
+  lastRequestAt: Schema.DateTimeUtcFromMillis,
+  // Five minutes, or an hour once a request has written to the hour-long cache.
+  ttl: Schema.DurationFromMillis,
+  expiresAt: Schema.DateTimeUtcFromMillis,
+  // What Claude's latest response read from the cache, wrote to it, read uncached, and produced.
+  readTokens: Schema.Finite,
+  writtenTokens: Schema.Finite,
+  uncachedTokens: Schema.Finite,
+  outputTokens: Schema.Finite,
+}) {}
+
 export class SessionHeader extends Schema.Class<SessionHeader>("SessionHeader")(
   {
     id: Schema.String,
@@ -105,7 +120,7 @@ export class SessionHeader extends Schema.Class<SessionHeader>("SessionHeader")(
     // The context window's size, known once Fern has run a turn on the Session.
     contextWindow: Schema.optional(Schema.Finite),
     lastActivityAt: Schema.DateTimeUtcFromMillis,
-    cacheExpiresAt: Schema.optional(Schema.DateTimeUtcFromMillis),
+    cache: Schema.optional(PromptCache),
     hostedTurn: Schema.optional(HostedTurn),
   },
 ) {}
