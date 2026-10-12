@@ -199,10 +199,21 @@ export class Transcripts extends Context.Service<
                   contextWindow,
                   subagents: metadata,
                 });
-                return {
-                  header,
-                  items: yield* subagents.settleRows(latest, messages, items),
-                };
+                // Subagents' files that can't be read leave the rows as the transcript says.
+                const settled = yield* subagents
+                  .settleRows(latest, messages, items)
+                  .pipe(
+                    Effect.catchDefect((defect) =>
+                      Effect.fail(String(defect)),
+                    ),
+                    Effect.catch((error) =>
+                      Effect.logWarning(
+                        "Subagents unread; rows left unsettled",
+                        error,
+                      ).pipe(Effect.as(items)),
+                    ),
+                  );
+                return { header, items: settled };
               }),
             ),
             // Only send items that changed since the previous update on this stream.
