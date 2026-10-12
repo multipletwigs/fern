@@ -90,6 +90,7 @@ export const UnusedFlows = Layer.succeed(
     flow: () => Stream.die("unused"),
     checkpoints: Stream.die("unused"),
     phases: Stream.die("unused"),
+    isOver: () => Effect.die("unused"),
     approve: () => Effect.die("unused"),
     decline: () => Effect.die("unused"),
     skip: () => Effect.die("unused"),

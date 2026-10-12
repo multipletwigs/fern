@@ -155,12 +155,9 @@ export const handlersWith = (
   > = IssueTracker.layer,
 ) =>
   Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
-    Layer.provide([
-      Transcripts.layer,
-      WorktreeCleanup.layer,
-      Flows.layer,
-      Rounds.layer,
-    ]),
+    Layer.provide([Transcripts.layer, WorktreeCleanup.layer, Rounds.layer]),
+    // The merge sweep waits for a Session's Flow to be over.
+    Layer.provideMerge(Flows.layer),
     // Flows writes the Walkthrough the end of Implement waits on.
     Layer.provideMerge(Walkthroughs.layer),
     Layer.provide([

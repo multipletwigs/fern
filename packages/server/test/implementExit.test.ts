@@ -521,7 +521,9 @@ layer(server(freshDatabase()), { excludeTestServices: true })(
       "in a folder outside git, where nothing can be reviewed, raises the Checkpoint without a Walkthrough",
       () =>
         Effect.gen(function* () {
-          const folder = realpathSync(mkdtempSync(join(tmpdir(), "fern-plain-")));
+          const folder = realpathSync(
+            mkdtempSync(join(tmpdir(), "fern-plain-")),
+          );
           transcript(folder, crypto.randomUUID(), "Earlier work", "cli");
           const id = yield* implemented(folder);
 

@@ -102,7 +102,18 @@ vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => ({
   },
 }));
 
-const makeClient = HttpApiTest.groups(FernApi, ["sessions"]);
+const makeClient = HttpApiTest.groups(FernApi, ["sessions", "flows"]);
+
+// The developer skips each Phase in turn, which takes the Session's Flow to its end.
+const finishFlow = (id: string) =>
+  Effect.gen(function* () {
+    const client = yield* makeClient;
+    for (const phase of ["grill", "spec", "implement", "retro"] as const)
+      yield* client.flows.skip({
+        params: { session: id },
+        payload: { phase, reason: "Done elsewhere" },
+      });
+  });
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
 // Starts a Session through the API and waits for its first turn, returning its id and worktree.
@@ -210,6 +221,7 @@ layer(
       Effect.gen(function* () {
         const { id, worktree, branch } = yield* startSession("Merged work");
         commit(worktree, "merged.ts");
+        yield* finishFlow(id);
         git(repo, "merge", "-q", "--no-ff", "--no-edit", branch);
 
         yield* sidebarListing(id, false);
@@ -225,6 +237,7 @@ layer(
         const { id, worktree, branch } = yield* startSession("Squashed work");
         commit(worktree, "squashed-1.ts");
         commit(worktree, "squashed-2.ts");
+        yield* finishFlow(id);
         git(repo, "merge", "-q", "--squash", branch);
         git(repo, "commit", "-q", "-m", "Squashed work");
         commit(repo, "later-on-main.ts");
@@ -235,25 +248,33 @@ layer(
   );
 
   it.effect(
-    "keeps the worktree of a Session with no commits yet, an unmerged branch, or uncommitted changes",
+    "keeps the worktree of a Session with no commits yet, an unmerged branch, uncommitted changes, or a Flow not over yet",
     () =>
       Effect.gen(function* () {
         const fresh = yield* startSession("Fresh work");
+        yield* finishFlow(fresh.id);
         const unmerged = yield* startSession("Unmerged work");
         commit(unmerged.worktree, "unmerged.ts");
+        yield* finishFlow(unmerged.id);
         const dirty = yield* startSession("Merged but dirty work");
         commit(dirty.worktree, "dirty.ts");
         writeFileSync(join(dirty.worktree, "a.ts"), "export const a = 3;\n");
+        yield* finishFlow(dirty.id);
         git(repo, "merge", "-q", "--no-ff", "--no-edit", dirty.branch);
+        // Merged while its Flow is still in the Grill.
+        const unfinished = yield* startSession("Merged mid-Flow");
+        commit(unfinished.worktree, "unfinished.ts");
+        git(repo, "merge", "-q", "--no-ff", "--no-edit", unfinished.branch);
         // A merged one alongside, so its removal shows a cleanup ran after all of them were set up.
         const merged = yield* startSession("Merged alongside");
         commit(merged.worktree, "alongside.ts");
+        yield* finishFlow(merged.id);
         git(repo, "merge", "-q", "--no-ff", "--no-edit", merged.branch);
 
         yield* sidebarListing(merged.id, false);
         yield* Effect.sleep("300 millis");
 
-        for (const kept of [fresh, unmerged, dirty]) {
+        for (const kept of [fresh, unmerged, dirty, unfinished]) {
           assert.isTrue(existsSync(kept.worktree), kept.branch);
           yield* sidebarListing(kept.id, true);
         }

@@ -11,6 +11,7 @@ import {
   Schedule,
   Semaphore,
 } from "effect";
+import { Flows } from "../flow/Flows";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { Worktrees } from "./Worktrees";
@@ -22,7 +23,8 @@ export const CleanupInterval = Context.Reference<Duration.Input>(
 );
 
 // Takes Sessions' worktrees away once they're done with (ADR 0005): when the developer archives a
-// Session, and when its branch merges into `main`. A merged Session is archived too. Worktrees with
+// Session, and when its branch has merged into `main` and its Flow is over. A merged Session is
+// archived too. Worktrees with
 // uncommitted changes are only removed when the developer says so.
 export class WorktreeCleanup extends Context.Service<
   WorktreeCleanup,
@@ -44,6 +46,7 @@ export class WorktreeCleanup extends Context.Service<
       const hosted = yield* HostedSessions;
       const worktrees = yield* Worktrees;
       const turns = yield* Turns;
+      const flows = yield* Flows;
       const interval = yield* CleanupInterval;
       // One removal at a time, so archiving and the merge sweep never race on a worktree.
       const lock = yield* Semaphore.make(1);
@@ -70,17 +73,17 @@ export class WorktreeCleanup extends Context.Service<
         return yield* hosted.archive(id);
       }, lock.withPermits(1));
 
-      // Archives every Session whose branch merged, unless its turn is running or its worktree has
-      // uncommitted changes.
+      // Archives every Session whose branch merged once its Flow is over, unless its turn is running
+      // or its worktree has uncommitted changes.
       const sweep = Effect.gen(function* () {
-        const running = new Set(yield* turns.running);
         const sessions = (yield* hosted.worktrees).filter(
-          (w) => w.archivedAt === null && !running.has(w.id),
+          (w) => w.archivedAt === null,
         );
         yield* Effect.forEach(
           sessions,
           (session) =>
             Effect.gen(function* () {
+              if (!(yield* flows.isOver(session.id))) return;
               if (
                 !(yield* worktrees.isMerged(
                   session.projectRoot,
@@ -90,6 +93,8 @@ export class WorktreeCleanup extends Context.Service<
               )
                 return;
               if (yield* worktrees.isDirty(session.worktree)) return;
+              // Looked at last, right before the worktree goes: a turn may have started meanwhile.
+              if ((yield* turns.running).includes(session.id)) return;
               yield* worktrees.remove(session.projectRoot, session.worktree, {
                 force: false,
               });

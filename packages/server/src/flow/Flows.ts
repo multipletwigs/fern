@@ -280,6 +280,8 @@ export class Flows extends Context.Service<
     readonly checkpoints: Stream.Stream<ReadonlyArray<Checkpoint>>;
     // Every Hosted Session's current Phase.
     readonly phases: Stream.Stream<ReadonlyArray<SessionPhase>>;
+    // Whether the Session's Flow is over: Retro done or skipped, and no Checkpoint pending or held.
+    isOver(sessionId: string): Effect.Effect<boolean>;
     // Marks the Checkpoint's Phase done and starts the next one by sending its command.
     approve(
       id: string,
@@ -435,6 +437,13 @@ export class Flows extends Context.Service<
         execute: ({ sessionId, phase }) => sql`
           SELECT id FROM checkpoints
           WHERE session_id = ${sessionId} AND phase = ${phase} AND status = 'held'`,
+      });
+      const waitingOf = SqlSchema.findAll({
+        Request: Schema.String,
+        Result: Schema.Struct({ id: Schema.String }),
+        execute: (sessionId) => sql`
+          SELECT id FROM checkpoints
+          WHERE session_id = ${sessionId} AND status IN ('pending', 'held') LIMIT 1`,
       });
 
       const findingsOf = SqlSchema.findAll({
@@ -1180,6 +1189,14 @@ export class Flows extends Context.Service<
           ),
         ),
         phases: reloading(phases),
+        isOver: (sessionId) =>
+          Effect.all([phasesOf(sessionId), waitingOf(sessionId)]).pipe(
+            Effect.orDie,
+            Effect.map(
+              ([flow, waiting]) =>
+                current(flow) === undefined && waiting.length === 0,
+            ),
+          ),
         approve,
         decline,
         skip,
