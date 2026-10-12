@@ -2,8 +2,10 @@ import { FernApi, SessionRef } from "@repo/api";
 import { Effect, Layer } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 import { NodeServices } from "@effect/platform-node";
+import type { ChildProcessSpawner } from "effect/process";
 import { Commands } from "./commands/Commands";
 import { Flows } from "./flow/Flows";
+import { IssueTracker } from "./issue/IssueTracker";
 import { Transcripts } from "./transcript/Transcripts";
 import { Snapshots } from "./snapshot/Snapshots";
 import { LiveHandlersNoDeps } from "./live";
@@ -107,8 +109,15 @@ export const HandlersNoDeps = Layer.mergeAll(
 
 // FernApi's handlers and the live streams', on one set of the real services, with a Walkthrough
 // writer of the caller's choosing. Everything but the database and the worktrees' folder, which
-// the app keeps with its data.
-export const handlersWith = (writer: Layer.Layer<WalkthroughWriter>) =>
+// the app keeps with its data. The issue tracker is GitHub's unless the caller gives another.
+export const handlersWith = (
+  writer: Layer.Layer<WalkthroughWriter>,
+  issues: Layer.Layer<
+    IssueTracker,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner
+  > = IssueTracker.layer,
+) =>
   Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
     Layer.provide([
       Transcripts.layer,
@@ -124,6 +133,7 @@ export const handlersWith = (writer: Layer.Layer<WalkthroughWriter>) =>
       FernTools.layer,
       Worktrees.layer,
       writer,
+      issues,
     ]),
     Layer.provide(NodeServices.layer),
   );

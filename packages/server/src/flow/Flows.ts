@@ -8,6 +8,7 @@ import {
   FlowPhase,
   Phase,
   PHASES,
+  SpecIssues,
   type SessionInUse,
   type SessionNotFound,
   type SessionPhase,
@@ -26,6 +27,7 @@ import {
 } from "effect";
 import { SqlClient, SqlSchema } from "effect/sql";
 import { z } from "zod";
+import { IssueTracker, type TrackedIssue } from "../issue/IssueTracker";
 import { FernTools } from "../turn/FernTools";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
@@ -45,7 +47,7 @@ const COMMANDS: Record<Exclude<Phase, "grill">, ReadonlyArray<string>> = {
   retro: ["/retro"],
 };
 
-export const STEERING = `Report the end of each Phase through Fern's \`phase_done\` tool, with the Phase and a short summary of what it settled or produced, then end your turn. Fern raises a Checkpoint, and the developer approves it or declines it with a note. Never start the next Phase's skill yourself (/to-spec, /to-tickets, /implement-spec, /retro): once the developer approves, Fern sends the next Phase's command as your next message. A message that isn't the next Phase's command means the Phase isn't done yet, so keep working on it. Spec is done only once both the Brief and its tickets exist.`;
+export const STEERING = `Report the end of each Phase through Fern's \`phase_done\` tool, with the Phase and a short summary of what it settled or produced, then end your turn. Fern raises a Checkpoint, and the developer approves it or declines it with a note. Never start the next Phase's skill yourself (/to-spec, /to-tickets, /implement-spec, /retro): once the developer approves, Fern sends the next Phase's command as your next message. A message that isn't the next Phase's command means the Phase isn't done yet, so keep working on it. Spec is done only once both the Brief and its tickets exist on the issue tracker: report it with the Brief's issue number and its tickets' issue numbers.`;
 
 const PHASE_DONE = `Report the current Phase of Fern's Flow done. Fern raises a Checkpoint for the developer and answers at once; end your turn after calling it. The developer's decision arrives as your next message.`;
 
@@ -63,11 +65,15 @@ const encodePhases = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(FlowPhase)),
 );
 
+const SpecColumn = Schema.fromJsonString(SpecIssues);
+const encodeSpec = Schema.encodeSync(SpecColumn);
+
 const CheckpointRow = Schema.Struct({
   id: Schema.String,
   sessionId: Schema.String,
   phase: Phase,
   summary: Schema.String,
+  spec: Schema.NullOr(SpecColumn),
   status: CheckpointStatus,
   note: Schema.NullOr(Schema.String),
   raisedAt: Schema.Finite,
@@ -81,6 +87,7 @@ const toCheckpoint = (row: CheckpointRow) =>
     sessionId: row.sessionId,
     phase: row.phase,
     summary: row.summary,
+    spec: row.spec ?? undefined,
     status: row.status,
     note: row.note ?? undefined,
     raisedAt: Schema.decodeSync(Schema.DateTimeUtcFromMillis)(row.raisedAt),
@@ -104,6 +111,19 @@ const advance = (phases: ReadonlyArray<FlowPhase>, done: Phase) => {
         : p,
   );
 };
+
+// The issue numbers the agent gives when it reports Spec done.
+interface SpecReport {
+  readonly brief: number;
+  readonly tickets: ReadonlyArray<number>;
+}
+
+// An issue as a Checkpoint shows it.
+const shown = ({ number, title, url }: TrackedIssue) => ({
+  number,
+  title,
+  url,
+});
 
 // What a Fern tool answers the agent.
 interface Answer {
@@ -160,6 +180,7 @@ export class Flows extends Context.Service<
       const hosted = yield* HostedSessions;
       const turns = yield* Turns;
       const tools = yield* FernTools;
+      const issues = yield* IssueTracker;
       // Bumped after every write, so open streams reload.
       const version = yield* SubscriptionRef.make(0);
       const bump = SubscriptionRef.update(version, (n) => n + 1);
@@ -240,6 +261,53 @@ export class Flows extends Context.Service<
           Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
         );
 
+      // Spec's exit criteria: the Brief and every ticket exist on the issue tracker of the
+      // repository the Session works in. Either what the Checkpoint shows, or what to tell the
+      // agent instead.
+      const specExit = (sessionId: string, report: SpecReport | undefined) =>
+        Effect.gen(function* () {
+          if (report === undefined)
+            return {
+              text: "Report Spec done with `spec`: the Brief's issue number and its tickets' issue numbers.",
+              isError: true,
+            } satisfies Answer;
+          const worktree = (yield* hosted.worktrees).find(
+            (w) => w.id === sessionId,
+          );
+          const cwd = worktree?.cwd ?? "";
+          const look = (number: number) =>
+            issues.issue(cwd, number).pipe(Effect.map(Option.getOrUndefined));
+          const [brief, tickets] = yield* Effect.all(
+            [
+              look(report.brief),
+              Effect.forEach(report.tickets, look, { concurrency: 4 }),
+            ],
+            { concurrency: "unbounded" },
+          );
+          const missing = [
+            ...(brief ? [] : [`the Brief #${report.brief}`]),
+            ...report.tickets.flatMap((number, i) =>
+              tickets[i] ? [] : [`ticket #${number}`],
+            ),
+          ];
+          if (!brief || missing.length > 0)
+            return {
+              text: `Spec isn't done: the issue tracker has no ${missing.join(", no ")}. Write the missing issues, or correct the numbers, then report Spec done again.`,
+              isError: true,
+            } satisfies Answer;
+          return SpecIssues.make({
+            brief: shown(brief),
+            tickets: tickets.flatMap((t) => (t ? [shown(t)] : [])),
+          });
+        }).pipe(
+          Effect.catchTag("IssueTrackerError", (error) =>
+            Effect.succeed({
+              text: `Fern couldn't check the Brief and tickets on the issue tracker (${error.message}). Report Spec done again once it can.`,
+              isError: true,
+            } satisfies Answer),
+          ),
+        );
+
       const savePhases = (
         sessionId: string,
         phases: ReadonlyArray<FlowPhase>,
@@ -256,7 +324,11 @@ export class Flows extends Context.Service<
       // The agent says its Phase is done: raise a Checkpoint for the developer.
       const phaseDone = (
         sessionId: string,
-        report: { readonly phase: Phase; readonly summary: string },
+        report: {
+          readonly phase: Phase;
+          readonly summary: string;
+          readonly spec?: SpecReport | undefined;
+        },
       ) =>
         Effect.gen(function* () {
           const flow = yield* load(sessionId);
@@ -278,12 +350,16 @@ export class Flows extends Context.Service<
               text: `The developer already has a Checkpoint for the end of ${TITLES[now]}. End your turn; their decision arrives as your next message.`,
               isError: false,
             };
+          const spec =
+            now === "spec" ? yield* specExit(sessionId, report.spec) : null;
+          if (spec !== null && "isError" in spec) return spec;
           const raisedAt = yield* Clock.currentTimeMillis;
           yield* sql`INSERT INTO checkpoints ${sql.insert({
             id: crypto.randomUUID(),
             sessionId,
             phase: now,
             summary: report.summary,
+            spec: spec === null ? null : encodeSpec(spec),
             status: "pending",
             raisedAt,
           })}`.pipe(Effect.orDie);
@@ -308,7 +384,12 @@ export class Flows extends Context.Service<
         const checkpoint = yield* open(id);
         const phases = yield* phasesOf(checkpoint.sessionId);
         const next = PHASES[PHASES.indexOf(checkpoint.phase) + 1];
-        const [first, ...rest] = next && next !== "grill" ? COMMANDS[next] : [];
+        const [first, ...rest] =
+          next === "implement" && checkpoint.spec
+            ? [`/implement-spec #${checkpoint.spec.brief.number}`]
+            : next && next !== "grill"
+              ? COMMANDS[next]
+              : [];
         // Sent before anything is recorded, so a send that fails leaves the Checkpoint to retry.
         if (first) yield* turns.send(checkpoint.sessionId, { text: first });
         const decidedAt = yield* Clock.currentTimeMillis;
@@ -372,6 +453,22 @@ export class Flows extends Context.Service<
                 .string()
                 .min(1)
                 .describe("What the Phase settled or produced, in a few lines"),
+              spec: z
+                .object({
+                  brief: z
+                    .number()
+                    .int()
+                    .positive()
+                    .describe("The Brief's issue number"),
+                  tickets: z
+                    .array(z.number().int().positive())
+                    .min(1)
+                    .describe("The issue numbers of the Brief's tickets"),
+                })
+                .optional()
+                .describe(
+                  "Required when the Phase is spec: the issues Spec wrote",
+                ),
             },
             (args) => run(phaseDone(sessionId, args).pipe(Effect.map(reply))),
           ),

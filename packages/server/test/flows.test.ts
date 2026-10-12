@@ -1,6 +1,6 @@
 import { assert, it as test, layer } from "@effect/vitest";
 import { FernApi, type Flow, LiveRpcs } from "@repo/api";
-import { Effect, Layer, Schedule, Stream } from "effect";
+import { Effect, Layer, Option, Schedule, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { RpcTest } from "effect/rpc";
@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { vi } from "vitest";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
+import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
 import { WorktreesDir } from "../src/worktree/Worktrees";
 import { NoWriter } from "./stubs";
 
@@ -153,13 +154,33 @@ vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => ({
   },
 }));
 
+// The issue tracker, faked: the Brief #2 and its tickets #3 and #4 exist, nothing else does.
+const issue = (number: number, title: string): TrackedIssue => ({
+  number,
+  title,
+  url: `https://github.com/acme/app/issues/${number}`,
+  state: "open",
+});
+const ISSUES = new Map([
+  [2, issue(2, "Dark mode")],
+  [3, issue(3, "Add the theme setting")],
+  [4, issue(4, "Toggle in the settings page")],
+]);
+const FakeIssues = Layer.succeed(
+  IssueTracker,
+  IssueTracker.of({
+    issue: (_cwd, number) =>
+      Effect.succeed(Option.fromNullishOr(ISSUES.get(number))),
+  }),
+);
+
 const makeClient = HttpApiTest.groups(FernApi, ["sessions", "flows"]);
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
 // Fern's API on a database file, as the app runs it.
 const server = (database: string) =>
   Layer.mergeAll(
-    handlersWith(NoWriter).pipe(
+    handlersWith(NoWriter, FakeIssues).pipe(
       Layer.provide([
         DatabaseLive(database),
         Layer.succeed(WorktreesDir, { dir: dataDir }),
@@ -237,6 +258,18 @@ const atGrillCheckpoint = Effect.gen(function* () {
     (f) => f?.checkpoint !== undefined,
   );
   return { id, checkpoint: flow?.checkpoint?.id ?? "" };
+});
+
+// Starts a Session and takes it through the Grill, so Spec is current.
+const atSpec = Effect.gen(function* () {
+  const session = yield* atGrillCheckpoint;
+  const client = yield* makeClient;
+  yield* client.flows.approve({ params: { id: session.checkpoint } });
+  yield* turnWhere(session.id, (t) => t.text === "/to-tickets");
+  const call = callerFor(
+    started.find((t) => t.sessionId === session.id)?.options ?? {},
+  );
+  return { id: session.id, call };
 });
 
 layer(server(freshDatabase()), { excludeTestServices: true })("Flows", (it) => {
@@ -411,6 +444,105 @@ layer(server(freshDatabase()), { excludeTestServices: true })("Flows", (it) => {
         assert.isFalse(queue?.some((c) => c.sessionId === id));
       }),
   );
+
+  it.effect(
+    "answers a Spec-done report naming issues the tracker doesn't have with what's missing, and raises nothing",
+    () =>
+      Effect.gen(function* () {
+        const { id, call } = yield* atSpec;
+        const missing = yield* Effect.promise(() =>
+          call("phase_done", {
+            phase: "spec",
+            summary: "Brief and tickets written.",
+            spec: { brief: 99, tickets: [3, 98] },
+          }),
+        );
+        assert.isTrue(missing.isError);
+        assert.match(missing.text, /Brief #99/);
+        assert.match(missing.text, /ticket #98/);
+        assert.notMatch(missing.text, /#3\b/);
+
+        const unnamed = yield* Effect.promise(() =>
+          call("phase_done", { phase: "spec", summary: "Brief written." }),
+        );
+        assert.isTrue(unnamed.isError);
+        assert.match(unnamed.text, /Brief/);
+
+        const live = yield* makeLive;
+        const flow = yield* firstWhere(live.Flow({ session: id }), Boolean);
+        assert.isUndefined(flow?.checkpoint);
+        assert.strictEqual(statuses(flow)?.[1], "spec:current");
+      }),
+  );
+
+  it.effect(
+    "raises the Spec Checkpoint with the Brief and its tickets from the issue tracker",
+    () =>
+      Effect.gen(function* () {
+        const { id, call } = yield* atSpec;
+        const answer = yield* Effect.promise(() =>
+          call("phase_done", {
+            phase: "spec",
+            summary: "Brief and tickets written.",
+            spec: { brief: 2, tickets: [3, 4] },
+          }),
+        );
+        assert.isFalse(answer.isError);
+
+        const live = yield* makeLive;
+        const flow = yield* firstWhere(
+          live.Flow({ session: id }),
+          (f) => f?.checkpoint !== undefined,
+        );
+        assert.strictEqual(flow?.checkpoint?.phase, "spec");
+        assert.deepStrictEqual(flow?.checkpoint?.spec, {
+          brief: {
+            number: 2,
+            title: "Dark mode",
+            url: "https://github.com/acme/app/issues/2",
+          },
+          tickets: [
+            {
+              number: 3,
+              title: "Add the theme setting",
+              url: "https://github.com/acme/app/issues/3",
+            },
+            {
+              number: 4,
+              title: "Toggle in the settings page",
+              url: "https://github.com/acme/app/issues/4",
+            },
+          ],
+        });
+      }),
+  );
+
+  it.effect("on approving Spec, sends /implement-spec with the Brief", () =>
+    Effect.gen(function* () {
+      const { id, call } = yield* atSpec;
+      yield* Effect.promise(() =>
+        call("phase_done", {
+          phase: "spec",
+          summary: "Brief and tickets written.",
+          spec: { brief: 2, tickets: [3, 4] },
+        }),
+      );
+      const live = yield* makeLive;
+      const flow = yield* firstWhere(
+        live.Flow({ session: id }),
+        (f) => f?.checkpoint !== undefined,
+      );
+      const client = yield* makeClient;
+      yield* client.flows.approve({
+        params: { id: flow?.checkpoint?.id ?? "" },
+      });
+
+      const implement = yield* turnWhere(id, (t) =>
+        t.text.startsWith("/implement-spec"),
+      );
+      assert.strictEqual(implement.text, "/implement-spec #2");
+    }),
+  );
 });
 
 test.live("keeps the Flow and its pending Checkpoint after Fern restarts", () =>
@@ -426,7 +558,11 @@ test.live("keeps the Flow and its pending Checkpoint after Fern restarts", () =>
         started.find((t) => t.sessionId === session.id)?.options ?? {},
       );
       yield* Effect.promise(() =>
-        call("phase_done", { phase: "spec", summary: "Brief #12 written." }),
+        call("phase_done", {
+          phase: "spec",
+          summary: "Brief #2 written.",
+          spec: { brief: 2, tickets: [3, 4] },
+        }),
       );
       return session;
     }).pipe(runOn(database));

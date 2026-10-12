@@ -1,5 +1,6 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { CheckpointCard } from "@repo/ui/CheckpointCard";
+import { SpecIssues } from "@repo/ui/SpecIssues";
 import { Exit } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
@@ -44,6 +45,13 @@ export function SessionCheckpoint({ sessionId }: { sessionId: string }) {
           decline({ params: { id: checkpoint.id }, payload: { note } }),
         )
       }
-    />
+    >
+      {checkpoint.spec && (
+        <SpecIssues
+          brief={checkpoint.spec.brief}
+          tickets={checkpoint.spec.tickets}
+        />
+      )}
+    </CheckpointCard>
   );
 }
