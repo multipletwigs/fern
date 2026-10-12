@@ -17,6 +17,13 @@ import {
   subagentItem,
 } from "../subagent/SubagentCall";
 import type { SubagentMetadata } from "../subagent/SubagentFiles";
+import {
+  assistantMessage,
+  field,
+  tag,
+  usageTotal,
+  userMessage,
+} from "./messages";
 
 // Turns the messages the Agent SDK reads from a transcript into renderable items. The SDK has
 // already resolved the active branch and dropped injected skill bodies.
@@ -30,15 +37,6 @@ export type StoredMessage = SessionMessage & {
   readonly is_meta?: boolean;
   readonly origin?: { readonly kind: string; readonly name?: string };
 };
-
-// The SDK types `message` as unknown, but it is the API message Claude Code stored, so it is read
-// with the Anthropic SDK's own types.
-const userMessage = (m: SessionMessage) =>
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  m.message as MessageParam;
-const assistantMessage = (m: SessionMessage) =>
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  m.message as Message;
 
 // What Claude Code records in place of a reply when it resumes a Session whose last message never
 // got one. It isn't Claude replying, so it marks that message unanswered instead.
@@ -79,16 +77,8 @@ const imagesOf = (content: MessageParam["content"]) =>
           : [],
       );
 
-const tag = (text: string, name: string) =>
-  new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim();
-
 const stripReminders = (text: string) =>
   text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
-
-const field = (input: unknown, key: string) =>
-  Predicate.hasProperty(input, key) && Predicate.isString(input[key])
-    ? input[key]
-    : undefined;
 
 const prefixLines = (text: string | undefined, prefix: string) =>
   text === undefined ? [] : text.split("\n").map((line) => prefix + line);
@@ -320,15 +310,7 @@ export const buildView = (
     const message = assistantMessage(m);
     if (isNoResponsePlaceholder(message)) continue;
     model = message.model;
-    // Everything the request read, plus what it wrote: the context the next request starts from.
-    // Synthetic messages, such as API errors Claude Code records, carry no usage worth reading.
-    const usage = message.usage;
-    const total = usage
-      ? usage.input_tokens +
-        (usage.cache_creation_input_tokens ?? 0) +
-        (usage.cache_read_input_tokens ?? 0) +
-        usage.output_tokens
-      : 0;
+    const total = usageTotal(message.usage);
     if (total > 0 && m.parent_tool_use_id === null) contextTokens = total;
     if (m.timestamp) lastRequestAt = DateTime.makeUnsafe(m.timestamp);
     if ((message.usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0)

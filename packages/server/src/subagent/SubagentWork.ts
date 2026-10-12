@@ -1,15 +1,9 @@
-import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { Message } from "@anthropic-ai/sdk/resources/messages";
 import { Predicate } from "effect";
+import { assistantMessage, usageTotal } from "../transcript/messages";
 import type { StoredMessage } from "../transcript/View";
 
 // What a Subagent's own transcript says of its work. Claude Code records the same stats on the
 // Agent call's result, but the Agent SDK doesn't pass them through, so they are worked out here.
-
-// The SDK types `message` as unknown, but it is the API message Claude Code stored.
-const assistantMessage = (m: SessionMessage) =>
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  m.message as Message;
 
 const replies = (messages: ReadonlyArray<StoredMessage>) =>
   messages.flatMap((m) =>
@@ -63,13 +57,7 @@ export const statsOf = (messages: ReadonlyArray<StoredMessage>) => {
       if (block.type === "tool_use") calls.add(block.id);
     // Claude Code writes each block of a reply on a line of its own, each with the reply's usage
     // so far, so the last one with usage counts.
-    const usage = reply.usage;
-    const total = usage
-      ? usage.input_tokens +
-        (usage.cache_creation_input_tokens ?? 0) +
-        (usage.cache_read_input_tokens ?? 0) +
-        usage.output_tokens
-      : 0;
+    const total = usageTotal(reply.usage);
     if (total > 0) tokens = total;
   }
   return {

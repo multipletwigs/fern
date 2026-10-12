@@ -1,6 +1,6 @@
 import type { ToolUseBlock } from "@anthropic-ai/sdk/resources/messages";
 import type { SubagentStatus, TranscriptItem } from "@repo/api";
-import { Predicate } from "effect";
+import { field, tag } from "../transcript/messages";
 import type { SubagentMetadata } from "./SubagentFiles";
 
 // An Agent call in a transcript, read as the Subagent it started.
@@ -8,14 +8,6 @@ import type { SubagentMetadata } from "./SubagentFiles";
 // Claude Code's Agent tool, called Task before 2.x.
 export const isAgentCall = (block: ToolUseBlock) =>
   block.name === "Agent" || block.name === "Task";
-
-const field = (input: unknown, key: string) =>
-  Predicate.hasProperty(input, key) && Predicate.isString(input[key])
-    ? input[key]
-    : undefined;
-
-const tag = (text: string, name: string) =>
-  new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim();
 
 // What the Agent call's result says of the Subagent: its id, and whether it only started it in the
 // background.
