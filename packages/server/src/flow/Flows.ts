@@ -213,10 +213,13 @@ export class Flows extends Context.Service<
       const pendingOf = SqlSchema.findOneOption({
         Request: Schema.String,
         Result: CheckpointRow,
+        // An archived Session waits on nothing.
         execute: (sessionId) => sql`
-          SELECT * FROM checkpoints
-          WHERE session_id = ${sessionId} AND status = 'pending'
-          ORDER BY raised_at DESC LIMIT 1`,
+          SELECT checkpoints.* FROM checkpoints
+          JOIN hosted_sessions ON hosted_sessions.id = checkpoints.session_id
+          WHERE checkpoints.session_id = ${sessionId} AND checkpoints.status = 'pending'
+            AND hosted_sessions.archived_at IS NULL
+          ORDER BY checkpoints.raised_at DESC LIMIT 1`,
       });
       const pending = SqlSchema.findAll({
         Request: Schema.Void,

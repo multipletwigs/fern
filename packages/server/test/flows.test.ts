@@ -541,6 +541,8 @@ layer(server(freshDatabase()), { excludeTestServices: true })("Flows", (it) => {
           (all) => !all.some((c) => c.sessionId === id),
         );
         assert.isFalse(queue?.some((c) => c.sessionId === id));
+        const flow = yield* firstWhere(live.Flow({ session: id }), Boolean);
+        assert.isUndefined(flow?.checkpoint);
       }),
   );
 });
