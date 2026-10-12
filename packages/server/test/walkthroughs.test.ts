@@ -32,6 +32,7 @@ import {
   UnusedFlows,
   UnusedRounds,
   UnusedTranscripts,
+  UnusedSubagents,
   unusedTurns,
   UnusedWorkspace,
   UnusedWorktreeCleanup,
@@ -147,6 +148,7 @@ const hunkIn = (request: WriteRequest | undefined, path: string) =>
 const Services = Layer.mergeAll(
   UnusedRounds,
   UnusedTranscripts,
+  UnusedSubagents,
   NoEscapes,
   UnusedFlows,
   UnusedCommands,

@@ -4,6 +4,7 @@ import { Commands } from "../src/commands/Commands";
 import { Flows } from "../src/flow/Flows";
 import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
 import { Rounds } from "../src/round/Rounds";
+import { Subagents } from "../src/subagent/Subagents";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { Turns } from "../src/turn/Turns";
 import { Walkthroughs } from "../src/walkthrough/Walkthroughs";
@@ -24,6 +25,14 @@ export const UnusedTranscripts = Layer.succeed(
   Transcripts.of({
     current: Effect.die("unused"),
     projects: Stream.die("unused"),
+    live: () => Effect.die("unused"),
+  }),
+);
+
+export const UnusedSubagents = Layer.succeed(
+  Subagents,
+  Subagents.of({
+    list: () => Effect.die("unused"),
     live: () => Effect.die("unused"),
   }),
 );

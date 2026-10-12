@@ -27,6 +27,7 @@ import { sdk } from "../agentSdk";
 import { SubagentFiles } from "../subagent/SubagentFiles";
 import { HostedSessions, type HostedWorktree } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
+import { diffItems, type Sent } from "./diff";
 import { buildView } from "./View";
 
 // Reads Claude Code transcripts through the Agent SDK, which honours CLAUDE_CONFIG_DIR.
@@ -157,7 +158,11 @@ export class Transcripts extends Context.Service<
           yield* info;
 
           return Stream.fromEffectSchedule(
-            Effect.all({ latest: info, hostedTurn: turns.turn(id) }).pipe(
+            Effect.all({
+              latest: info,
+              hostedTurn: turns.turn(id),
+              subagents: subagentFiles.stamp(id),
+            }).pipe(
               // A poll that misses the file (the SDK returns undefined on any read error) skips a
               // beat. Ending the stream would leave the page on its last header.
               Effect.asSome,
@@ -167,12 +172,14 @@ export class Transcripts extends Context.Service<
           ).pipe(
             Stream.filter(Option.isSome),
             Stream.map((polled) => polled.value),
-            // Re-read when the transcript changes or a turn Fern runs starts or ends.
+            // Re-read when the transcript or one of its Subagents' files changes, or a turn Fern
+            // runs starts or ends.
             Stream.changesWith(
               (a, b) =>
                 a.latest.lastModified === b.latest.lastModified &&
                 a.latest.fileSize === b.latest.fileSize &&
-                a.hostedTurn === b.hostedTurn,
+                a.hostedTurn === b.hostedTurn &&
+                a.subagents === b.subagents,
             ),
             Stream.mapEffect(({ latest, hostedTurn }) =>
               Effect.all([
@@ -191,17 +198,13 @@ export class Transcripts extends Context.Service<
             ),
             // Only send items that changed since the previous update on this stream.
             Stream.mapAccum(
-              () => new Map<string, string>(),
+              (): Sent => new Map(),
               (sent, { header, items }) => {
-                const next = new Map(
-                  items.map((item) => [item.id, JSON.stringify(item)]),
-                );
+                const { next, order, upserts } = diffItems(sent, items);
                 const update = TranscriptUpdate.make({
                   header,
-                  order: items.map((item) => item.id),
-                  upserts: items.filter(
-                    (item) => sent.get(item.id) !== next.get(item.id),
-                  ),
+                  order,
+                  upserts,
                 });
                 return [next, [update]] as const;
               },

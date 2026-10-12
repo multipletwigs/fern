@@ -10,6 +10,7 @@ import { IssueTracker } from "./issue/IssueTracker";
 import { Transcripts } from "./transcript/Transcripts";
 import { Snapshots } from "./snapshot/Snapshots";
 import { SubagentFiles } from "./subagent/SubagentFiles";
+import { Subagents } from "./subagent/Subagents";
 import { LiveHandlersNoDeps } from "./live";
 import { Rounds } from "./round/Rounds";
 import { FernTools } from "./turn/FernTools";
@@ -156,7 +157,12 @@ export const handlersWith = (
   > = IssueTracker.layer,
 ) =>
   Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
-    Layer.provide([Transcripts.layer, WorktreeCleanup.layer, Rounds.layer]),
+    Layer.provide([
+      Transcripts.layer,
+      Subagents.layer,
+      WorktreeCleanup.layer,
+      Rounds.layer,
+    ]),
     // The merge sweep waits for a Session's Flow to be over.
     Layer.provideMerge(Flows.layer),
     // Flows writes the Walkthrough the end of Implement waits on.

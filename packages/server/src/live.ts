@@ -4,6 +4,7 @@ import { RpcSerialization, RpcServer } from "effect/rpc";
 import { Autonomy } from "./autonomy/Autonomy";
 import { Flows } from "./flow/Flows";
 import { Rounds } from "./round/Rounds";
+import { Subagents } from "./subagent/Subagents";
 import { Transcripts } from "./transcript/Transcripts";
 import { Walkthroughs } from "./walkthrough/Walkthroughs";
 import { Workspace } from "./workspace/Workspace";
@@ -17,9 +18,13 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
     const flows = yield* Flows;
     const rounds = yield* Rounds;
     const autonomy = yield* Autonomy;
+    const subagents = yield* Subagents;
     return LiveRpcs.of({
       Projects: () => transcripts.projects,
       Transcript: ({ id }) => Stream.unwrap(transcripts.live(id)),
+      Subagents: ({ sessionId }) => Stream.unwrap(subagents.list(sessionId)),
+      Subagent: ({ sessionId, agentId }) =>
+        Stream.unwrap(subagents.live(sessionId, agentId)),
       ProjectFiles: ({ root }) => Stream.unwrap(workspace.files(root)),
       File: ({ root, path }) => Stream.unwrap(workspace.file(root, path)),
       Changes: ({ root, session }) =>

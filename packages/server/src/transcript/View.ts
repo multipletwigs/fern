@@ -25,7 +25,7 @@ const MAX_RESULT_CHARS = 6_000;
 const MAX_DIFF_LINES = 600;
 
 // Fields the SDK passes through from the transcript line without declaring them.
-type StoredMessage = SessionMessage & {
+export type StoredMessage = SessionMessage & {
   readonly timestamp?: string;
   readonly is_meta?: boolean;
   readonly origin?: { readonly kind: string };
@@ -185,20 +185,17 @@ const fromUser = (
   };
 };
 
-export const buildView = (
-  info: SDKSessionInfo,
+// Turns a transcript's messages into items: the Session's own, or a Subagent's.
+export const buildItems = (
   messages: ReadonlyArray<StoredMessage>,
   context: {
-    readonly hostedTurn?: HostedTurn;
-    // The window's size as a turn Fern ran on the Session last reported it, if one has: the
-    // transcript doesn't record it.
-    readonly contextWindow?: number;
+    // The folder the transcript ran in, left out of the paths its tool calls name.
+    readonly cwd: string;
     // What Claude Code recorded of the Session's Subagents beside its transcript.
     readonly subagents?: ReadonlyArray<SubagentMetadata>;
-  } = {},
+  },
 ) => {
-  const { hostedTurn, contextWindow } = context;
-  const cwd = info.cwd ?? "";
+  const { cwd } = context;
   const subagents = new Map(
     (context.subagents ?? []).flatMap((s) =>
       s.toolUseId === undefined ? [] : [[s.toolUseId, s] as const],
@@ -223,11 +220,6 @@ export const buildView = (
   }
 
   const items: Array<TranscriptItem> = [];
-  let model: string | undefined;
-  let contextTokens: number | undefined;
-  let lastRequestAt: DateTime.Utc | undefined;
-  let cacheTtl = Duration.minutes(5);
-
   for (const m of messages) {
     if (m.type === "user") {
       const { content } = userMessage(m);
@@ -244,20 +236,6 @@ export const buildView = (
           items[items.length - 1] = { ...last, unanswered: true };
         continue;
       }
-      model = message.model;
-      // Everything the request read, plus what it wrote: the context the next request starts from.
-      // Synthetic messages, such as API errors Claude Code records, carry no usage worth reading.
-      const usage = message.usage;
-      const total = usage
-        ? usage.input_tokens +
-          (usage.cache_creation_input_tokens ?? 0) +
-          (usage.cache_read_input_tokens ?? 0) +
-          usage.output_tokens
-        : 0;
-      if (total > 0 && m.parent_tool_use_id === null) contextTokens = total;
-      if (m.timestamp) lastRequestAt = DateTime.makeUnsafe(m.timestamp);
-      if ((message.usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0)
-        cacheTtl = Duration.hours(1);
       message.content.forEach((block, index) => {
         const id = `${m.uuid}:${index}`;
         if (block.type === "text" && block.text.trim())
@@ -279,6 +257,54 @@ export const buildView = (
           );
       });
     }
+  }
+  return items;
+};
+
+// The text a user message carries, without Claude Code's reminders: a Subagent's Assignment.
+export const promptText = (m: SessionMessage) =>
+  stripReminders(textOf(userMessage(m).content));
+
+export const buildView = (
+  info: SDKSessionInfo,
+  messages: ReadonlyArray<StoredMessage>,
+  context: {
+    readonly hostedTurn?: HostedTurn;
+    // The window's size as a turn Fern ran on the Session last reported it, if one has: the
+    // transcript doesn't record it.
+    readonly contextWindow?: number;
+    // What Claude Code recorded of the Session's Subagents beside its transcript.
+    readonly subagents?: ReadonlyArray<SubagentMetadata>;
+  } = {},
+) => {
+  const { hostedTurn, contextWindow } = context;
+  const items = buildItems(messages, {
+    cwd: info.cwd ?? "",
+    subagents: context.subagents,
+  });
+
+  let model: string | undefined;
+  let contextTokens: number | undefined;
+  let lastRequestAt: DateTime.Utc | undefined;
+  let cacheTtl = Duration.minutes(5);
+  for (const m of messages) {
+    if (m.type !== "assistant") continue;
+    const message = assistantMessage(m);
+    if (isNoResponsePlaceholder(message)) continue;
+    model = message.model;
+    // Everything the request read, plus what it wrote: the context the next request starts from.
+    // Synthetic messages, such as API errors Claude Code records, carry no usage worth reading.
+    const usage = message.usage;
+    const total = usage
+      ? usage.input_tokens +
+        (usage.cache_creation_input_tokens ?? 0) +
+        (usage.cache_read_input_tokens ?? 0) +
+        usage.output_tokens
+      : 0;
+    if (total > 0 && m.parent_tool_use_id === null) contextTokens = total;
+    if (m.timestamp) lastRequestAt = DateTime.makeUnsafe(m.timestamp);
+    if ((message.usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0)
+      cacheTtl = Duration.hours(1);
   }
 
   const header = SessionHeader.make({

@@ -16,6 +16,7 @@ import {
   TranscriptError,
   TranscriptUpdate,
 } from "./Sessions";
+import { SubagentNotFound, SubagentSummary, SubagentUpdate } from "./Subagents";
 import { Walkthrough, WalkthroughError } from "./Walkthroughs";
 
 // Everything the page keeps current, each a stream of the latest value, all over one WebSocket at
@@ -34,6 +35,23 @@ export class LiveRpcs extends RpcGroup.make(
     payload: { id: Schema.NonEmptyString },
     success: TranscriptUpdate,
     error: Schema.Union([SessionNotFound, TranscriptError]),
+    stream: true,
+  }),
+  // A Session's Subagents in the order they started, re-sent whenever one starts or changes.
+  Rpc.make("Subagents", {
+    payload: { sessionId: Schema.NonEmptyString },
+    success: Schema.Array(SubagentSummary),
+    error: Schema.Union([SessionNotFound, TranscriptError]),
+    stream: true,
+  }),
+  // One Subagent's Assignment and work: everything, then what changes.
+  Rpc.make("Subagent", {
+    payload: {
+      sessionId: Schema.NonEmptyString,
+      agentId: Schema.NonEmptyString,
+    },
+    success: SubagentUpdate,
+    error: Schema.Union([SessionNotFound, SubagentNotFound, TranscriptError]),
     stream: true,
   }),
   // Every file git doesn't ignore in a Project's folder, as relative paths, re-sent when the set

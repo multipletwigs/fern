@@ -26,6 +26,8 @@ export interface SubagentMetadata {
   readonly toolUseId?: string;
   // 1 for a Subagent of the Session itself, 2 for one a Subagent started, and so on.
   readonly spawnDepth?: number;
+  // The Subagent that started it, for one started by another Subagent.
+  readonly parentAgentId?: string;
   // Whether it was started in the background.
   readonly background?: boolean;
 }
@@ -37,6 +39,7 @@ const decodeMetadata = Schema.decodeUnknownOption(
       description: Schema.optional(Schema.String),
       toolUseId: Schema.optional(Schema.String),
       spawnDepth: Schema.optional(Schema.Finite),
+      parentAgentId: Schema.optional(Schema.String),
       requestShape: Schema.optional(Schema.String),
     }),
   ),
@@ -51,6 +54,8 @@ export class SubagentFiles extends Context.Service<
     folder(sessionId: string): Effect.Effect<Option.Option<string>>;
     // The metadata of each of the Session's Subagents that has it, nested ones included.
     metadata(sessionId: string): Effect.Effect<ReadonlyArray<SubagentMetadata>>;
+    // A key that changes whenever one of the Session's Subagent files is written, added or removed.
+    stamp(sessionId: string): Effect.Effect<string>;
   }
 >()("@repo/server/subagent/SubagentFiles") {
   static readonly layer = Layer.effect(
@@ -90,6 +95,7 @@ export class SubagentFiles extends Context.Service<
               description: m.description,
               toolUseId: m.toolUseId,
               spawnDepth: m.spawnDepth,
+              parentAgentId: m.parentAgentId,
               background:
                 m.requestShape === undefined
                   ? undefined
@@ -114,7 +120,26 @@ export class SubagentFiles extends Context.Service<
         return read.flatMap((m) => (Option.isSome(m) ? [m.value] : []));
       });
 
-      return SubagentFiles.of({ folder, metadata });
+      const stamp = Effect.fn("SubagentFiles.stamp")(
+        function* (sessionId: string) {
+          const dir = yield* folder(sessionId);
+          if (Option.isNone(dir)) return "";
+          const names = yield* fs.readDirectory(dir.value);
+          const stats = yield* Effect.forEach(names.toSorted(), (name) =>
+            fs.stat(path.join(dir.value, name)).pipe(
+              Effect.map(
+                (info) =>
+                  `${name}:${Option.getOrUndefined(info.mtime)?.getTime()}:${info.size}`,
+              ),
+              Effect.orElseSucceed(() => name),
+            ),
+          );
+          return stats.join("\n");
+        },
+        Effect.orElseSucceed(() => ""),
+      );
+
+      return SubagentFiles.of({ folder, metadata, stamp });
     }),
   );
 }

@@ -40,6 +40,7 @@ const TestTranscripts = Transcripts.layer.pipe(
       SubagentFiles.of({
         folder: () => Effect.succeedNone,
         metadata: () => Effect.succeed([]),
+        stamp: () => Effect.succeed(""),
       }),
     ),
     Layer.succeed(
