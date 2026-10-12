@@ -3,6 +3,7 @@ import { Chip } from "@repo/ui/Chip";
 import { CommandCard } from "@repo/ui/CommandCard";
 import { Diff } from "@repo/ui/Diff";
 import { Expandable } from "@repo/ui/Expandable";
+import { HandBackRow } from "@repo/ui/HandBackRow";
 import { Markdown } from "@repo/ui/Markdown";
 import { MessageCard } from "@repo/ui/MessageCard";
 import { Pre } from "@repo/ui/Pre";
@@ -91,6 +92,16 @@ export function ItemView({
               ? () => onOpenSubagent(agentId)
               : undefined
           }
+        />
+      );
+    }
+    case "HandBack": {
+      const { agentId } = item;
+      return (
+        <HandBackRow
+          agentType={item.agentType}
+          text={item.text}
+          onOpen={onOpenSubagent && (() => onOpenSubagent(agentId))}
         />
       );
     }

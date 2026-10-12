@@ -28,7 +28,7 @@ const MAX_DIFF_LINES = 600;
 export type StoredMessage = SessionMessage & {
   readonly timestamp?: string;
   readonly is_meta?: boolean;
-  readonly origin?: { readonly kind: string };
+  readonly origin?: { readonly kind: string; readonly name?: string };
 };
 
 // The SDK types `message` as unknown, but it is the API message Claude Code stored, so it is read
@@ -146,16 +146,42 @@ const toolCall = (
   };
 };
 
+// The Hand-back in a message Claude Code delivers from a Subagent: after its frame, with the indent
+// the harness puts on every line taken off.
+const deliveredHandBack = (text: string) => {
+  const body = /<agent-message from="[^"]+">([\s\S]*?)<\/agent-message>/.exec(
+    text,
+  )?.[1];
+  if (body === undefined) return "";
+  const marker = "The report follows:\n";
+  const at = body.indexOf(marker);
+  return (at === -1 ? body : body.slice(at + marker.length))
+    .split("\n")
+    .map((line) => line.replace(/^ {2}/, ""))
+    .join("\n")
+    .trim();
+};
+
 const fromUser = (
   m: StoredMessage,
   text: string,
   images: ReadonlyArray<string>,
+  subagents: ReadonlyArray<SubagentMetadata>,
 ): TranscriptItem | undefined => {
   const id = m.uuid;
   if (m.is_meta) {
     const from = /<agent-message from="([^"]+)">/.exec(text)?.[1];
     return from
-      ? { _tag: "Notice", id, text: `Report from agent ${from}` }
+      ? {
+          _tag: "HandBack",
+          id,
+          agentId: from,
+          agentType:
+            subagents.find((s) => s.agentId === from)?.agentType ??
+            m.origin?.name ??
+            "Subagent",
+          text: deliveredHandBack(text),
+        }
       : undefined;
   }
   if (m.origin?.kind === "task-notification")
@@ -226,7 +252,9 @@ export const buildItems = (
       const text = textOf(content);
       const images = imagesOf(content);
       const item =
-        text || images.length > 0 ? fromUser(m, text, images) : undefined;
+        text || images.length > 0
+          ? fromUser(m, text, images, context.subagents ?? [])
+          : undefined;
       if (item) items.push(item);
     } else if (m.type === "assistant") {
       const message = assistantMessage(m);

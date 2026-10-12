@@ -212,6 +212,16 @@ export const Subagent = Schema.TaggedStruct("Subagent", {
   status: SubagentStatus,
 });
 
+// A Subagent's Hand-back as the Session received it, in place of a bare notice: Claude Code delivers
+// a background Subagent's Hand-back to the Session as a message from the Subagent.
+export const HandBack = Schema.TaggedStruct("HandBack", {
+  id: Schema.String,
+  agentId: Schema.String,
+  // E.g. "Explore" or "general-purpose".
+  agentType: Schema.String,
+  text: Schema.String,
+});
+
 export const TranscriptItem = Schema.Union([
   Prompt,
   Command,
@@ -221,6 +231,7 @@ export const TranscriptItem = Schema.Union([
   Thinking,
   ToolCall,
   Subagent,
+  HandBack,
 ]);
 export type TranscriptItem = typeof TranscriptItem.Type;
 

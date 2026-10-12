@@ -126,9 +126,16 @@ const settle = (
   return "running";
 };
 
-// Agent call rows with their status settled the same way as the Subagents' tabs.
+// Agent call rows with their status settled the same way as the Subagents' tabs, and Hand-back
+// rows in the Subagent's own words, without the frame the harness may add when it delivers them.
 const settleRows = (items: ReadonlyArray<TranscriptItem>, census: Census) =>
   items.map((item): TranscriptItem => {
+    if (item._tag === "HandBack") {
+      const text = census.standings.get(item.agentId)?.handBack;
+      return text === undefined || text === item.text
+        ? item
+        : { ...item, text };
+    }
     if (item._tag !== "Subagent") return item;
     const standing =
       item.agentId === undefined
