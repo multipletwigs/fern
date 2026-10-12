@@ -218,6 +218,17 @@ const migrations = {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE checkpoints ADD COLUMN walkthrough_id TEXT`;
   }),
+  // The size of each Session's context window, as the latest turn Fern ran on it reported. Claude
+  // Code reports it only in a turn's result, so it is kept for when Fern restarts.
+  "0012_context_windows": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE context_windows (
+        session_id TEXT PRIMARY KEY,
+        context_window INTEGER NOT NULL
+      )
+    `;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

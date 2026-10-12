@@ -1,6 +1,7 @@
 import { assert, layer } from "@effect/vitest";
 import { Effect, Layer, Stream } from "effect";
 import { vi } from "vitest";
+import { DatabaseLive } from "../src/database/Database";
 import { GitError } from "../src/git/Git";
 import { Snapshots } from "../src/snapshot/Snapshots";
 import { FernTools } from "../src/turn/FernTools";
@@ -97,6 +98,7 @@ const NoSnapshots = Layer.succeed(
 );
 const TestTurns = Turns.layer.pipe(
   Layer.provide([
+    DatabaseLive(":memory:"),
     NoSnapshots,
     Layer.succeed(
       HostedSessions,
@@ -175,7 +177,11 @@ layer(TestTurns, { excludeTestServices: true })(
 
           // The main loop's result is in, but the subagent is still working: the Session runs.
           assert.include(processes[0]?.log ?? [], `result "launched"`);
-          assert.isTrue((yield* turns.turn(SESSION))?.running);
+          const meanwhile = yield* turns.turn(SESSION);
+          assert.isTrue(meanwhile?.running);
+          // The result reported the context window, so the ring shows it before the turn ends.
+          assert.strictEqual(meanwhile?.contextWindow, 1_000);
+          assert.strictEqual(yield* turns.contextWindow(SESSION), 1_000);
           assert.deepStrictEqual(finished, []);
 
           working.release();

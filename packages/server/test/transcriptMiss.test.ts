@@ -36,7 +36,11 @@ const TestTranscripts = Transcripts.layer.pipe(
   Layer.provide([
     Layer.succeed(
       Turns,
-      Turns.of({ ...unusedTurns, turn: () => Effect.sync(() => turn) }),
+      Turns.of({
+        ...unusedTurns,
+        turn: () => Effect.sync(() => turn),
+        contextWindow: () => Effect.undefined,
+      }),
     ),
     Layer.succeed(
       HostedSessions,

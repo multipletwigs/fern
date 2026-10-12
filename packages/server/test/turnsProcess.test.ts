@@ -5,6 +5,7 @@ import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { vi } from "vitest";
 import { FernApi } from "@repo/api";
+import { DatabaseLive } from "../src/database/Database";
 import { GitError } from "../src/git/Git";
 import { HandlersNoDeps } from "../src/http";
 import { Snapshots } from "../src/snapshot/Snapshots";
@@ -52,6 +53,7 @@ const NoSnapshots = Layer.succeed(
 );
 const TestTurns = Turns.layer.pipe(
   Layer.provide([
+    DatabaseLive(":memory:"),
     NoSnapshots,
     Layer.succeed(
       HostedSessions,

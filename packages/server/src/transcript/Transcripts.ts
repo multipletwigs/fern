@@ -173,9 +173,12 @@ export class Transcripts extends Context.Service<
                 a.hostedTurn === b.hostedTurn,
             ),
             Stream.mapEffect(({ latest, hostedTurn }) =>
-              sdk("getSessionMessages", () => getSessionMessages(id)).pipe(
-                Effect.map((messages) =>
-                  buildView(latest, messages, hostedTurn),
+              Effect.all([
+                sdk("getSessionMessages", () => getSessionMessages(id)),
+                turns.contextWindow(id),
+              ]).pipe(
+                Effect.map(([messages, contextWindow]) =>
+                  buildView(latest, messages, hostedTurn, contextWindow),
                 ),
               ),
             ),

@@ -34,6 +34,7 @@ import {
   Schema,
   Stream,
 } from "effect";
+import { SqlClient, SqlSchema } from "effect/sql";
 import { sdk } from "../agentSdk";
 import { Snapshots } from "../snapshot/Snapshots";
 import { FernTools } from "./FernTools";
@@ -248,6 +249,9 @@ export class Turns extends Context.Service<
     close(id: string): Effect.Effect<void>;
     // The latest turn Fern ran on the Session, if any.
     turn(id: string): Effect.Effect<HostedTurn | undefined>;
+    // The size of the Session's context window, as the latest turn Fern ran on it reported, even
+    // one from before Fern last started.
+    contextWindow(id: string): Effect.Effect<number | undefined>;
     // Sessions with a turn running right now.
     readonly running: Effect.Effect<ReadonlyArray<string>>;
     // Other Sessions whose turns ran in the repository at or after `sinceMs`.
@@ -267,6 +271,7 @@ export class Turns extends Context.Service<
       const hosted = yield* HostedSessions;
       const tools = yield* FernTools;
       const worktrees = yield* Worktrees;
+      const sql = yield* SqlClient.SqlClient;
       // Each open process's fiber, by its key.
       const fibers = yield* FiberMap.make<string>();
       // Each idle Session's countdown to closing its process.
@@ -277,6 +282,30 @@ export class Turns extends Context.Service<
       const processes = new Map<string, Process>();
       const windows: Array<TurnWindow> = [];
       let opened = 0;
+
+      // Each Session's context window outlives Fern, as Claude Code only reports it in a result.
+      const savedContextWindow = SqlSchema.findOneOption({
+        Request: Schema.String,
+        Result: Schema.Struct({ contextWindow: Schema.Finite }),
+        execute: (id) =>
+          sql`SELECT context_window FROM context_windows WHERE session_id = ${id}`,
+      });
+      const saveContextWindow = (id: string, contextWindow: number) =>
+        sql`INSERT INTO context_windows ${sql.insert({ sessionId: id, contextWindow })}
+        ON CONFLICT (session_id) DO UPDATE SET context_window = excluded.context_window`.pipe(
+          Effect.orDie,
+        );
+      const contextWindow = (id: string) =>
+        Effect.suspend(() => {
+          const known = turns.get(id)?.contextWindow;
+          if (known !== undefined) return Effect.succeed(known);
+          return savedContextWindow(id).pipe(
+            Effect.map((saved) =>
+              Option.isSome(saved) ? saved.value.contextWindow : undefined,
+            ),
+            Effect.orDie,
+          );
+        });
 
       const showQueue = (process: Process) => {
         const turn = turns.get(process.id);
@@ -350,6 +379,8 @@ export class Turns extends Context.Service<
       const observe = (process: Process, message: SDKMessage) =>
         Effect.gen(function* () {
           const endedAt = yield* DateTime.now;
+          // A context window reported afresh, kept from the result that reports it on.
+          let reported: number | undefined;
           const outcome = yield* Effect.sync(() => {
             const taken = takenIn(message);
             if (taken.length > 0) {
@@ -367,6 +398,13 @@ export class Turns extends Context.Service<
             process.progress = progress(process.progress, message);
             process.report = report(process.report, message);
             if (message.type !== "result") return "running" as const;
+            const turn = turns.get(process.id);
+            const window = process.report.contextWindow;
+            if (turn && window !== undefined && window !== turn.contextWindow) {
+              // Shown from this result on, as background tasks may keep the turn going.
+              turns.set(process.id, { ...turn, contextWindow: window });
+              reported = window;
+            }
             const stopped = process.stopping !== undefined;
             if (!stopped && !process.progress.over) return "running" as const;
             // Claude Code still has messages to take in, as turns of their own.
@@ -384,6 +422,8 @@ export class Turns extends Context.Service<
               ? ("finished" as const)
               : ("ended" as const);
           });
+          if (reported !== undefined)
+            yield* saveContextWindow(process.id, reported);
           if (outcome === "finished")
             yield* PubSub.publish(finished, {
               id: process.id,
@@ -691,6 +731,7 @@ export class Turns extends Context.Service<
         interrupt,
         close,
         turn: (id) => Effect.sync(() => turns.get(id)),
+        contextWindow,
         running: Effect.sync(() =>
           Array.from(turns).flatMap(([id, turn]) => (turn.running ? [id] : [])),
         ),

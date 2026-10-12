@@ -178,10 +178,13 @@ const fromUser = (
   };
 };
 
+// `contextWindow` is the window's size as a turn Fern ran on the Session last reported it, if one
+// has: the transcript doesn't record it.
 export const buildView = (
   info: SDKSessionInfo,
   messages: ReadonlyArray<StoredMessage>,
   hostedTurn?: HostedTurn,
+  contextWindow?: number,
 ) => {
   const cwd = info.cwd ?? "";
   const results = new Map<string, { text: string; isError: boolean }>();
@@ -256,7 +259,7 @@ export const buildView = (
     gitBranch: info.gitBranch,
     model,
     contextTokens,
-    contextWindow: hostedTurn?.contextWindow,
+    contextWindow: contextWindow ?? hostedTurn?.contextWindow,
     lastActivityAt: DateTime.makeUnsafe(info.lastModified),
     cacheExpiresAt:
       lastRequestAt && DateTime.addDuration(lastRequestAt, cacheTtl),

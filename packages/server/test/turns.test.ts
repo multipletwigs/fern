@@ -1,6 +1,7 @@
 import { assert, layer } from "@effect/vitest";
 import { Effect, Layer, Stream } from "effect";
 import { vi } from "vitest";
+import { DatabaseLive } from "../src/database/Database";
 import { GitError } from "../src/git/Git";
 import { Snapshots } from "../src/snapshot/Snapshots";
 import { FernTools } from "../src/turn/FernTools";
@@ -88,7 +89,13 @@ const TestTools = Layer.succeed(
   }),
 );
 const TestTurns = Turns.layer.pipe(
-  Layer.provide([NoSnapshots, KnownSessions, TestTools, FakeWorktrees]),
+  Layer.provide([
+    NoSnapshots,
+    KnownSessions,
+    TestTools,
+    FakeWorktrees,
+    DatabaseLive(":memory:"),
+  ]),
 );
 
 // What a Hosted Session's process is opened with besides its messages.
@@ -233,7 +240,13 @@ layer(TestTurns, { excludeTestServices: true })("Turns", (it) => {
 // Until the Flow engine supplies its own, a Hosted Session is only told about the Flow.
 layer(
   Turns.layer.pipe(
-    Layer.provide([NoSnapshots, KnownSessions, FernTools.layer, FakeWorktrees]),
+    Layer.provide([
+      NoSnapshots,
+      KnownSessions,
+      FernTools.layer,
+      FakeWorktrees,
+      DatabaseLive(":memory:"),
+    ]),
   ),
   { excludeTestServices: true },
 )("Turns with the default Fern tools", (it) => {
