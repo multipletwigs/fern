@@ -1,6 +1,5 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { isWorking, type SessionHeader } from "@repo/api";
-import { CacheCountdown } from "@repo/ui/CacheCountdown";
 import { Empty } from "@repo/ui/Empty";
 import { Glow } from "@repo/ui/Glow";
 import { ThinkingLine } from "@repo/ui/ThinkingLine";
@@ -343,11 +342,6 @@ export function Session({
             onClose={tabs.close}
           />
         </div>
-        {header?.cacheExpiresAt && (
-          <CacheCountdown
-            remainingMs={DateTime.toEpochMillis(header.cacheExpiresAt) - now}
-          />
-        )}
       </TopBar>
       <SessionChecklist sessionId={id} />
       <div className="relative flex min-h-0 flex-1 flex-col">

@@ -7,8 +7,14 @@ import type {
   MessageParam,
   ToolResultBlockParam,
   ToolUseBlock,
+  Usage,
 } from "@anthropic-ai/sdk/resources/messages";
-import { type HostedTurn, SessionHeader, type TranscriptItem } from "@repo/api";
+import {
+  type HostedTurn,
+  PromptCache,
+  SessionHeader,
+  type TranscriptItem,
+} from "@repo/api";
 import { DateTime, Duration, Option, Predicate, Schema } from "effect";
 import {
   type Endings,
@@ -303,6 +309,7 @@ export const buildView = (
 
   let model: string | undefined;
   let contextTokens: number | undefined;
+  let usage: Usage | undefined;
   let lastRequestAt: DateTime.Utc | undefined;
   let cacheTtl = Duration.minutes(5);
   for (const m of messages) {
@@ -311,7 +318,10 @@ export const buildView = (
     if (isNoResponsePlaceholder(message)) continue;
     model = message.model;
     const total = usageTotal(message.usage);
-    if (total > 0 && m.parent_tool_use_id === null) contextTokens = total;
+    if (total > 0 && m.parent_tool_use_id === null) {
+      contextTokens = total;
+      usage = message.usage;
+    }
     if (m.timestamp) lastRequestAt = DateTime.makeUnsafe(m.timestamp);
     if ((message.usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0)
       cacheTtl = Duration.hours(1);
@@ -326,8 +336,17 @@ export const buildView = (
     contextTokens,
     contextWindow: contextWindow ?? hostedTurn?.contextWindow,
     lastActivityAt: DateTime.makeUnsafe(info.lastModified),
-    cacheExpiresAt:
-      lastRequestAt && DateTime.addDuration(lastRequestAt, cacheTtl),
+    cache:
+      lastRequestAt &&
+      PromptCache.make({
+        lastRequestAt,
+        ttl: cacheTtl,
+        expiresAt: DateTime.addDuration(lastRequestAt, cacheTtl),
+        readTokens: usage?.cache_read_input_tokens ?? 0,
+        writtenTokens: usage?.cache_creation_input_tokens ?? 0,
+        uncachedTokens: usage?.input_tokens ?? 0,
+        outputTokens: usage?.output_tokens ?? 0,
+      }),
     hostedTurn,
   });
 

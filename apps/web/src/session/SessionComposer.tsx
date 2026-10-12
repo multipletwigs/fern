@@ -71,7 +71,7 @@ export function SessionComposer({
           : (failure ?? (turn?.running ? undefined : turn?.error))
       }
       commands={commands}
-      tools={<SessionTools header={header} disabled={inUse} />}
+      tools={<SessionTools header={header} now={now} disabled={inUse} />}
       above={
         <>
           <SessionMilestones sessionId={header.id} />
