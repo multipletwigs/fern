@@ -66,6 +66,7 @@ const toProjects = ({ infos, turns, worktrees }: Listing) => {
         title: info.customTitle ?? info.summary,
         gitBranch: info.gitBranch ?? worktree?.branch,
         worktree: worktree ? (info.cwd ?? worktree.cwd) : undefined,
+        ownWorktree: worktree?.id === info.sessionId ? true : undefined,
         lastActivityAt: DateTime.makeUnsafe(info.lastModified),
         hostedTurn: turns.get(info.sessionId),
       }),
@@ -82,7 +83,8 @@ const listingKey = ({ infos, turns, worktrees }: Listing) =>
   infos
     .map((i) => {
       const turn = turns.get(i.sessionId);
-      return `${i.sessionId}:${i.lastModified}:${i.customTitle ?? i.summary}:${i.gitBranch}:${worktreeOf(worktrees, i)?.projectRoot}:${turn?.running}:${turn?.endedAt?.epochMilliseconds}`;
+      const worktree = worktreeOf(worktrees, i);
+      return `${i.sessionId}:${i.lastModified}:${i.customTitle ?? i.summary}:${i.gitBranch}:${worktree?.projectRoot}:${worktree?.id}:${turn?.running}:${turn?.endedAt?.epochMilliseconds}`;
     })
     .join("\n");
 

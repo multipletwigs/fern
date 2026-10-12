@@ -200,6 +200,33 @@ layer(
   );
 
   it.effect(
+    "only the Hosted Session a worktree was made for owns it, not a terminal Session run there",
+    () =>
+      Effect.gen(function* () {
+        const { id, turn } = yield* startSession("Fix the footer");
+        const terminal = crypto.randomUUID();
+        transcript(turn.cwd, terminal, "Check the footer", "cli");
+        const live = yield* makeLive;
+        const projects = yield* first(
+          live
+            .Projects()
+            .pipe(
+              Stream.filter((all) =>
+                all.some((p) => p.sessions.some((s) => s.id === terminal)),
+              ),
+            ),
+        );
+
+        const sessions = projects?.find((p) => p.path === repo)?.sessions;
+        const hosted = sessions?.find((s) => s.id === id);
+        const outside = sessions?.find((s) => s.id === terminal);
+        assert.strictEqual(outside?.worktree, turn.cwd);
+        assert.isTrue(hosted?.ownWorktree);
+        assert.isNotTrue(outside?.ownWorktree);
+      }),
+  );
+
+  it.effect(
     "keeps two Sessions' edits apart, each read from its own worktree",
     () =>
       Effect.gen(function* () {

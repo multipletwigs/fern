@@ -116,6 +116,9 @@ export class SessionSummary extends Schema.Class<SessionSummary>(
   // The Project's folder in the git worktree Fern made for the Session, where it runs. Its code and
   // changes are read from there.
   worktree: Schema.optional(Schema.String),
+  // Whether Fern made that worktree for this Session, a Hosted one, so archiving it removes the
+  // worktree. Not so for another Session run there, such as Claude Code in a terminal.
+  ownWorktree: Schema.optional(Schema.Boolean),
   lastActivityAt: Schema.DateTimeUtcFromMillis,
   hostedTurn: Schema.optional(HostedTurn),
 }) {}

@@ -134,7 +134,7 @@ export function Sidebar() {
                     preload(session.id, session.worktree ?? project.path)
                   }
                   action={
-                    session.worktree !== undefined && (
+                    session.ownWorktree === true && (
                       <ArchiveSession
                         sessionId={session.id}
                         title={session.title}
