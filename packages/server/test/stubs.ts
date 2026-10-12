@@ -35,6 +35,8 @@ export const UnusedSubagents = Layer.succeed(
     list: () => Effect.die("unused"),
     live: () => Effect.die("unused"),
     settleRows: () => Effect.die("unused"),
+    close: () => Effect.die("unused"),
+    reopen: () => Effect.die("unused"),
   }),
 );
 

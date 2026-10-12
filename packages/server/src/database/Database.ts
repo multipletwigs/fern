@@ -229,6 +229,18 @@ const migrations = {
       )
     `;
   }),
+  // Subagent tabs the developer closed, per Session. Reopening one deletes its row.
+  "0013_closed_subagents": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE closed_subagents (
+        session_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        closed_at INTEGER NOT NULL,
+        PRIMARY KEY (session_id, agent_id)
+      )
+    `;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

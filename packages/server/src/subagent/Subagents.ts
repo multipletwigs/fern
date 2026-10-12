@@ -25,7 +25,9 @@ import {
   Predicate,
   Schedule,
   Stream,
+  SubscriptionRef,
 } from "effect";
+import { SqlClient } from "effect/sql";
 import { sdk } from "../agentSdk";
 import { diffItems, type Sent } from "../transcript/diff";
 import { buildItems, promptText, type StoredMessage } from "../transcript/View";
@@ -51,19 +53,43 @@ interface Transcript {
   readonly metadata: SubagentMetadata | undefined;
 }
 
-// The Agent calls in the transcripts read, by the agent they started and by their own id.
+// The Agent calls in the transcripts read, by the agent they started and by their own id, and the
+// Subagent whose transcript each call is in, by the call's id.
 interface Calls {
   readonly byAgent: Map<string, SubagentItem>;
   readonly byCall: Map<string, SubagentItem>;
+  readonly callers: Map<string, string>;
 }
 
-const collectCalls = (items: ReadonlyArray<TranscriptItem>, calls: Calls) => {
+const noCalls = (): Calls => ({
+  byAgent: new Map(),
+  byCall: new Map(),
+  callers: new Map(),
+});
+
+// `caller` is the Subagent whose work the items are; none for the Session's own.
+const collectCalls = (
+  items: ReadonlyArray<TranscriptItem>,
+  calls: Calls,
+  caller?: string,
+) => {
   for (const item of items) {
     if (item._tag !== "Subagent") continue;
     calls.byCall.set(item.callId, item);
     if (item.agentId !== undefined) calls.byAgent.set(item.agentId, item);
+    if (caller !== undefined) calls.callers.set(item.callId, caller);
   }
 };
+
+// The Agent call that started a Subagent, matched by its metadata or the call's result.
+const callOf = (
+  { agentId, metadata }: Pick<Transcript, "agentId" | "metadata">,
+  calls: Calls,
+) =>
+  calls.byAgent.get(agentId) ??
+  (metadata?.toolUseId === undefined
+    ? undefined
+    : calls.byCall.get(metadata.toolUseId));
 
 // Where one started Subagent stands, from its Agent call and its own transcript.
 interface Standing {
@@ -72,7 +98,7 @@ interface Standing {
 }
 
 // Everything read of a Session's Subagents at once.
-interface Known {
+interface Census {
   // Those whose first message is written, in no particular order.
   readonly started: ReadonlyArray<Transcript>;
   readonly calls: Calls;
@@ -101,15 +127,15 @@ const settle = (
 };
 
 // Agent call rows with their status settled the same way as the Subagents' tabs.
-const settleRows = (items: ReadonlyArray<TranscriptItem>, known: Known) =>
+const settleRows = (items: ReadonlyArray<TranscriptItem>, census: Census) =>
   items.map((item): TranscriptItem => {
     if (item._tag !== "Subagent") return item;
     const standing =
       item.agentId === undefined
         ? undefined
-        : known.standings.get(item.agentId);
+        : census.standings.get(item.agentId);
     const status =
-      standing?.status ?? settle(item.status, undefined, known.sessionAtWork);
+      standing?.status ?? settle(item.status, undefined, census.sessionAtWork);
     return status === item.status ? item : { ...item, status };
   });
 
@@ -121,34 +147,30 @@ const assignmentOf = (messages: ReadonlyArray<StoredMessage>) => {
 const workOf = (messages: ReadonlyArray<StoredMessage>) =>
   messages[0]?.type === "user" ? messages.slice(1) : messages;
 
-const callOf = ({ agentId, metadata }: Transcript, calls: Calls) =>
-  calls.byAgent.get(agentId) ??
-  (metadata?.toolUseId === undefined
-    ? undefined
-    : calls.byCall.get(metadata.toolUseId));
-
-// What the Subagent's tab says of it. Without metadata, its type and description come from its
+// What the Subagent says of itself. Without metadata, its type and description come from its
 // Agent call, else "Subagent" and the first line of its Assignment.
-const summarize = (transcript: Transcript, known: Known) => {
+const summarize = (transcript: Transcript, census: Census) => {
   const { agentId, messages, metadata } = transcript;
-  const call = callOf(transcript, known.calls);
+  const { calls } = census;
+  const call = callOf(transcript, calls);
+  const callId = metadata?.toolUseId ?? call?.callId;
   const startedAt = messages.find((m) => m.timestamp)?.timestamp;
   return {
     agentId,
-    callId: metadata?.toolUseId ?? call?.callId,
+    callId,
     agentType: metadata?.agentType ?? call?.agentType ?? "Subagent",
     description:
       metadata?.description ||
       call?.description ||
       assignmentOf(messages).split("\n")[0] ||
       "",
-    status: known.standings.get(agentId)?.status ?? "running",
+    status: census.standings.get(agentId)?.status ?? "running",
     startedAt:
       startedAt === undefined ? undefined : DateTime.makeUnsafe(startedAt),
     parentAgentId:
       metadata?.parentAgentId ??
       messages.find((m) => m.parent_agent_id)?.parent_agent_id ??
-      undefined,
+      (callId === undefined ? undefined : calls.callers.get(callId)),
   };
 };
 
@@ -158,6 +180,17 @@ const sessionInfo = (sessionId: string) =>
       Predicate.isNotUndefined,
       () => new SessionNotFound({ id: sessionId }),
     ),
+  );
+
+// Fails unless the Session has a Subagent by this id.
+const known = (sessionId: string, agentId: string) =>
+  sessionInfo(sessionId).pipe(
+    Effect.andThen(sdk("listSubagents", () => listSubagents(sessionId))),
+    Effect.filterOrFail(
+      (ids) => ids.includes(agentId),
+      () => new SubagentNotFound({ sessionId, agentId }),
+    ),
+    Effect.asVoid,
   );
 
 const readSubagent = (
@@ -207,6 +240,22 @@ export class Subagents extends Context.Service<
       messages: ReadonlyArray<StoredMessage>,
       items: ReadonlyArray<TranscriptItem>,
     ): Effect.Effect<ReadonlyArray<TranscriptItem>, TranscriptError>;
+    // Closes the Subagent's tab for the Session, until it's reopened.
+    close(
+      sessionId: string,
+      agentId: string,
+    ): Effect.Effect<
+      void,
+      SessionNotFound | SubagentNotFound | TranscriptError
+    >;
+    // Reopens the Subagent's closed tab.
+    reopen(
+      sessionId: string,
+      agentId: string,
+    ): Effect.Effect<
+      void,
+      SessionNotFound | SubagentNotFound | TranscriptError
+    >;
   }
 >()("@repo/server/subagent/Subagents") {
   static readonly layer = Layer.effect(
@@ -214,6 +263,17 @@ export class Subagents extends Context.Service<
     Effect.gen(function* () {
       const files = yield* SubagentFiles;
       const turns = yield* Turns;
+      const sql = yield* SqlClient.SqlClient;
+      // Bumped after every close and reopen, so open lists show it at once.
+      const closings = yield* SubscriptionRef.make(0);
+
+      const closedOf = (sessionId: string) =>
+        sql<{ agentId: string }>`
+          SELECT agent_id FROM closed_subagents WHERE session_id = ${sessionId}
+        `.pipe(
+          Effect.map((rows) => new Set(rows.map((row) => row.agentId))),
+          Effect.orDie,
+        );
 
       // Ticks whenever the Session's transcript or one of its Subagent files changes or goes
       // quiet, or a turn Fern runs starts or ends. A poll that misses the transcript skips a beat.
@@ -235,10 +295,10 @@ export class Subagents extends Context.Service<
         ).pipe(Stream.filter(Predicate.isNotUndefined), Stream.changes);
 
       // Every Subagent of the Session, given its own transcript, and where each one stands.
-      const know = Effect.fn("Subagents.know")(function* (
+      const survey = Effect.fn("Subagents.survey")(function* (
         info: SDKSessionInfo,
         messages: ReadonlyArray<StoredMessage>,
-      ): Effect.fn.Return<Known, TranscriptError> {
+      ): Effect.fn.Return<Census, TranscriptError> {
         const { sessionId } = info;
         const { metadata, written, turn, now } = yield* Effect.all({
           metadata: files.metadata(sessionId),
@@ -255,10 +315,15 @@ export class Subagents extends Context.Service<
         );
         // A Subagent whose first message isn't written yet shows on a later poll.
         const started = read.filter((t) => t.messages.length > 0);
-        const calls: Calls = { byAgent: new Map(), byCall: new Map() };
+        // A nested Subagent's Agent call is in the transcript of the Subagent that started it.
+        const calls = noCalls();
         collectCalls(buildItems(messages, context), calls);
         for (const t of started)
-          collectCalls(buildItems(workOf(t.messages), context), calls);
+          collectCalls(
+            buildItems(workOf(t.messages), context),
+            calls,
+            t.agentId,
+          );
 
         const turnRunning = turn?.running === true;
         const standings = new Map<string, Standing>();
@@ -293,15 +358,21 @@ export class Subagents extends Context.Service<
         const messages = yield* sdk("getSessionMessages", () =>
           getSessionMessages(sessionId),
         );
-        return yield* know(info, messages);
+        return yield* survey(info, messages);
       });
 
       const summaries = Effect.fn("Subagents.summaries")(function* (
         sessionId: string,
       ) {
-        const known = yield* readSession(sessionId);
-        return known.started
-          .map((t) => SubagentSummary.make(summarize(t, known)))
+        const census = yield* readSession(sessionId);
+        const closed = yield* closedOf(sessionId);
+        return census.started
+          .map((t) =>
+            SubagentSummary.make({
+              ...summarize(t, census),
+              closed: closed.has(t.agentId),
+            }),
+          )
           .toSorted((a, b) => startMillis(a) - startMillis(b));
       });
 
@@ -309,20 +380,20 @@ export class Subagents extends Context.Service<
         sessionId: string,
         agentId: string,
       ) {
-        const known = yield* readSession(sessionId);
+        const census = yield* readSession(sessionId);
         const own =
-          known.started.find((t) => t.agentId === agentId) ??
-          (yield* readSubagent(sessionId, agentId, known.context.subagents));
+          census.started.find((t) => t.agentId === agentId) ??
+          (yield* readSubagent(sessionId, agentId, census.context.subagents));
         return {
           header: SubagentHeader.make({
-            ...summarize(own, known),
+            ...summarize(own, census),
             ...statsOf(own.messages),
           }),
-          handBack: known.standings.get(agentId)?.handBack,
+          handBack: census.standings.get(agentId)?.handBack,
           assignment: assignmentOf(own.messages),
           items: settleRows(
-            buildItems(workOf(own.messages), known.context),
-            known,
+            buildItems(workOf(own.messages), census.context),
+            census,
           ),
         };
       });
@@ -330,7 +401,10 @@ export class Subagents extends Context.Service<
       return Subagents.of({
         list: Effect.fn("Subagents.list")(function* (sessionId: string) {
           yield* sessionInfo(sessionId);
-          return changes(sessionId).pipe(
+          return Stream.zipLatest(
+            changes(sessionId),
+            SubscriptionRef.changes(closings),
+          ).pipe(
             Stream.mapEffect(() =>
               summaries(sessionId).pipe(
                 Effect.asSome,
@@ -349,12 +423,7 @@ export class Subagents extends Context.Service<
           sessionId: string,
           agentId: string,
         ) {
-          yield* sessionInfo(sessionId);
-          const ids = yield* sdk("listSubagents", () =>
-            listSubagents(sessionId),
-          );
-          if (!ids.includes(agentId))
-            return yield* new SubagentNotFound({ sessionId, agentId });
+          yield* known(sessionId, agentId);
           return changes(sessionId).pipe(
             Stream.mapEffect(() =>
               view(sessionId, agentId).pipe(
@@ -387,7 +456,32 @@ export class Subagents extends Context.Service<
           messages: ReadonlyArray<StoredMessage>,
           items: ReadonlyArray<TranscriptItem>,
         ) {
-          return settleRows(items, yield* know(info, messages));
+          return settleRows(items, yield* survey(info, messages));
+        }),
+
+        close: Effect.fn("Subagents.close")(function* (
+          sessionId: string,
+          agentId: string,
+        ) {
+          yield* known(sessionId, agentId);
+          const closedAt = yield* Clock.currentTimeMillis;
+          yield* sql`
+            INSERT INTO closed_subagents ${sql.insert({ sessionId, agentId, closedAt })}
+            ON CONFLICT DO NOTHING
+          `.pipe(Effect.orDie);
+          yield* SubscriptionRef.update(closings, (n) => n + 1);
+        }),
+
+        reopen: Effect.fn("Subagents.reopen")(function* (
+          sessionId: string,
+          agentId: string,
+        ) {
+          yield* known(sessionId, agentId);
+          yield* sql`
+            DELETE FROM closed_subagents
+            WHERE session_id = ${sessionId} AND agent_id = ${agentId}
+          `.pipe(Effect.orDie);
+          yield* SubscriptionRef.update(closings, (n) => n + 1);
         }),
       });
     }),

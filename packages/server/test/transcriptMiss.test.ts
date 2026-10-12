@@ -52,6 +52,8 @@ const TestTranscripts = Transcripts.layer.pipe(
         list: () => Effect.die("unused"),
         live: () => Effect.die("unused"),
         settleRows: (_info, _messages, items) => Effect.succeed(items),
+        close: () => Effect.die("unused"),
+        reopen: () => Effect.die("unused"),
       }),
     ),
     Layer.succeed(

@@ -15,6 +15,7 @@ import {
   UnusedWalkthroughs,
   UnusedWorkspace,
   UnusedWorktreeCleanup,
+  UnusedSubagents,
 } from "./stubs";
 
 const makeClient = HttpApiTest.groups(FernApi, ["system"]);
@@ -29,6 +30,7 @@ const Unused = Layer.mergeAll(
   UnusedWorkspace,
   UnusedWalkthroughs,
   UnusedWorktreeCleanup,
+  UnusedSubagents,
 );
 
 layer(

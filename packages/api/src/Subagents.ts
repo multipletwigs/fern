@@ -1,5 +1,11 @@
 import { Schema } from "effect";
-import { SubagentStatus, TranscriptItem } from "./Sessions";
+import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+import {
+  SessionNotFound,
+  SubagentStatus,
+  TranscriptError,
+  TranscriptItem,
+} from "./Sessions";
 
 // A Session's Subagents, each shown in its own tab on the Session's chat column.
 
@@ -22,7 +28,11 @@ const subagentFields = {
 // One of a Session's Subagents, as its tab shows it.
 export class SubagentSummary extends Schema.Class<SubagentSummary>(
   "SubagentSummary",
-)(subagentFields) {}
+)({
+  ...subagentFields,
+  // Whether the developer closed its tab. It stays closed for the Session until they reopen it.
+  closed: Schema.Boolean,
+}) {}
 
 // The top of a Subagent's view, with what its own transcript says of its work.
 export class SubagentHeader extends Schema.Class<SubagentHeader>(
@@ -57,3 +67,25 @@ export class SubagentNotFound extends Schema.TaggedError<SubagentNotFound>()(
   { sessionId: Schema.String, agentId: Schema.String },
   { httpApiStatus: 404 },
 ) {}
+
+const subagentParams = {
+  sessionId: Schema.NonEmptyString,
+  agentId: Schema.NonEmptyString,
+};
+
+export class SubagentsApi extends HttpApiGroup.make("subagents")
+  .add(
+    // Closes the Subagent's tab, for the Session, until it's reopened.
+    HttpApiEndpoint.post("close", "/:sessionId/:agentId/close", {
+      params: subagentParams,
+      success: HttpApiSchema.NoContent,
+      error: [SessionNotFound, SubagentNotFound, TranscriptError],
+    }),
+    // Reopens a Subagent's closed tab.
+    HttpApiEndpoint.post("reopen", "/:sessionId/:agentId/reopen", {
+      params: subagentParams,
+      success: HttpApiSchema.NoContent,
+      error: [SessionNotFound, SubagentNotFound, TranscriptError],
+    }),
+  )
+  .prefix("/subagents") {}

@@ -34,6 +34,8 @@ export const startSessionAtom = ApiClient.mutation("sessions", "start");
 export const interruptAtom = ApiClient.mutation("sessions", "interrupt");
 export const unqueueAtom = ApiClient.mutation("sessions", "unqueue");
 export const archiveSessionAtom = ApiClient.mutation("sessions", "archive");
+export const closeSubagentAtom = ApiClient.mutation("subagents", "close");
+export const reopenSubagentAtom = ApiClient.mutation("subagents", "reopen");
 
 // The Session picked in the sidebar; until one is picked, the screen follows the current Session.
 export const selectedSessionAtom = Atom.make<string | undefined>(

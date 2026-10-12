@@ -1,7 +1,12 @@
 // Each of a Session's Subagents gets a tab: the Subagents stream lists them in start order, and the
 // Subagent stream shows one's Assignment and work, live.
 import { assert, layer } from "@effect/vitest";
-import { LiveRpcs, type SubagentSummary, type TranscriptItem } from "@repo/api";
+import {
+  LiveRpcs,
+  type SubagentHeader,
+  type SubagentSummary,
+  type TranscriptItem,
+} from "@repo/api";
 import { DateTime, Effect, Layer, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { RpcTest } from "effect/rpc";
@@ -232,7 +237,7 @@ process.env.CLAUDE_CONFIG_DIR = configDir;
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
 // What a tab shows of a Subagent, with times as epoch millis.
-const tab = (s: SubagentSummary) => ({
+const tab = (s: SubagentSummary | SubagentHeader) => ({
   agentId: s.agentId,
   callId: s.callId,
   agentType: s.agentType,

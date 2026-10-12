@@ -28,7 +28,7 @@ import { SessionTabs } from "./SessionTabs";
 import { SubagentView } from "./SubagentView";
 import { useNow } from "./time";
 import { ToolRun } from "./ToolRun";
-import { agentOf, subagentTab, useSessionTab } from "./useSessionTab";
+import { agentOf, useSessionTab } from "./useSessionTab";
 
 // Space kept under the last row, room for the Thinking line included.
 const FOOTER = 56;
@@ -90,11 +90,7 @@ export function Session({
   const result = useAtomValue(transcriptAtom(id));
   const tabs = useSessionTab(id);
   const agent = agentOf(tabs.tab);
-  const { select } = tabs;
-  const openSubagent = useCallback(
-    (agentId: string) => select(subagentTab(agentId)),
-    [select],
-  );
+  const { openSubagent } = tabs;
   const now = useNow();
   const transcript = AsyncResult.isSuccess(result) ? result.value : undefined;
   const header = transcript?.header;
@@ -336,6 +332,7 @@ export function Session({
             waiting={tabs.rounds?.open !== undefined}
             subagents={tabs.subagents}
             onSelect={tabs.select}
+            onClose={tabs.close}
           />
         </div>
         {header?.cacheExpiresAt && (

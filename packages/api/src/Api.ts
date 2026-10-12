@@ -4,6 +4,7 @@ import { FlowsApi } from "./Flows";
 import { ProjectsApi } from "./Projects";
 import { RoundsApi } from "./Rounds";
 import { SessionsApi } from "./Sessions";
+import { SubagentsApi } from "./Subagents";
 import { SystemApi } from "./System";
 import { WalkthroughsApi } from "./Walkthroughs";
 
@@ -17,5 +18,6 @@ export class FernApi extends HttpApi.make("fern")
   .add(FlowsApi)
   .add(RoundsApi)
   .add(AutonomyApi)
+  .add(SubagentsApi)
   .prefix("/api")
   .annotateMerge(OpenApi.annotations({ title: "Fern API" })) {}
