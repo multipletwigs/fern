@@ -5,12 +5,13 @@ import type { ReactNode } from "react";
 // Views of one column, one showing at a time, drawn as quiet labels; the selected one lifts. A
 // muted tab is smaller and dimmer, for views that are mostly noise. A tab given `onClose` has a
 // close control, shown on hover and while it's selected. Sits in the top bar, outside the window's
-// drag area.
+// drag area. Anything passed as children sits after the tabs.
 export function TabBar<Value extends string>({
   tabs,
   value,
   onChange,
   label,
+  children,
 }: {
   tabs: ReadonlyArray<{
     value: Value;
@@ -23,6 +24,8 @@ export function TabBar<Value extends string>({
   value: Value;
   onChange: (value: Value) => void;
   label: string;
+  // What follows the tabs, such as a menu of the ones that didn't fit.
+  children?: ReactNode;
 }) {
   return (
     <div
@@ -79,6 +82,7 @@ export function TabBar<Value extends string>({
           </div>
         );
       })}
+      {children}
     </div>
   );
 }
