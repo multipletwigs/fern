@@ -22,6 +22,7 @@ import {
   Effect,
   Layer,
   Option,
+  Order,
   Predicate,
   Schedule,
   Stream,
@@ -154,6 +155,16 @@ const assignmentOf = (messages: ReadonlyArray<StoredMessage>) => {
 const workOf = (messages: ReadonlyArray<StoredMessage>) =>
   messages[0]?.type === "user" ? messages.slice(1) : messages;
 
+// When the Subagent started: its first message's time. A timestamp that can't be read says no
+// more than none.
+const startOf = (messages: ReadonlyArray<StoredMessage>) => {
+  for (const { timestamp } of messages) {
+    const time = timestamp === undefined ? undefined : DateTime.make(timestamp);
+    if (time !== undefined && Option.isSome(time)) return time.value;
+  }
+  return undefined;
+};
+
 // What the Subagent says of itself. Without metadata, its type and description come from its
 // Agent call, else "Subagent" and the first line of its Assignment.
 const summarize = (transcript: Transcript, census: Census) => {
@@ -161,7 +172,6 @@ const summarize = (transcript: Transcript, census: Census) => {
   const { calls } = census;
   const call = callOf(transcript, calls);
   const callId = metadata?.toolUseId ?? call?.callId;
-  const startedAt = messages.find((m) => m.timestamp)?.timestamp;
   return {
     agentId,
     callId,
@@ -172,8 +182,7 @@ const summarize = (transcript: Transcript, census: Census) => {
       assignmentOf(messages).split("\n")[0] ||
       "",
     status: census.standings.get(agentId)?.status ?? "running",
-    startedAt:
-      startedAt === undefined ? undefined : DateTime.makeUnsafe(startedAt),
+    startedAt: startOf(messages),
     parentAgentId:
       metadata?.parentAgentId ??
       messages.find((m) => m.parent_agent_id)?.parent_agent_id ??
@@ -215,10 +224,11 @@ const readSubagent = (
     })),
   );
 
-const startMillis = (s: SubagentSummary) =>
-  s.startedAt === undefined
-    ? Number.POSITIVE_INFINITY
-    : DateTime.toEpochMillis(s.startedAt);
+// The order Subagents started in: those whose start isn't known last, ties by agent id.
+const byStart: Order.Order<SubagentSummary> = (a, b) =>
+  Order.Boolean(a.startedAt === undefined, b.startedAt === undefined) ||
+  (a.startedAt && b.startedAt ? DateTime.Order(a.startedAt, b.startedAt) : 0) ||
+  Order.String(a.agentId, b.agentId);
 
 export class Subagents extends Context.Service<
   Subagents,
@@ -380,7 +390,7 @@ export class Subagents extends Context.Service<
               closed: closed.has(t.agentId),
             }),
           )
-          .toSorted((a, b) => startMillis(a) - startMillis(b));
+          .toSorted(byStart);
       });
 
       const view = Effect.fn("Subagents.view")(function* (
