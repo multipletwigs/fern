@@ -1,7 +1,7 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { SubagentSummary } from "@repo/api";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { roundsAtom } from "../grill/atoms";
 import { closeSubagentAtom, reopenSubagentAtom, subagentsAtom } from "./atoms";
 
@@ -42,14 +42,19 @@ export function useSessionTab(sessionId: string) {
     (next: SessionTab) => setChosen({ round, tab: next }),
     [round],
   );
-  // Selects a Subagent's tab, reopening it first if it was closed.
+  // Selects a Subagent's tab, reopening it first if it was closed. Every chat row holds it, so it
+  // reads the list through a ref rather than change with each list update.
+  const listedRef = useRef(all);
+  useLayoutEffect(() => {
+    listedRef.current = all;
+  }, [all]);
   const openSubagent = useCallback(
     (agentId: string) => {
-      if (all.some((s) => s.agentId === agentId && s.closed))
+      if (listedRef.current.some((s) => s.agentId === agentId && s.closed))
         reopenSubagent({ params: { sessionId, agentId } });
       select(subagentTab(agentId));
     },
-    [all, reopenSubagent, select, sessionId],
+    [reopenSubagent, select, sessionId],
   );
   // Closes a Subagent's tab; the chat shows in its place if it was showing.
   const close = useCallback(
