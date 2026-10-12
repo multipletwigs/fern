@@ -1,6 +1,21 @@
 import { useState } from "react";
 import { GhostButton } from "./GhostButton";
 
+// What the two verdicts are called, as buttons and once given.
+export interface VerdictLabels {
+  readonly approve: string;
+  readonly reject: string;
+  readonly approved: string;
+  readonly rejected: string;
+}
+
+const REVIEW_LABELS: VerdictLabels = {
+  approve: "Approve",
+  reject: "Reject",
+  approved: "Approved",
+  rejected: "Rejected",
+};
+
 // Approve or reject one item under review. Rejecting asks for a note, which goes back to the
 // Session. A verdict can be changed until the review is done.
 export function VerdictControls({
@@ -9,6 +24,9 @@ export function VerdictControls({
   pending,
   onApprove,
   onReject,
+  labels = REVIEW_LABELS,
+  noteOptional = false,
+  notePlaceholder = "What should change? This goes back to the Session.",
 }: {
   verdict:
     { kind: "approved" | "rejected"; note?: string | undefined } | undefined;
@@ -17,11 +35,16 @@ export function VerdictControls({
   pending: boolean;
   onApprove: () => void;
   onReject: (note: string) => void;
+  labels?: VerdictLabels;
+  // Rejecting can go without a note.
+  noteOptional?: boolean;
+  notePlaceholder?: string;
 }) {
   const [mode, setMode] = useState<"idle" | "noting" | "changing">("idle");
   const [note, setNote] = useState("");
+  const noted = noteOptional || note.trim() !== "";
   const reject = () => {
-    if (!note.trim()) return;
+    if (!noted) return;
     onReject(note.trim());
     setMode("idle");
   };
@@ -40,17 +63,17 @@ export function VerdictControls({
               reject();
             if (event.key === "Escape") setMode("idle");
           }}
-          placeholder="What should change? This goes back to the Session."
+          placeholder={notePlaceholder}
           rows={3}
           className="w-full resize-none rounded-xl border border-hairline bg-white/[0.02] px-3 py-2 text-sm text-ink outline-none placeholder:text-faint focus:border-danger/30"
         />
         <div className="flex gap-2">
           <GhostButton
             tone="danger"
-            disabled={!note.trim() || pending}
+            disabled={!noted || pending}
             onClick={reject}
           >
-            Reject
+            {labels.reject}
           </GhostButton>
           <GhostButton onClick={() => setMode("idle")}>Cancel</GhostButton>
         </div>
@@ -67,7 +90,7 @@ export function VerdictControls({
               : "shrink-0 text-danger/90"
           }
         >
-          {verdict.kind === "approved" ? "Approved" : "Rejected"}
+          {verdict.kind === "approved" ? labels.approved : labels.rejected}
         </span>
         {verdict.note && (
           <span className="min-w-0 flex-1 text-muted">“{verdict.note}”</span>
@@ -97,14 +120,14 @@ export function VerdictControls({
           setMode("idle");
         }}
       >
-        Approve
+        {labels.approve}
       </GhostButton>
       <GhostButton
         tone="danger"
         disabled={pending}
         onClick={() => setMode("noting")}
       >
-        Reject…
+        {labels.reject}…
       </GhostButton>
     </div>
   );

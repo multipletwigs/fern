@@ -79,6 +79,8 @@ export const FlowsHandlers = HttpApiBuilder.group(
     return handlers.handleAll({
       approve: ({ params }) => flows.approve(params.id),
       decline: ({ params, payload }) => flows.decline(params.id, payload.note),
+      findingVerdict: ({ params, payload }) =>
+        flows.findingVerdict(params.id, payload),
     });
   }),
 );
