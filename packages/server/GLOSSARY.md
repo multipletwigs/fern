@@ -69,7 +69,7 @@ A Session Fern drives itself, in its own git worktree (in place, for a folder ou
 _Avoid_: Fern session, managed session
 
 **Archived**:
-Said of a Hosted Session whose worktree Fern has removed, because the developer archived it or its branch merged into `main`. The sidebar no longer lists it; its branch is kept. Uncommitted changes are only thrown away when the developer confirms.
+Said of a Hosted Session whose worktree Fern has removed, because the developer archived it, its Stack Landed, or its branch merged into `main`. The sidebar no longer lists it; its branch is kept. Uncommitted changes are only thrown away when the developer confirms.
 _Avoid_: Closed, deleted
 
 **Subagent**:
@@ -103,12 +103,24 @@ _Avoid_: Suggestion, improvement, action item
 ### Review
 
 **Walkthrough**:
-The developer-facing explanation of what a Session changed since its previous Walkthrough (or since it started): ordered Sections, in natural language, that together account for every changed line of the net change. The developer reviews a Walkthrough instead of the raw diff. Fern produces one whenever a Session's work completes; it is not a Phase, so no Flow can leave it out.
+The developer-facing explanation of one change a Session made, usually one PR of its Stack: Sections in dependency order (contract before service before API before UI), in natural language, that together account for every changed line of the net change. The developer reviews a Walkthrough instead of the raw diff. Fern produces one whenever a Session's work completes; it is not a Phase, so no Flow can leave it out.
 _Avoid_: Diff, summary, changelog, report
 
+**Stack**:
+A Session's work as a chain of pull requests on GitHub, one per ticket in the order the tickets landed on the Session's branch, each based on the one below. Each PR carries its own Walkthrough, as its description too.
+_Avoid_: PR chain, series, train
+
+**Land**:
+To merge a Session's Stack into `main`, all at once, through a Checkpoint that opens once every Walkthrough in the Stack is Reviewed with no Rejection left open.
+_Avoid_: Ship, deploy, merge (for the whole Stack)
+
 **Section**:
-One semantic change within a Walkthrough, explained in prose and claiming the hunks that implement it, across as many files as it touches. It notes in one line any approach tried and dropped on the way. The developer approves or rejects each Section on its own.
+One semantic change within a Walkthrough, explained in prose and claiming the hunks that implement it, across as many files as it touches. It cites the Decisions behind it, carries a Risk, and notes in one line any approach tried and dropped on the way. The developer approves or rejects each Section on its own.
 _Avoid_: Step (Phase avoids it), chunk, file group
+
+**Risk**:
+How closely the developer should read a Section, low, medium or high, with a one-line reason. The Fork sets it; it guides attention and never blocks a verdict.
+_Avoid_: Severity, priority, confidence
 
 **Round**:
 A batch of questions the agent puts to the developer at once during Grill, each with the agent's recommended answer.
