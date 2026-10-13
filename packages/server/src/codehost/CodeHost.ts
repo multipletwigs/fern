@@ -55,6 +55,12 @@ export class CodeHost extends Context.Service<
       cwd: string,
       prs: ReadonlyArray<OpenedPullRequest>,
     ): Effect.Effect<void, CodeHostError>;
+    // Replaces the PR's description.
+    setBody(
+      cwd: string,
+      pr: number,
+      body: string,
+    ): Effect.Effect<void, CodeHostError>;
   }
 >()("@repo/server/codehost/CodeHost") {
   static readonly layer = Layer.effect(
@@ -185,7 +191,20 @@ export class CodeHost extends Context.Service<
         yield* run(cwd, "gh", ["stack", "link", ...prs.map((pr) => pr.url)]);
       });
 
-      return CodeHost.of({ ready, push, openDraft, link });
+      const setBody = Effect.fn("CodeHost.setBody")(function* (
+        cwd: string,
+        pr: number,
+        body: string,
+      ) {
+        yield* run(
+          cwd,
+          "gh",
+          ["pr", "edit", String(pr), "--body-file", "-"],
+          body,
+        );
+      });
+
+      return CodeHost.of({ ready, push, openDraft, link, setBody });
     }),
   );
 }
