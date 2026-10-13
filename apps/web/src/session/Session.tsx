@@ -17,6 +17,7 @@ import {
   useState,
 } from "react";
 import { type Components, Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { SessionCodeToggle } from "../code/SessionCodeToggle";
 import { SessionChecklist } from "../flow/SessionChecklist";
 import { type PendingPrompt, pendingPromptAtom, transcriptAtom } from "./atoms";
 import { GrillView } from "../grill/GrillView";
@@ -82,10 +83,13 @@ const rowRect = (scroller: HTMLElement, id: string) =>
 export function Session({
   id,
   visible = true,
+  changed,
   onPainted,
 }: {
   id: string;
   visible?: boolean;
+  // How many files it changed in its Project; unset without a Project, so no code to show.
+  changed?: number | undefined;
   onPainted?: (id: string) => void;
 }) {
   const result = useAtomValue(transcriptAtom(id));
@@ -345,6 +349,7 @@ export function Session({
           />
         </div>
         <SessionWorktree sessionId={id} />
+        {changed !== undefined && <SessionCodeToggle changed={changed} />}
         <SessionTerminalToggle sessionId={id} />
       </TopBar>
       <SessionChecklist sessionId={id} />
