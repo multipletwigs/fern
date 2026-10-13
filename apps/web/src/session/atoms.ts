@@ -10,6 +10,7 @@ import { Atom, AsyncResult } from "effect/reactivity";
 import { ApiClient } from "../ApiClient";
 import { LiveClient } from "../LiveClient";
 import { resubscribe } from "../resubscribe";
+import { newSessionAtom } from "../workspace/showing";
 
 // The latest Session. The page can load before the main process serves the API, so a dropped
 // request is retried; only the server saying there's no Session ends it.
@@ -74,11 +75,6 @@ export const projectsAtom = LiveClient.runtime.atom(
 export const preloadedSessionAtom = Atom.make<string | undefined>(
   undefined,
 ).pipe(Atom.keepAlive);
-
-// The folder of a blank Session on screen, opened by /clear, until its first message starts it.
-export const newSessionAtom = Atom.make<string | undefined>(undefined).pipe(
-  Atom.keepAlive,
-);
 
 // The slash commands Claude Code offers in a Project's folder.
 export const commandsAtom = Atom.family((root: string) =>

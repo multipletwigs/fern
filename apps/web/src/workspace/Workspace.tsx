@@ -6,12 +6,11 @@ import {
   activeCodeRootAtom,
   activeSessionIdAtom,
   currentSessionAtom,
-  newSessionAtom,
 } from "../session/atoms";
 import { NewSession } from "../session/NewSession";
-import { settingsOpenAtom } from "../settings/atoms";
 import { Settings } from "../settings/Settings";
 import { SessionWorkbench } from "./SessionWorkbench";
+import { showingAtom } from "./showing";
 
 // Everything right of the sidebar: Settings, the Session on screen, a new one being started, or
 // why there isn't one.
@@ -19,14 +18,13 @@ export function Workspace() {
   const sessionId = useAtomValue(activeSessionIdAtom);
   const root = useAtomValue(activeCodeRootAtom);
   const current = useAtomValue(currentSessionAtom);
-  const newRoot = useAtomValue(newSessionAtom);
-  const settingsOpen = useAtomValue(settingsOpenAtom);
-  if (settingsOpen)
+  const showing = useAtomValue(showingAtom);
+  if (showing._tag === "Settings")
     return <Workbench chat={<Settings />} code={undefined} animate={false} />;
-  if (newRoot !== undefined)
+  if (showing._tag === "NewSession")
     return (
       <Workbench
-        chat={<NewSession key={newRoot} root={newRoot} />}
+        chat={<NewSession key={showing.root} root={showing.root} />}
         code={undefined}
       />
     );

@@ -1,9 +1,4 @@
-import {
-  RegistryContext,
-  useAtom,
-  useAtomSet,
-  useAtomValue,
-} from "@effect/atom-react";
+import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Hint } from "@repo/ui/Hint";
 import { LocationPill } from "@repo/ui/LocationPill";
 import { NewSessionButton } from "@repo/ui/NewSessionButton";
@@ -21,14 +16,13 @@ import { PHASE_TITLES } from "../flow/phases";
 import {
   activeProjectAtom,
   activeSessionIdAtom,
-  newSessionAtom,
   preloadedSessionAtom,
   projectsAtom,
   selectedSessionAtom,
 } from "../session/atoms";
 import { ago, useNow } from "../session/time";
-import { settingsOpenAtom } from "../settings/atoms";
 import { screenAtoms } from "../workspace/screen";
+import { newSessionAtom, settingsOpenAtom } from "../workspace/showing";
 import { ArchiveSession } from "./ArchiveSession";
 import { RunningSlots } from "./RunningSlots";
 import { SettingsEntry } from "./SettingsEntry";
@@ -40,17 +34,12 @@ export function Sidebar() {
   const activeId = useAtomValue(activeSessionIdAtom);
   const activeProject = useAtomValue(activeProjectAtom);
   const setSelected = useAtomSet(selectedSessionAtom);
-  const setNewRoot = useAtomSet(newSessionAtom);
-  const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom);
-  // Picking a Session or starting one puts Settings away.
+  const setNew = useAtomSet(newSessionAtom);
+  const settingsOpen = useAtomValue(settingsOpenAtom);
+  // Shows the Session, in place of a new one or Settings.
   const select = (id: string) => {
     setSelected(id);
-    setNewRoot(undefined);
-    setSettingsOpen(false);
-  };
-  const setNew = (root: string) => {
-    setNewRoot(root);
-    setSettingsOpen(false);
+    setNew(undefined);
   };
   // Archived Sessions, hidden before the next listing leaves them out.
   const [archived, setArchived] = useState<ReadonlySet<string>>(new Set());

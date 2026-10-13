@@ -1,8 +1,9 @@
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { SettingsRow } from "@repo/ui/SettingsRow";
 import { AsyncResult } from "effect/reactivity";
-import { settingsOpenAtom, toolsAtom } from "../settings/atoms";
+import { toolsAtom } from "../settings/atoms";
 import { needsAttention } from "../settings/needsAttention";
+import { settingsOpenAtom } from "../workspace/showing";
 
 // The Settings row at the foot of the sidebar, flagged while any tool isn't ready.
 export function SettingsEntry() {

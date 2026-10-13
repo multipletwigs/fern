@@ -1,4 +1,4 @@
-import { type DeveloperTool, ToolFix, ToolStatus } from "@repo/api";
+import { DeveloperTool, ToolFix, ToolStatus } from "@repo/api";
 import { Context, Duration, Effect, Layer, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -7,8 +7,6 @@ export const ToolCheckTimeout = Context.Reference<Duration.Duration>(
   "@repo/server/tools/ToolCheckTimeout",
   { defaultValue: () => Duration.seconds(5) },
 );
-
-const TOOLS: ReadonlyArray<DeveloperTool> = ["claude", "gh", "git"];
 
 // Where to install each tool from.
 const INSTALL: Record<DeveloperTool, string> = {
@@ -139,7 +137,7 @@ export class Tools extends Context.Service<
           ),
       );
 
-      const check = Effect.forEach(TOOLS, checkOne, {
+      const check = Effect.forEach(DeveloperTool.literals, checkOne, {
         concurrency: "unbounded",
       });
 

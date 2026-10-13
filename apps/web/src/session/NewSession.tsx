@@ -6,12 +6,12 @@ import { Cause, Exit, Option } from "effect";
 import { useContext, useState } from "react";
 import {
   modelChoiceAtom,
-  newSessionAtom,
   selectedSessionAtom,
   startSessionAtom,
 } from "./atoms";
 import { outgoing, useCommands } from "./commands";
 import { currentModel, MODELS, NEW_SESSION_MODEL } from "./models";
+import { newSessionAtom } from "../workspace/showing";
 
 // A new piece of work in a Project. Its opening prompt starts a Session on a branch of its own from
 // `main`, in its own worktree, beginning with a Grill; the Session then takes over the screen.

@@ -7,7 +7,6 @@ import { useState } from "react";
 import {
   interruptAtom,
   modelChoiceAtom,
-  newSessionAtom,
   pendingPromptAtom,
   sendMessageAtom,
   unqueueAtom,
@@ -17,6 +16,7 @@ import { SessionTools } from "./SessionTools";
 import { SessionMilestones } from "../autonomy/SessionMilestones";
 import { SessionCheckpoint } from "../flow/SessionCheckpoint";
 import { SessionWalkthrough } from "../walkthrough/SessionWalkthrough";
+import { newSessionAtom } from "../workspace/showing";
 
 const failureNotice = (tag: string | undefined) => {
   switch (tag) {

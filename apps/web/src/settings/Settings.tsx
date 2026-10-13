@@ -2,7 +2,8 @@ import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { SettingsPanel } from "@repo/ui/SettingsPanel";
 import { ToolStatusRow } from "@repo/ui/ToolStatusRow";
 import { AsyncResult } from "effect/reactivity";
-import { settingsOpenAtom, toolsAtom } from "./atoms";
+import { settingsOpenAtom } from "../workspace/showing";
+import { toolsAtom } from "./atoms";
 import { TOOL_NAMES } from "./toolNames";
 
 // Settings, in place of the Session: where each of the developer's tools stands, checked again on
