@@ -135,3 +135,20 @@ export type IssueState = typeof IssueState.Type;
 // The same, as `gh` prints it: in capitals.
 export const GhIssueState = Schema.Literals(["OPEN", "CLOSED"]);
 export type GhIssueState = typeof GhIssueState.Type;
+
+// The developer's tools
+
+// The tools Fern runs on that the developer installs and signs in to themselves: Claude Code, the
+// GitHub CLI and git, in the order Settings lists them.
+export const DeveloperTool = Schema.Literals(["claude", "gh", "git"]);
+export type DeveloperTool = typeof DeveloperTool.Type;
+
+// Where one of those tools stands: installed and usable; installed but not usable yet, as `gh`
+// signed out; not on the PATH Fern runs with; or no answer from the check, as when it timed out.
+export const DeveloperToolState = Schema.Literals([
+  "ready",
+  "needs-attention",
+  "missing",
+  "unknown",
+]);
+export type DeveloperToolState = typeof DeveloperToolState.Type;

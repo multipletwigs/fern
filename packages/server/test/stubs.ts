@@ -5,6 +5,7 @@ import { Flows } from "../src/flow/Flows";
 import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
 import { Rounds } from "../src/round/Rounds";
 import { Subagents } from "../src/subagent/Subagents";
+import { Tools } from "../src/tools/Tools";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { Turns } from "../src/turn/Turns";
 import { VerifySlots } from "../src/verify/VerifySlots";
@@ -98,6 +99,11 @@ export const UnusedWorktrees = Layer.succeed(
 export const UnusedVerifySlots = Layer.succeed(
   VerifySlots,
   VerifySlots.of({ running: Effect.die("unused") }),
+);
+
+export const UnusedTools = Layer.succeed(
+  Tools,
+  Tools.of({ check: Effect.die("unused") }),
 );
 
 export const UnusedWorktreeCleanup = Layer.succeed(
