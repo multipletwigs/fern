@@ -15,6 +15,7 @@ import { SubagentFiles } from "./subagent/SubagentFiles";
 import { Subagents } from "./subagent/Subagents";
 import { LiveHandlersNoDeps } from "./live";
 import { Rounds } from "./round/Rounds";
+import { Tools } from "./tools/Tools";
 import { FernTools } from "./turn/FernTools";
 import { HostedSessions } from "./turn/HostedSessions";
 import { Turns } from "./turn/Turns";
@@ -28,7 +29,13 @@ import { Worktrees } from "./worktree/Worktrees";
 export const SystemHandlers = HttpApiBuilder.group(
   FernApi,
   "system",
-  (handlers) => handlers.handleAll({ health: () => Effect.void }),
+  Effect.fn(function* (handlers) {
+    const tools = yield* Tools;
+    return handlers.handleAll({
+      health: () => Effect.void,
+      tools: () => tools.check,
+    });
+  }),
 );
 
 // A developer message corrects the agent's course when it says something: not an image on its own,
@@ -193,6 +200,7 @@ export const handlersWith = (
       Rounds.layer,
       VerifySlots.layer,
       Terminals.layer,
+      Tools.layer,
     ]),
     // The chat's Agent call rows show where each Subagent stands as its tab does.
     Layer.provideMerge(Subagents.layer),

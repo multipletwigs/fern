@@ -6,6 +6,7 @@ import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
 import { Rounds } from "../src/round/Rounds";
 import { Subagents } from "../src/subagent/Subagents";
 import { Terminals } from "../src/terminal/Terminals";
+import { Tools } from "../src/tools/Tools";
 import { Transcripts } from "../src/transcript/Transcripts";
 import { Turns } from "../src/turn/Turns";
 import { VerifySlots } from "../src/verify/VerifySlots";
@@ -108,6 +109,11 @@ export const UnusedTerminals = Layer.succeed(
     write: () => Effect.die("unused"),
     resize: () => Effect.die("unused"),
   }),
+);
+
+export const UnusedTools = Layer.succeed(
+  Tools,
+  Tools.of({ check: Effect.die("unused") }),
 );
 
 export const UnusedWorktreeCleanup = Layer.succeed(
