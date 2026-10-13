@@ -5,13 +5,15 @@ import { TabBar, type TabBarSlot, type TabBarTab } from "@repo/ui/TabBar";
 import { agentsMenu } from "./tabBar";
 import { agentOf, type SessionTab, subagentTab } from "./useSessionTab";
 
-// The tabs on the Session's chat column: the Grill, while there is one, then the chat, then one
-// Agents menu holding every open Subagent. The Subagent picked from it shows as one more tab after
-// the menu. The Grill tab glows amber while a Round waits on the developer and another tab shows.
+// The tabs on the Session's chat column: the Grill, while there is one, then the chat, the Review
+// tab, always there, then one Agents menu holding every open Subagent. The Subagent picked from it
+// shows as one more tab after the menu. The Grill tab glows amber while a Round waits on the
+// developer and another tab shows; the Review tab counts the items still waiting on a verdict.
 export function SessionTabs({
   tab,
   grill,
   waiting,
+  reviewWaiting,
   subagents,
   onSelect,
   onClose,
@@ -19,6 +21,7 @@ export function SessionTabs({
   tab: SessionTab;
   grill: boolean;
   waiting: boolean;
+  reviewWaiting: number;
   // The Subagents whose tabs are open.
   subagents: ReadonlyArray<SubagentSummary>;
   onSelect: (tab: SessionTab) => void;
@@ -39,6 +42,23 @@ export function SessionTabs({
       ),
     });
   tabs.push({ value: "chat", label: "Chat" });
+  tabs.push({
+    value: "review",
+    label: (
+      <>
+        Review
+        {reviewWaiting > 0 && (
+          <span className="rounded-full bg-amber/[0.14] px-1.5 font-mono text-[10px] leading-4 text-amber tabular-nums">
+            {reviewWaiting}
+          </span>
+        )}
+      </>
+    ),
+    title:
+      reviewWaiting > 0
+        ? `${reviewWaiting} waiting on your verdict`
+        : undefined,
+  });
   const { running, active } = agentsMenu(subagents, agentOf(tab));
   tabs.push({
     slot: "agents",

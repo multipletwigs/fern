@@ -23,13 +23,11 @@ export const isCodePanelToggle = (
   !event.altKey &&
   event.code === "Backslash";
 
-// What the code panel shows: a file, as an absolute path, or a Walkthrough.
-export type OpenItem =
-  | { readonly kind: "file"; readonly path: string }
-  | { readonly kind: "walkthrough"; readonly id: string };
+// What the code panel shows: a file, as an absolute path. Walkthroughs live in the Review tab.
+export type OpenItem = { readonly kind: "file"; readonly path: string };
 
 // What the developer opened in a Session's code panel. Until they open something, the panel
-// follows Claude: a Walkthrough waiting on the developer, else the file Claude last changed.
+// follows Claude: the file Claude last changed.
 export const openAtom = Atom.family((_sessionId: string) =>
   Atom.make<OpenItem | undefined>(undefined).pipe(Atom.keepAlive),
 );

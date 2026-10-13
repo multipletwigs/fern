@@ -5,8 +5,8 @@ import { clsx } from "clsx";
 // while Claude writes it.
 export type WalkthroughTone = "amber" | "writing" | "danger" | "muted";
 
-// A Walkthrough in the code panel's list: its number and where its review stands. Lifted like a
-// sidebar tab while it's on screen.
+// A Walkthrough as a row, as on the Implement Checkpoint: its number and where its review stands.
+// Lifted like a sidebar tab while it's on screen.
 export function WalkthroughRow({
   number,
   status,

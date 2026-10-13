@@ -74,22 +74,13 @@ export function SessionWorkbench({
   }
   const { sessionId, root } = shown;
 
-  const [transcriptAtom, changesAtom, walkthroughsAtom] = screenAtoms(
-    sessionId,
-    root,
-  );
+  const [transcriptAtom, changesAtom] = screenAtoms(sessionId, root);
   const result = useAtomValue(transcriptAtom);
   const changesResult = useAtomValue(changesAtom);
-  const walkthroughsResult = useAtomValue(walkthroughsAtom);
   const items = AsyncResult.isSuccess(result) ? result.value.items : undefined;
   const changes = AsyncResult.isSuccess(changesResult)
     ? changesResult.value
     : undefined;
-  const walkthroughs = useMemo(
-    () =>
-      AsyncResult.isSuccess(walkthroughsResult) ? walkthroughsResult.value : [],
-    [walkthroughsResult],
-  );
   const changed = useMemo(
     () => (items && root ? changedFiles(items, root, changes) : undefined),
     [items, root, changes],
@@ -161,11 +152,6 @@ export function SessionWorkbench({
               commits={commits}
               read={read ?? []}
               followed={followed}
-              walkthroughs={walkthroughs}
-              working={
-                AsyncResult.isSuccess(result) &&
-                result.value.header?.hostedTurn?.running === true
-              }
             />
           ) : undefined
         }
