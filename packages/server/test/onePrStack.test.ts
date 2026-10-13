@@ -4,9 +4,11 @@ import {
   FernApi,
   type Flow,
   LiveRpcs,
+  type Phase,
   type Walkthrough,
+  WalkthroughError,
 } from "@repo/api";
-import { Effect, Layer, Schedule, Stream } from "effect";
+import { Deferred, Effect, Layer, Schedule, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { RpcTest } from "effect/rpc";
@@ -15,7 +17,11 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { vi } from "vitest";
-import { CodeHost } from "../src/codehost/CodeHost";
+import {
+  CodeHost,
+  CodeHostError,
+  MergeRefused,
+} from "../src/codehost/CodeHost";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
 import {
@@ -90,7 +96,8 @@ const commit = (cwd: string, files: Record<string, string>) => {
 };
 
 // The code host, faked: what Fern asked it, in order, by the folder it asked from. A PR is merged
-// once Fern merged it.
+// once Fern merged it, unless `refusal` is set, when GitHub refuses with it. A push from a folder
+// in `pushFailsFrom` fails; one from a folder in `pushWaitsFrom` waits for its Deferred first.
 interface Asked {
   readonly cwd: string;
   readonly call: string;
@@ -98,6 +105,9 @@ interface Asked {
 }
 const asked: Array<Asked> = [];
 const merged = new Set<number>();
+let refusal: string | undefined;
+const pushFailsFrom = new Set<string>();
+const pushWaitsFrom = new Map<string, Deferred.Deferred<void>>();
 let nextPr = 700;
 const askedFrom = (cwd: string, ...calls: Array<string>) =>
   asked
@@ -107,10 +117,20 @@ const FakeCodeHost = Layer.succeed(
   CodeHost,
   CodeHost.of({
     ready: () => Effect.succeed(true),
+    defaultBranch: () => Effect.succeed("main"),
     push: (cwd, args) =>
-      Effect.sync(() => {
-        asked.push({ cwd, call: "push", args });
-      }),
+      Effect.suspend(() => {
+        const waiting = pushWaitsFrom.get(cwd);
+        return waiting ? Deferred.await(waiting) : Effect.void;
+      }).pipe(
+        Effect.andThen(() =>
+          pushFailsFrom.has(cwd)
+            ? Effect.fail(new CodeHostError({ message: "Network is down" }))
+            : Effect.sync(() => {
+                asked.push({ cwd, call: "push", args });
+              }),
+        ),
+      ),
     openDraft: (cwd, args) =>
       Effect.sync(() => {
         const number = ++nextPr;
@@ -138,13 +158,16 @@ const FakeCodeHost = Layer.succeed(
         });
       }),
     merge: (cwd, prs) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         asked.push({
           cwd,
           call: "merge",
           args: { prs: prs.map((pr) => pr.number) },
         });
+        if (refusal !== undefined)
+          return Effect.fail(new MergeRefused({ reason: refusal }));
         for (const pr of prs) merged.add(pr.number);
+        return Effect.void;
       }),
     state: (_cwd, prs) =>
       Effect.sync(() => ({
@@ -154,14 +177,20 @@ const FakeCodeHost = Layer.succeed(
 );
 
 // The Walkthrough writer, faked: it claims every hunk in one Section, titled for the files it
-// touches, that says it fixes the first open Rejection, if any.
+// touches, that says it fixes the first open Rejection, if any, once `gate` (if a test set one)
+// opens. It fails on a change to a file in `failingOn`.
 const requests: Array<WriteRequest> = [];
+let gate: Deferred.Deferred<void> | undefined;
+const failingOn = new Set<string>();
 const Writer = Layer.succeed(
   WalkthroughWriter,
   WalkthroughWriter.of({
     write: (request: WriteRequest) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        if (gate) yield* Deferred.await(gate);
         requests.push(request);
+        if (request.hunks.some((h) => failingOn.has(h.path)))
+          return yield* new WalkthroughError({ message: "The Fork crashed." });
         const draft = {
           sections: [
             {
@@ -310,7 +339,7 @@ const written = (id: string, count: number) =>
     (ws) => ws.length === count && ws.every((w) => w.status === "ready"),
   );
 
-const skip = (id: string, phase: "grill" | "spec" | "implement" | "retro") =>
+const skip = (id: string, phase: Phase) =>
   Effect.gen(function* () {
     const client = yield* makeClient;
     yield* client.flows.skip({
@@ -410,7 +439,7 @@ layer(fern, { excludeTestServices: true })("A Stack of one PR", (it) => {
   );
 
   it.effect(
-    "each later Walkthrough covers what was committed since the previous one, moves the PR's branch to the new tip, and becomes the PR's description",
+    "each later Walkthrough covers what was committed since the previous one and moves the PR's branch to the new tip, and the PR's description covers every Walkthrough of it, oldest first",
     () =>
       Effect.gen(function* () {
         const { id, cwd, turn, branch } = yield* ticketless();
@@ -423,7 +452,7 @@ layer(fern, { excludeTestServices: true })("A Stack of one PR", (it) => {
           payload: { text: "Mention the licence too" },
         });
         const next = yield* turnWhere(id, (text) => text.includes("licence"));
-        const second = commit(cwd, { "LICENSE": "MIT\n" });
+        const second = commit(cwd, { LICENSE: "MIT\n" });
         next.finish();
 
         const [, two] = yield* written(id, 2);
@@ -452,9 +481,14 @@ layer(fern, { excludeTestServices: true })("A Stack of one PR", (it) => {
         assert.strictEqual(bodies.length, 2);
         assert.include(String(bodies[0]?.body), "## Changes README.md");
         assert.deepStrictEqual(bodies[1]?.pr, pr);
-        assert.include(String(bodies[1]?.body), "## Changes LICENSE");
-        assert.notInclude(String(bodies[1]?.body), "README.md");
-        assert.notInclude(String(bodies[1]?.body), "Closes #");
+        // The PR carries both changes, so its description covers both Walkthroughs, oldest first.
+        const both = String(bodies[1]?.body);
+        assert.isAtLeast(both.indexOf("## Changes README.md"), 0);
+        assert.isAbove(
+          both.indexOf("## Changes LICENSE"),
+          both.indexOf("## Changes README.md"),
+        );
+        assert.notInclude(both, "Closes #");
       }),
   );
 
@@ -475,7 +509,10 @@ layer(fern, { excludeTestServices: true })("A Stack of one PR", (it) => {
           "retro",
         );
         // Once the agent's Retro turn is over, only the review is left.
-        const waiting = yield* flowWhen(id, (f) => f?.landWaitsOn?.length === 1);
+        const waiting = yield* flowWhen(
+          id,
+          (f) => f?.landWaitsOn?.length === 1,
+        );
         yield* approveAll(id);
         const opened = yield* landWhen(id, () => true);
         const pr = opened?.land?.prs[0]?.number;
@@ -534,7 +571,9 @@ layer(fern, { excludeTestServices: true })("A Stack of one PR", (it) => {
         writeFileSync(join(cwd, "scratch.ts"), "export const s = 1;\n");
         yield* approveAll(id);
         const dirty = yield* flowWhen(id, (f) =>
-          (f?.landWaitsOn ?? []).some((w) => w.why.includes("aren't committed")),
+          (f?.landWaitsOn ?? []).some((w) =>
+            w.why.includes("aren't committed"),
+          ),
         );
         yield* client.sessions.send({
           params: { id },
@@ -618,7 +657,10 @@ layer(fern, { excludeTestServices: true })("A Stack of one PR", (it) => {
         const [, two] = yield* written(id, 2);
 
         assert.include(redirect.text, "Name the app.");
-        assert.include(redirect.text, "commit the fix on this Session's branch");
+        assert.include(
+          redirect.text,
+          "commit the fix on this Session's branch",
+        );
         assert.notInclude(redirect.text, "fix_landed");
         assert.strictEqual(two?.pr?.number, one?.pr?.number);
         assert.deepStrictEqual(two?.sections[0]?.fixes, {
@@ -646,6 +688,173 @@ layer(fern, { excludeTestServices: true })("A Stack of one PR", (it) => {
   );
 
   it.effect(
+    "the end of Implement waits for the Walkthrough of what was committed since the last one, and its Checkpoint links to that one, not the one before",
+    () =>
+      Effect.gen(function* () {
+        const { id, cwd, turn } = yield* ticketless();
+        commit(cwd, { "README.md": "# The app\n" });
+        turn.finish();
+        yield* written(id, 1);
+        const client = yield* makeClient;
+        yield* client.sessions.send({
+          params: { id },
+          payload: { text: "Add a licence, then you're done" },
+        });
+        const next = yield* turnWhere(id, (text) => text.includes("licence"));
+        commit(cwd, { LICENSE: "MIT\n" });
+        const opened = yield* Deferred.make<void>();
+        gate = opened;
+        const held = yield* callTool(next, "phase_done", {
+          phase: "implement",
+          summary: "Done.",
+        });
+        next.finish();
+        yield* Effect.sleep("300 millis");
+        const waiting = yield* flowWhen(id, () => true);
+        gate = undefined;
+        yield* Deferred.succeed(opened, undefined);
+        const raised = yield* flowWhen(
+          id,
+          (f) => f?.checkpoint?.phase === "implement",
+        );
+
+        assert.include(textOf(held), "writing the Session's Walkthrough");
+        assert.isUndefined(waiting?.checkpoint);
+        assert.strictEqual(raised?.checkpoint?.walkthrough?.number, 2);
+      }).pipe(Effect.ensuring(Effect.sync(() => (gate = undefined)))),
+  );
+
+  it.effect(
+    "when the Walkthrough the end of Implement waits on can't be written, there's no Checkpoint, and the agent hears why",
+    () =>
+      Effect.gen(function* () {
+        failingOn.add("broken.md");
+        const { id, cwd, turn } = yield* ticketless();
+        commit(cwd, { "broken.md": "# Broken\n" });
+        yield* callTool(turn, "phase_done", {
+          phase: "implement",
+          summary: "Done.",
+        });
+        turn.finish();
+        const told = yield* turnWhere(id, (text) =>
+          text.startsWith("Fern couldn't write the Session's Walkthrough"),
+        );
+        const flow = yield* flowWhen(id, () => true);
+
+        assert.include(told.text, "The Fork crashed.");
+        assert.isUndefined(flow?.checkpoint);
+      }).pipe(Effect.ensuring(Effect.sync(() => failingOn.clear()))),
+  );
+
+  it.effect(
+    "a push GitHub doesn't take stores no Walkthrough, and the next write covers what it missed",
+    () =>
+      Effect.gen(function* () {
+        const { id, cwd, turn, branch } = yield* ticketless();
+        const first = commit(cwd, { "README.md": "# The app\n" });
+        turn.finish();
+        yield* written(id, 1);
+        pushFailsFrom.add(cwd);
+        const client = yield* makeClient;
+        const second = commit(cwd, { LICENSE: "MIT\n" });
+        const failed = yield* client.walkthroughs
+          .write({ payload: { session: id } })
+          .pipe(Effect.flip);
+        const after = yield* walkthroughsWhen(id, () => true);
+        pushFailsFrom.delete(cwd);
+        yield* client.walkthroughs.write({ payload: { session: id } });
+        const [, two] = yield* written(id, 2);
+
+        assert.strictEqual(failed._tag, "WalkthroughError");
+        assert.strictEqual(after.length, 1);
+        assert.deepStrictEqual(
+          two?.sections.flatMap((s) => s.hunks.map((h) => h.path)),
+          ["LICENSE"],
+        );
+        assert.deepStrictEqual(askedFrom(cwd, "push").at(-1)?.args, {
+          commit: second,
+          branch: `fern/${branch}/session`,
+          replacing: first,
+        });
+      }).pipe(Effect.ensuring(Effect.sync(() => pushFailsFrom.clear()))),
+  );
+
+  it.effect("one Session's slow push holds up no other Session's PR", () =>
+    Effect.gen(function* () {
+      const slow = yield* ticketless();
+      const quick = yield* ticketless();
+      const pushed = yield* Deferred.make<void>();
+      pushWaitsFrom.set(slow.cwd, pushed);
+      commit(slow.cwd, { "README.md": "# Slow\n" });
+      slow.turn.finish();
+      yield* Effect.sleep("100 millis");
+      commit(quick.cwd, { "README.md": "# Quick\n" });
+      quick.turn.finish();
+      const [done] = yield* written(quick.id, 1);
+      const waiting = yield* walkthroughsWhen(slow.id, () => true);
+      pushWaitsFrom.delete(slow.cwd);
+      yield* Deferred.succeed(pushed, undefined);
+      yield* written(slow.id, 1);
+
+      assert.isDefined(done?.pr);
+      assert.deepStrictEqual(waiting, []);
+    }).pipe(Effect.ensuring(Effect.sync(() => pushWaitsFrom.clear()))),
+  );
+
+  it.effect(
+    "after GitHub refuses the one PR, the agent is told to commit the fix on the Session's branch, and Land waits for the Walkthrough of it to be Reviewed",
+    () =>
+      Effect.gen(function* () {
+        const { id, cwd, turn } = yield* ticketless();
+        commit(cwd, { "README.md": "# The app\n" });
+        yield* doneAndApproved(id, turn, "implement");
+        yield* doneAndApproved(
+          id,
+          yield* turnWhere(id, (text) => text === "/retro"),
+          "retro",
+        );
+        yield* flowWhen(id, (f) => f?.landWaitsOn?.length === 1);
+        yield* approveAll(id);
+        const opened = yield* landWhen(id, () => true);
+        const client = yield* makeClient;
+        refusal = "The PR has conflicts with main.";
+        yield* client.flows.approve({ params: { id: opened?.id ?? "" } });
+        yield* landWhen(
+          id,
+          (c) => c.land?.refusal !== undefined && !c.land.landing,
+        );
+        yield* client.flows.send({ params: { id: opened?.id ?? "" } });
+        const sent = yield* turnWhere(id, (text) =>
+          text.startsWith("GitHub refused"),
+        );
+        refusal = undefined;
+        commit(cwd, { "README.md": "# The app, without conflicts\n" });
+        sent.finish();
+        yield* written(id, 2);
+        const held = yield* landWhen(
+          id,
+          (c) => (c.land?.waiting.length ?? 0) > 0,
+        );
+        const early = yield* client.flows
+          .approve({ params: { id: opened?.id ?? "" } })
+          .pipe(Effect.flip);
+        yield* approveAll(id);
+        yield* landWhen(id, (c) => c.land?.waiting.length === 0);
+        yield* client.flows.approve({ params: { id: opened?.id ?? "" } });
+        yield* flowWhen(id, (f) => f?.checkpoint === undefined);
+
+        assert.include(sent.text, "commit the fix on this Session's branch");
+        assert.notInclude(sent.text, "prs_updated");
+        assert.deepStrictEqual(
+          held?.land?.waiting.map((w) => w.why),
+          ["Its Walkthrough isn't Reviewed yet: 1 left to review."],
+        );
+        assert.strictEqual(early._tag, "LandNotReady");
+        assert.strictEqual(askedFrom(cwd, "merge").length, 2);
+      }).pipe(Effect.ensuring(Effect.sync(() => (refusal = undefined)))),
+  );
+
+  it.effect(
     "a Session whose Spec wrote tickets never goes up as one PR: its turns open no PR and write no Walkthrough, and each ticket opens its own",
     () =>
       Effect.gen(function* () {
@@ -664,7 +873,10 @@ layer(fern, { excludeTestServices: true })("A Stack of one PR", (it) => {
           spec: { brief: 2, tickets: [3, 4] },
         });
         tickets.finish();
-        const spec = yield* flowWhen(id, (f) => f?.checkpoint?.phase === "spec");
+        const spec = yield* flowWhen(
+          id,
+          (f) => f?.checkpoint?.phase === "spec",
+        );
         yield* client.flows.approve({
           params: { id: spec?.checkpoint?.id ?? "" },
         });
@@ -687,7 +899,10 @@ layer(fern, { excludeTestServices: true })("A Stack of one PR", (it) => {
         assert.deepStrictEqual(quiet, []);
         assert.deepStrictEqual(before, []);
         assert.isUndefined(reported.isError);
-        assert.include(next.options.systemPrompt?.append ?? "", "ticket_landed");
+        assert.include(
+          next.options.systemPrompt?.append ?? "",
+          "ticket_landed",
+        );
         assert.strictEqual(
           askedFrom(cwd, "openDraft")[0]?.args.head,
           `fern/${git(cwd, "branch", "--show-current")}/t3`,
@@ -695,4 +910,3 @@ layer(fern, { excludeTestServices: true })("A Stack of one PR", (it) => {
       }),
   );
 });
-

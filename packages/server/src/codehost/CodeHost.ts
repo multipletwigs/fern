@@ -1,6 +1,14 @@
 import { Context, Duration, Effect, Layer, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+// A branch name Fern can pass to git and `gh` as it is: no leading dash, nothing git refuses in a
+// ref, and no longer than GitHub allows.
+export const BranchName = Schema.String.check(
+  Schema.isPattern(
+    /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9._/-]{1,255}$/,
+  ),
+);
+
 export class CodeHostError extends Schema.TaggedError<CodeHostError>()(
   "CodeHostError",
   { message: Schema.String },
@@ -35,9 +43,16 @@ const STACKS_API = "X-GitHub-Api-Version: 2026-03-10";
 // The PR's number at the end of the URL `gh pr create` prints, e.g. ".../pull/123".
 const PR_URL = /https:\/\/\S+\/pull\/(\d+)/;
 
-// The Stacks GitHub has for a PR: at most the one it's in.
+// The Stacks GitHub has for a PR: at most the one it's in. Its number goes to gh-stack as an
+// argument, so it's a positive whole number, never anything `gh` could read as a flag.
 const StacksOfPr = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ number: Schema.Int })),
+  Schema.Array(
+    Schema.Struct({ number: Schema.Int.check(Schema.isGreaterThan(0)) }),
+  ),
+);
+// The repo's default branch, as `gh repo view` has it.
+const RepoView = Schema.fromJsonString(
+  Schema.Struct({ defaultBranchRef: Schema.Struct({ name: BranchName }) }),
 );
 // Whether a PR merged, as GitHub's REST API has it.
 const PrMerge = Schema.fromJsonString(
@@ -111,9 +126,11 @@ const late = (duration: Duration.Duration) =>
 export class CodeHost extends Context.Service<
   CodeHost,
   {
-    // Whether Fern can put a Stack up from the folder: `gh` signed in, with gh-stack installed.
-    // Never fails: a code host that can't be asked isn't ready.
+    // Whether Fern can put a Stack up from the folder: `gh` signed in to github.com, with gh-stack
+    // installed. Never fails: a code host that can't be asked isn't ready.
     ready(cwd: string): Effect.Effect<boolean>;
+    // The repository's default branch on the code host, which every Stack is based on.
+    defaultBranch(cwd: string): Effect.Effect<string, CodeHostError>;
     // Points the branch on `origin` at the commit, creating it if needed. Needs no local branch.
     // With `replacing`, moves the branch from that commit, and only from it.
     push(
@@ -228,7 +245,9 @@ export class CodeHost extends Context.Service<
         const timeout = yield* CodeHostReadyTimeout;
         return yield* Effect.all(
           [
-            run(cwd, "gh", ["auth", "status"]),
+            // Only the host every Stack is on: a stale login to another host fails a bare
+            // `gh auth status`, though `gh` works on github.com.
+            run(cwd, "gh", ["auth", "status", "--hostname", "github.com"]),
             run(cwd, "gh", ["stack", "--version"]),
           ],
           { concurrency: "unbounded" },
@@ -240,6 +259,26 @@ export class CodeHost extends Context.Service<
           }),
           Effect.orElseSucceed(() => false),
         );
+      });
+
+      const defaultBranch = Effect.fn("CodeHost.defaultBranch")(function* (
+        cwd: string,
+      ) {
+        const out = yield* run(cwd, "gh", [
+          "repo",
+          "view",
+          "--json",
+          "defaultBranchRef",
+        ]);
+        const view = yield* Schema.decodeEffect(RepoView)(out).pipe(
+          Effect.mapError(
+            () =>
+              new CodeHostError({
+                message: `GitHub's default branch isn't one Fern can use: ${out.trim()}`,
+              }),
+          ),
+        );
+        return view.defaultBranchRef.name;
       });
 
       const push = Effect.fn("CodeHost.push")(function* (
@@ -426,6 +465,7 @@ export class CodeHost extends Context.Service<
 
       return CodeHost.of({
         ready,
+        defaultBranch,
         push,
         openDraft,
         link,

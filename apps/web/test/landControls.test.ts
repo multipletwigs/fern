@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { type Land, PullRequest } from "@repo/api";
+import { DateTime } from "effect";
 import { landControls } from "../src/flow/landControls";
 
 const pr = new PullRequest({
@@ -49,6 +50,17 @@ it("a Stack waiting on the developer's review again can't land, even after a ref
       canLand: false,
       canSend: true,
     },
+  );
+});
+
+it("once the reason went to the agent, it isn't sent again until GitHub refuses anew", () => {
+  assert.isFalse(
+    landControls(
+      land({
+        refusal: "PR #101 has failing checks.",
+        refusalSentAt: DateTime.makeUnsafe(0),
+      }),
+    ).canSend,
   );
 });
 

@@ -1,19 +1,16 @@
 import { assert, layer } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
-import {
-  chmodSync,
-  mkdtempSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodeHost } from "../src/codehost/CodeHost";
 
 // A stub `gh` that logs each call's arguments and answers as GitHub would for a Stack, number 7,
 // whose PRs need an approving review before they merge: `gh stack merge` refuses, `gh pr merge`
-// merges. Only shell builtins work inside it, as PATH is its folder alone.
+// merges. PR #103 is in a Stack whose number isn't one, and the repo's default branch is `trunk`.
+// `gh` is signed in to github.com, but not to a stale second host, so `gh auth status` alone fails.
+// Only shell builtins work inside it, as PATH is its folder alone.
 const dir = mkdtempSync(join(tmpdir(), "fern-gh-"));
 const log = join(dir, "calls.log");
 writeFileSync(
@@ -22,7 +19,15 @@ writeFileSync(
 echo "$@" >> "${log}"
 case "$1 $2" in
   "pr ready"|"pr merge") exit 0 ;;
-  "api -H") echo '[{"number":7}]'; exit 0 ;;
+  "api -H")
+    case "$4" in
+      *pull_request=103) echo '[{"number":-7}]' ;;
+      *) echo '[{"number":7}]' ;;
+    esac
+    exit 0 ;;
+  "auth status") [ "$3 $4" = "--hostname github.com" ] && exit 0; exit 1 ;;
+  "stack --version") exit 0 ;;
+  "repo view") echo '{"defaultBranchRef":{"name":"trunk"}}'; exit 0 ;;
   "stack merge")
     echo "✗ cannot merge the whole stack: pull request #101 is blocked" >&2
     exit 2 ;;
@@ -113,6 +118,47 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
 
         assert.isTrue(one.merged);
         assert.isFalse(both.merged);
+      }),
+    ),
+  );
+
+  it.effect(
+    "gh is ready when it's signed in to github.com, whatever other host it has a stale login for",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          const ready = yield* host.ready("/");
+
+          assert.isTrue(ready);
+          assert.include(calls(), "auth status --hostname github.com");
+        }),
+      ),
+  );
+
+  it.effect(
+    "a Stack number from GitHub that isn't a positive whole number is never passed to gh-stack",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          const failed = yield* host
+            .merge("/", [pr(103), pr(104)])
+            .pipe(Effect.flip);
+
+          assert.strictEqual(failed._tag, "CodeHostError");
+          assert.isFalse(
+            calls().some((call) => call.startsWith("stack merge")),
+          );
+        }),
+      ),
+  );
+
+  it.effect("the repo's default branch is GitHub's", () =>
+    withStub(
+      Effect.gen(function* () {
+        const host = yield* CodeHost;
+        assert.strictEqual(yield* host.defaultBranch("/"), "trunk");
       }),
     ),
   );

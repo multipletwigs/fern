@@ -15,4 +15,5 @@ In a Project on GitHub, a Hosted Session's work no longer goes to `main` by fast
 - Implement is done once every ticket has its PR in the Stack, not once every ticket is closed. A closed ticket now means its work is on `main`.
 - A Session is Archived once its Stack lands. Fern detects this from the Stack's state, because a squash merge leaves the branch out of `main`'s ancestry. This amends ADR 0005.
 - A Session with no tickets gets a Stack of one PR, whose Walkthroughs each cover what changed since the previous one, as before. A PR can only carry commits, so these Walkthroughs cover what's committed on the Session's branch rather than a snapshot of the working tree, and the PR can't land while the worktree has uncommitted changes.
+- Every head a PR gets after it goes up, from the agent's fix for a refused Land or from a one-PR Session's next turn, gets a Walkthrough of what changed, so nothing reaches the default branch unreviewed. A PR's description covers all its Walkthroughs, oldest first.
 - Projects without a GitHub remote or a signed-in `gh`, and Projects that opt out, land as before.

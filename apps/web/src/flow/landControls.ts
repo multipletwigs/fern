@@ -13,5 +13,9 @@ export const landControls = (land: Land) => ({
         : "Land the Stack on main?",
   action: land.refusal === undefined ? "Land" : "Try again",
   canLand: !land.landing && land.waiting.length === 0,
-  canSend: !land.landing && land.refusal !== undefined,
+  // Once for each refusal: the agent has it already.
+  canSend:
+    !land.landing &&
+    land.refusal !== undefined &&
+    land.refusalSentAt === undefined,
 });
