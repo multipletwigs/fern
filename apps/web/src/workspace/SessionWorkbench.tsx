@@ -1,8 +1,9 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomValue } from "@effect/atom-react";
 import { Workbench } from "@repo/ui/Workbench";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { sessionCommits } from "../code/commits";
+import { codePanelOpenAtom, isCodePanelToggle } from "../code/panel";
 import { changedFiles, followedFile, readFiles } from "../code/paths";
 import { ProjectCode } from "../code/ProjectCode";
 import { preloadedSessionAtom } from "../session/atoms";
@@ -10,11 +11,11 @@ import { Session } from "../session/Session";
 import { SessionTerminalPanel } from "../terminal/SessionTerminalPanel";
 import { screenAtoms } from "./screen";
 
-// One Session's chat, joined by its code once the Session has changed a file in the Project or has
-// a Walkthrough. When another Session is picked, the one on screen stays until the new one has
-// loaded and its list shows out of sight, then the new one replaces it in a single frame. The
-// Session pointed at in the sidebar, and the one shown before, are drawn ahead, so picking them
-// shows them at once. Its terminal, once opened, runs along the bottom under both.
+// One Session's chat, joined by its code while the developer has the code panel open, by the
+// button in the top bar or ⌘\. When another Session is picked, the one on screen stays until the
+// new one has loaded and its list shows out of sight, then the new one replaces it in a single
+// frame. The Session pointed at in the sidebar, and the one shown before, are drawn ahead, so
+// picking them shows them at once. Its terminal, once opened, runs along the bottom under both.
 export function SessionWorkbench({
   sessionId: pickedId,
   root: pickedRoot,
@@ -104,30 +105,23 @@ export function SessionWorkbench({
     [items, root],
   );
 
-  // Until a Session's transcript, changes and Walkthroughs have all loaded, keep the last layout
-  // rather than flashing the chat to full width and back. Then snap to the Session's own layout,
-  // and animate only when code arrives in the Session already on screen.
-  const [layout, setLayout] = useState<{
-    readonly sessionId: string | undefined;
-    readonly split: boolean;
-    readonly animate: boolean;
-  }>({ sessionId: undefined, split: false, animate: false });
-  const hasCode =
-    changed === undefined ||
-    AsyncResult.isInitial(changesResult) ||
-    AsyncResult.isInitial(walkthroughsResult)
-      ? undefined
-      : changed.length > 0 || walkthroughs.length > 0;
-  if (
-    hasCode !== undefined &&
-    (hasCode !== layout.split || sessionId !== layout.sessionId)
-  )
-    setLayout({
-      sessionId,
-      split: hasCode,
-      animate: sessionId === layout.sessionId,
-    });
-  const split = layout.split;
+  // The code panel shows while the developer has it open and the Session has a Project. Animate
+  // only a toggle in the Session on screen, never a switch to a Session without a Project.
+  const [codeOpen, setCodeOpen] = useAtom(codePanelOpenAtom);
+  const split = codeOpen && root !== undefined;
+  const [layout, setLayout] = useState({ sessionId, split, animate: false });
+  if (split !== layout.split || sessionId !== layout.sessionId)
+    setLayout({ sessionId, split, animate: sessionId === layout.sessionId });
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!isCodePanelToggle(event)) return;
+      event.preventDefault();
+      setCodeOpen((open) => !open);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setCodeOpen]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -146,6 +140,11 @@ export function SessionWorkbench({
                 <Session
                   id={id}
                   visible={id === sessionId}
+                  changed={
+                    id === sessionId && root
+                      ? (changed?.length ?? 0)
+                      : undefined
+                  }
                   onPainted={markPainted}
                 />
               </div>
@@ -153,7 +152,7 @@ export function SessionWorkbench({
           </div>
         }
         code={
-          split && root ? (
+          split ? (
             <ProjectCode
               key={sessionId}
               sessionId={sessionId}
