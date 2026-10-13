@@ -1,7 +1,7 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { WalkthroughStatus } from "@repo/ui/WalkthroughStatus";
 import { AsyncResult } from "effect/reactivity";
-import { openAtom } from "../code/atoms";
+import { showInCodeAtom } from "../code/panel";
 import { walkthroughsAtom } from "./atoms";
 import { openItems } from "./review";
 
@@ -9,7 +9,7 @@ import { openItems } from "./review";
 // review, or when it failed, so writing one never goes unnoticed.
 export function SessionWalkthrough({ sessionId }: { sessionId: string }) {
   const result = useAtomValue(walkthroughsAtom(sessionId));
-  const open = useAtomSet(openAtom(sessionId));
+  const open = useAtomSet(showInCodeAtom(sessionId));
   const latest = AsyncResult.isSuccess(result)
     ? result.value.at(-1)
     : undefined;

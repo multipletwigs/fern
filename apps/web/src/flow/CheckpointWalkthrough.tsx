@@ -2,7 +2,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { CheckpointWalkthrough as Linked } from "@repo/api";
 import { WalkthroughRow } from "@repo/ui/WalkthroughRow";
 import { AsyncResult } from "effect/reactivity";
-import { openAtom } from "../code/atoms";
+import { showInCodeAtom } from "../code/panel";
 import { walkthroughsAtom } from "../walkthrough/atoms";
 import { rowStatus } from "../walkthrough/review";
 
@@ -15,7 +15,7 @@ export function CheckpointWalkthrough({
   walkthrough: Linked;
 }) {
   const result = useAtomValue(walkthroughsAtom(sessionId));
-  const open = useAtomSet(openAtom(sessionId));
+  const open = useAtomSet(showInCodeAtom(sessionId));
   const found = AsyncResult.isSuccess(result)
     ? result.value.find((w) => w.id === walkthrough.id)
     : undefined;
