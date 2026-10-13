@@ -45,6 +45,7 @@ import {
 } from "effect/sql";
 import { sdk } from "../agentSdk";
 import { Autonomy } from "../autonomy/Autonomy";
+import { CodeHost } from "../codehost/CodeHost";
 import type { GitError } from "../git/Git";
 import type { PatchHunk } from "../snapshot/patch";
 import { Snapshots, walkthroughRef } from "../snapshot/Snapshots";
@@ -52,6 +53,7 @@ import { StackEligibility } from "../stack/StackEligibility";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { settle, unclaimedHunks } from "./coverage";
+import { prDescription } from "./prDescription";
 import {
   type DraftDecision,
   type OpenRejection,
@@ -467,6 +469,7 @@ export class Walkthroughs extends Context.Service<
       const autonomy = yield* Autonomy;
       const stacks = yield* StackEligibility;
       const hosted = yield* HostedSessions;
+      const codeHost = yield* CodeHost;
       // Bumped after every write, so open lists reload.
       const version = yield* SubscriptionRef.make(0);
       const bump = SubscriptionRef.update(version, (n) => n + 1);
@@ -636,6 +639,32 @@ export class Walkthroughs extends Context.Service<
         sql`UPDATE walkthroughs SET status = 'failed', error = ${message}
           WHERE id = ${walkthroughId}`.pipe(Effect.orDie, Effect.asVoid);
 
+      // Makes a PR's Walkthrough, once written, the PR's description, so GitHub never shows a stale
+      // one. A failed Walkthrough leaves the description as it was; so does a code host that can't
+      // be reached, until the next Walkthrough of the PR.
+      const describe = (
+        walkthroughId: string,
+        sessionId: string,
+        cwd: string,
+      ) =>
+        Effect.gen(function* () {
+          const walkthrough = assemble(yield* load(sessionId)).find(
+            (w) => w.id === walkthroughId,
+          );
+          if (walkthrough?.status !== "ready" || walkthrough.pr === undefined)
+            return;
+          yield* codeHost
+            .setBody(cwd, walkthrough.pr.number, prDescription(walkthrough))
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning(
+                  `Couldn't update PR #${walkthrough.pr?.number ?? "?"}'s description`,
+                  error.message,
+                ),
+              ),
+            );
+        });
+
       // Runs the Fork and stores what it wrote, giving it one retry to claim what it left out.
       const compose = (
         walkthroughId: string,
@@ -673,7 +702,15 @@ export class Walkthroughs extends Context.Service<
           Effect.catch((error) => fail(walkthroughId, error.message)),
         );
         return queueOf(request.sessionId).pipe(
-          Effect.flatMap((queue) => queue.withPermits(1)(write)),
+          Effect.flatMap((queue) =>
+            queue.withPermits(1)(
+              write.pipe(
+                Effect.andThen(
+                  describe(walkthroughId, request.sessionId, request.cwd),
+                ),
+              ),
+            ),
+          ),
           Effect.ensuring(done(request.sessionId).pipe(Effect.andThen(bump))),
         );
       };

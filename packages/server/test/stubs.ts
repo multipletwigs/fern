@@ -1,5 +1,6 @@
 import { Effect, Layer, Option, Stream } from "effect";
 import { Autonomy } from "../src/autonomy/Autonomy";
+import { CodeHost } from "../src/codehost/CodeHost";
 import { Commands } from "../src/commands/Commands";
 import { Flows } from "../src/flow/Flows";
 import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
@@ -98,6 +99,18 @@ export const UnusedWalkthroughs = Layer.succeed(
 export const NoStacks = Layer.succeed(
   StackEligibility,
   StackEligibility.of({ applies: () => Effect.succeed(false) }),
+);
+
+// A code host Fern never asks, where no Session's work lands as a Stack.
+export const UnusedCodeHost = Layer.succeed(
+  CodeHost,
+  CodeHost.of({
+    ready: () => Effect.die("unused"),
+    push: () => Effect.die("unused"),
+    openDraft: () => Effect.die("unused"),
+    link: () => Effect.die("unused"),
+    setBody: () => Effect.die("unused"),
+  }),
 );
 
 // Somewhere no worktree can be made.

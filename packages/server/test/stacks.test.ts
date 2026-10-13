@@ -153,6 +153,7 @@ const FakeCodeHost = Layer.succeed(
           args: { prs: prs.map((pr) => pr.number) },
         });
       }),
+    setBody: () => Effect.void,
   }),
 );
 
