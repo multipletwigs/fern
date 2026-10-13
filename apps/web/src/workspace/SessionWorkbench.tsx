@@ -7,13 +7,14 @@ import { changedFiles, followedFile, readFiles } from "../code/paths";
 import { ProjectCode } from "../code/ProjectCode";
 import { preloadedSessionAtom } from "../session/atoms";
 import { Session } from "../session/Session";
+import { SessionTerminalPanel } from "../terminal/SessionTerminalPanel";
 import { screenAtoms } from "./screen";
 
 // One Session's chat, joined by its code once the Session has changed a file in the Project or has
 // a Walkthrough. When another Session is picked, the one on screen stays until the new one has
 // loaded and its list shows out of sight, then the new one replaces it in a single frame. The
 // Session pointed at in the sidebar, and the one shown before, are drawn ahead, so picking them
-// shows them at once.
+// shows them at once. Its terminal, once opened, runs along the bottom under both.
 export function SessionWorkbench({
   sessionId: pickedId,
   root: pickedRoot,
@@ -129,45 +130,48 @@ export function SessionWorkbench({
   const split = layout.split;
 
   return (
-    <Workbench
-      animate={layout.animate}
-      // Each Session's list keyed by its id, so the one drawn out of sight is the one shown.
-      chat={
-        <div className="relative h-full">
-          {drawn.map((id) => (
-            <div
-              key={id}
-              className={
-                id === sessionId ? "h-full" : "invisible absolute inset-0"
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <Workbench
+        animate={layout.animate}
+        // Each Session's list keyed by its id, so the one drawn out of sight is the one shown.
+        chat={
+          <div className="relative h-full">
+            {drawn.map((id) => (
+              <div
+                key={id}
+                className={
+                  id === sessionId ? "h-full" : "invisible absolute inset-0"
+                }
+              >
+                <Session
+                  id={id}
+                  visible={id === sessionId}
+                  onPainted={markPainted}
+                />
+              </div>
+            ))}
+          </div>
+        }
+        code={
+          split && root ? (
+            <ProjectCode
+              key={sessionId}
+              sessionId={sessionId}
+              root={root}
+              changed={changed ?? []}
+              commits={commits}
+              read={read ?? []}
+              followed={followed}
+              walkthroughs={walkthroughs}
+              working={
+                AsyncResult.isSuccess(result) &&
+                result.value.header?.hostedTurn?.running === true
               }
-            >
-              <Session
-                id={id}
-                visible={id === sessionId}
-                onPainted={markPainted}
-              />
-            </div>
-          ))}
-        </div>
-      }
-      code={
-        split && root ? (
-          <ProjectCode
-            key={sessionId}
-            sessionId={sessionId}
-            root={root}
-            changed={changed ?? []}
-            commits={commits}
-            read={read ?? []}
-            followed={followed}
-            walkthroughs={walkthroughs}
-            working={
-              AsyncResult.isSuccess(result) &&
-              result.value.header?.hostedTurn?.running === true
-            }
-          />
-        ) : undefined
-      }
-    />
+            />
+          ) : undefined
+        }
+      />
+      {root && <SessionTerminalPanel sessionId={sessionId} root={root} />}
+    </div>
   );
 }

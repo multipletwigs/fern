@@ -19,6 +19,10 @@ export class LiveClient extends AtomRpc.Service<LiveClient>()(
     group: LiveRpcs,
     protocol: RpcClient.layerProtocolSocket({
       retryTransientErrors: true,
+      // A ping goes every 5 seconds, and by default the socket counts as dead when nothing has
+      // come back for 5 seconds by the next one: the last pong, a moment late, already misses
+      // that, so the socket dropped every few pings, and a terminal lost keystrokes typed then.
+      pingTimeout: "15 seconds",
     }).pipe(
       Layer.provide([
         Socket.layerWebSocket(liveUrl()).pipe(
