@@ -1,4 +1,9 @@
-import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
+import {
+  RegistryContext,
+  useAtom,
+  useAtomSet,
+  useAtomValue,
+} from "@effect/atom-react";
 import { Hint } from "@repo/ui/Hint";
 import { LocationPill } from "@repo/ui/LocationPill";
 import { NewSessionButton } from "@repo/ui/NewSessionButton";
@@ -22,9 +27,11 @@ import {
   selectedSessionAtom,
 } from "../session/atoms";
 import { ago, useNow } from "../session/time";
+import { settingsOpenAtom } from "../settings/atoms";
 import { screenAtoms } from "../workspace/screen";
 import { ArchiveSession } from "./ArchiveSession";
 import { RunningSlots } from "./RunningSlots";
+import { SettingsEntry } from "./SettingsEntry";
 
 const projectName = (path: string) => path.split("/").at(-1) || "Unknown";
 
@@ -33,10 +40,17 @@ export function Sidebar() {
   const activeId = useAtomValue(activeSessionIdAtom);
   const activeProject = useAtomValue(activeProjectAtom);
   const setSelected = useAtomSet(selectedSessionAtom);
-  const setNew = useAtomSet(newSessionAtom);
+  const setNewRoot = useAtomSet(newSessionAtom);
+  const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom);
+  // Picking a Session or starting one puts Settings away.
   const select = (id: string) => {
     setSelected(id);
-    setNew(undefined);
+    setNewRoot(undefined);
+    setSettingsOpen(false);
+  };
+  const setNew = (root: string) => {
+    setNewRoot(root);
+    setSettingsOpen(false);
   };
   // Archived Sessions, hidden before the next listing leaves them out.
   const [archived, setArchived] = useState<ReadonlySet<string>>(new Set());
@@ -73,7 +87,7 @@ export function Sidebar() {
 
   if (!AsyncResult.isSuccess(projects))
     return (
-      <SidebarPanel>
+      <SidebarPanel footer={<SettingsEntry />}>
         <Hint
           text={
             AsyncResult.isFailure(projects)
@@ -90,6 +104,7 @@ export function Sidebar() {
 
   return (
     <SidebarPanel
+      footer={<SettingsEntry />}
       header={
         activeProject && (
           <div className="flex items-center gap-1.5">
@@ -126,7 +141,7 @@ export function Sidebar() {
                 <SessionRow
                   key={session.id}
                   title={session.title}
-                  active={session.id === activeId}
+                  active={!settingsOpen && session.id === activeId}
                   live={isWorking(lastActivityMs, session.hostedTurn, now)}
                   lastActive={ago(now - lastActivityMs)}
                   phase={phaseOf.get(session.id)}
