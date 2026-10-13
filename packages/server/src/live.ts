@@ -5,6 +5,7 @@ import { Autonomy } from "./autonomy/Autonomy";
 import { Flows } from "./flow/Flows";
 import { Rounds } from "./round/Rounds";
 import { Subagents } from "./subagent/Subagents";
+import { Terminals } from "./terminal/Terminals";
 import { Transcripts } from "./transcript/Transcripts";
 import { Walkthroughs } from "./walkthrough/Walkthroughs";
 import { Workspace } from "./workspace/Workspace";
@@ -19,6 +20,7 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
     const rounds = yield* Rounds;
     const autonomy = yield* Autonomy;
     const subagents = yield* Subagents;
+    const terminals = yield* Terminals;
     return LiveRpcs.of({
       Projects: () => transcripts.projects,
       Transcript: ({ id }) => Stream.unwrap(transcripts.live(id)),
@@ -35,6 +37,11 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
       SessionPhases: () => flows.phases,
       Rounds: ({ session }) => rounds.list(session),
       Autonomy: ({ session }) => autonomy.autonomy(session),
+      Terminal: ({ sessionId, root, cols, rows }) =>
+        terminals.open(sessionId, root, { cols, rows }),
+      TerminalInput: ({ sessionId, data }) => terminals.write(sessionId, data),
+      TerminalResize: ({ sessionId, cols, rows }) =>
+        terminals.resize(sessionId, { cols, rows }),
     });
   }),
 );

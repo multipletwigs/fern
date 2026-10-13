@@ -17,6 +17,7 @@ import {
   TranscriptUpdate,
 } from "./Sessions";
 import { SubagentNotFound, SubagentSummary, SubagentUpdate } from "./Subagents";
+import { TerminalError, TerminalEvent, TerminalSize } from "./Terminals";
 import { Walkthrough, WalkthroughError } from "./Walkthroughs";
 
 // Everything the page keeps current, each a stream of the latest value, all over one WebSocket at
@@ -114,5 +115,26 @@ export class LiveRpcs extends RpcGroup.make(
     payload: { session: Schema.NonEmptyString },
     success: Schema.NullOr(SessionAutonomy),
     stream: true,
+  }),
+  // A Session's terminal: a shell in its folder, `root`, started at `cols` by `rows` unless one is
+  // running already, in which case this attaches to it. Streams what the shell prints, then its
+  // exit. Ending the stream detaches; the shell runs on.
+  Rpc.make("Terminal", {
+    payload: {
+      sessionId: Schema.NonEmptyString,
+      root: Schema.NonEmptyString,
+      ...TerminalSize.fields,
+    },
+    success: TerminalEvent,
+    error: TerminalError,
+    stream: true,
+  }),
+  // Keystrokes or a paste, typed into a Session's terminal. Dropped when its shell isn't running.
+  Rpc.make("TerminalInput", {
+    payload: { sessionId: Schema.NonEmptyString, data: Schema.String },
+  }),
+  // The size a Session's terminal is shown at.
+  Rpc.make("TerminalResize", {
+    payload: { sessionId: Schema.NonEmptyString, ...TerminalSize.fields },
   }),
 ) {}

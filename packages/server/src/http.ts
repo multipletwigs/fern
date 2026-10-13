@@ -10,6 +10,7 @@ import { Flows } from "./flow/Flows";
 import { IssueTracker } from "./issue/IssueTracker";
 import { Transcripts } from "./transcript/Transcripts";
 import { Snapshots } from "./snapshot/Snapshots";
+import { Terminals } from "./terminal/Terminals";
 import { SubagentFiles } from "./subagent/SubagentFiles";
 import { Subagents } from "./subagent/Subagents";
 import { LiveHandlersNoDeps } from "./live";
@@ -191,6 +192,7 @@ export const handlersWith = (
       WorktreeCleanup.layer,
       Rounds.layer,
       VerifySlots.layer,
+      Terminals.layer,
     ]),
     // The chat's Agent call rows show where each Subagent stands as its tab does.
     Layer.provideMerge(Subagents.layer),

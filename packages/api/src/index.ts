@@ -7,6 +7,7 @@ export * from "./Rounds";
 export * from "./Sessions";
 export * from "./States";
 export * from "./Subagents";
+export * from "./Terminals";
 export * from "./System";
 export * from "./VerifySlots";
 export * from "./Walkthroughs";
