@@ -108,6 +108,7 @@ export const UnusedTerminals = Layer.succeed(
     open: () => Stream.die("unused"),
     write: () => Effect.die("unused"),
     resize: () => Effect.die("unused"),
+    kill: () => Effect.die("unused"),
   }),
 );
 

@@ -1,6 +1,6 @@
 import { assert, layer } from "@effect/vitest";
 import { FernApi, LiveRpcs } from "@repo/api";
-import { Effect, Layer, Schedule, Stream } from "effect";
+import { Effect, Fiber, Layer, Schedule, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { RpcTest } from "effect/rpc";
@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { vi } from "vitest";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
+import { TerminalShell } from "../src/terminal/Terminals";
 import { CleanupInterval } from "../src/worktree/WorktreeCleanup";
 import { WorktreesDir } from "../src/worktree/Worktrees";
 import { closedSessions } from "./fakeClaude";
@@ -147,6 +148,7 @@ layer(
         Layer.succeed(WorktreesDir, { dir: dataDir }),
         // Look for merged branches often, rather than every few minutes.
         Layer.succeed(CleanupInterval, "100 millis"),
+        Layer.succeed(TerminalShell, { file: "/bin/sh", args: [] }),
       ]),
     ),
     HttpServer.layerServices,
@@ -168,6 +170,25 @@ layer(
         assert.isTrue(branchExists(branch));
         yield* sidebarListing(id, false);
       }),
+  );
+
+  it.effect("archiving a Session ends the shell in its terminal", () =>
+    Effect.gen(function* () {
+      const { id, worktree } = yield* startSession("Work with a terminal");
+      const live = yield* makeLive;
+      const terminal = yield* live
+        .Terminal({ sessionId: id, root: worktree, cols: 80, rows: 24 })
+        .pipe(Stream.runCollect, Effect.forkScoped);
+      yield* Effect.sleep("200 millis");
+      const client = yield* makeClient;
+
+      yield* client.sessions.archive({ params: { id }, payload: {} });
+
+      const events = yield* Fiber.join(terminal).pipe(
+        Effect.timeout("3 seconds"),
+      );
+      assert.strictEqual(events.at(-1)?._tag, "TerminalExit");
+    }),
   );
 
   it.effect(

@@ -42,6 +42,7 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
       TerminalInput: ({ sessionId, data }) => terminals.write(sessionId, data),
       TerminalResize: ({ sessionId, cols, rows }) =>
         terminals.resize(sessionId, { cols, rows }),
+      TerminalRestart: ({ sessionId }) => terminals.kill(sessionId),
     });
   }),
 );

@@ -4,7 +4,11 @@ import { Context, Effect, Exit, Layer, Queue, Scope, Stream } from "effect";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TerminalShell, Terminals } from "../src/terminal/Terminals";
+import {
+  TerminalScrollback,
+  TerminalShell,
+  Terminals,
+} from "../src/terminal/Terminals";
 
 // A Session's terminal on a real PTY, running /bin/sh in a temp folder.
 
@@ -64,6 +68,16 @@ const isAlive = (pid: number) => {
 
 type Viewer = Effect.Success<ReturnType<typeof watch>>;
 
+// Waits for the viewer's stream to end with the shell's exit.
+const exitOf = Effect.fn(function* (viewer: Viewer) {
+  for (let i = 0; i < 300; i++) {
+    const last = viewer.seen.at(-1);
+    if (last?._tag === "TerminalExit") return last;
+    yield* Effect.sleep("10 millis");
+  }
+  return assert.fail(`never exited; got ${JSON.stringify(viewer.output())}`);
+});
+
 // The pid of the shell a viewer is watching.
 const shellPid = Effect.fn(function* (
   terminals: Terminals["Service"],
@@ -102,22 +116,108 @@ layer(TestTerminals, { excludeTestServices: true })(
       }),
     );
 
+    test.effect(
+      "replays what the shell printed to a viewer who comes back, and keeps the same shell running",
+      () =>
+        Effect.gen(function* () {
+          const terminals = yield* Terminals;
+          const root = folder();
+          const before = yield* Effect.gen(function* () {
+            const viewer = yield* watch(terminals, "session-back", root);
+            const pid = yield* shellPid(terminals, viewer);
+            // Still counting once the viewer has gone.
+            yield* terminals.write(
+              "session-back",
+              "echo away-start; sleep 0.3; echo away-end\r",
+            );
+            yield* viewer.until("away-start\r");
+            return pid;
+          }).pipe(Effect.scoped);
+          yield* Effect.sleep("500 millis");
+
+          const viewer = yield* watch(terminals, "session-back", root);
+          // The first thing the returning viewer sees is the output from before.
+          const first = viewer.seen[0];
+          assert.strictEqual(first?._tag, "TerminalOutput");
+          assert.include(
+            first?._tag === "TerminalOutput" ? first.data : "",
+            "away-end\r",
+          );
+          assert.strictEqual(yield* shellPid(terminals, viewer), before);
+        }),
+    );
+
     test.effect("ends the stream with the shell's exit code", () =>
       Effect.gen(function* () {
         const terminals = yield* Terminals;
         const viewer = yield* watch(terminals, "session-exit", folder());
         yield* terminals.write("session-exit", "exit 3\r");
-        for (
-          let i = 0;
-          i < 300 && viewer.seen.at(-1)?._tag !== "TerminalExit";
-          i++
-        )
-          yield* Effect.sleep("10 millis");
-        assert.deepStrictEqual(viewer.seen.at(-1), {
+        assert.deepStrictEqual(yield* exitOf(viewer), {
           _tag: "TerminalExit",
           code: 3,
         });
       }),
+    );
+
+    test.effect(
+      "shows a viewer who comes back after the shell exited what it printed and how it exited",
+      () =>
+        Effect.gen(function* () {
+          const terminals = yield* Terminals;
+          const root = folder();
+          yield* Effect.gen(function* () {
+            const viewer = yield* watch(terminals, "session-gone", root);
+            yield* terminals.write("session-gone", "echo last-words; exit 4\r");
+            yield* exitOf(viewer);
+          }).pipe(Effect.scoped);
+
+          const viewer = yield* watch(terminals, "session-gone", root);
+          assert.deepStrictEqual(yield* exitOf(viewer), {
+            _tag: "TerminalExit",
+            code: 4,
+          });
+          assert.include(viewer.output(), "last-words\r");
+        }),
+    );
+
+    test.effect(
+      "killing a Session's shell ends it, and the next viewer gets a fresh one",
+      () =>
+        Effect.gen(function* () {
+          const terminals = yield* Terminals;
+          const root = folder();
+          const viewer = yield* watch(terminals, "session-kill", root);
+          yield* terminals.write("session-kill", "echo before-kill\r");
+          yield* viewer.until("before-kill\r");
+          const pid = yield* shellPid(terminals, viewer);
+
+          yield* terminals.kill("session-kill");
+
+          assert.isFalse(isAlive(pid));
+          assert.strictEqual((yield* exitOf(viewer))._tag, "TerminalExit");
+          const fresh = yield* watch(terminals, "session-kill", root);
+          assert.notInclude(fresh.output(), "before-kill");
+          assert.notStrictEqual(yield* shellPid(terminals, fresh), pid);
+        }),
+    );
+
+    test.effect(
+      "killing an exited shell lets the next viewer start a fresh one",
+      () =>
+        Effect.gen(function* () {
+          const terminals = yield* Terminals;
+          const root = folder();
+          const viewer = yield* watch(terminals, "session-restart", root);
+          yield* terminals.write("session-restart", "exit 1\r");
+          yield* exitOf(viewer);
+
+          yield* terminals.kill("session-restart");
+
+          const fresh = yield* watch(terminals, "session-restart", root);
+          yield* terminals.write("session-restart", "echo $PWD\r");
+          yield* fresh.until(`${root}\r`);
+          assert.isFalse(fresh.seen.some((e) => e._tag === "TerminalExit"));
+        }),
     );
   },
 );
@@ -138,3 +238,31 @@ it.live("closing the service's scope kills every shell", () =>
     assert.deepStrictEqual(pids.map(isAlive), [false, false]);
   }),
 );
+
+layer(
+  Terminals.layer.pipe(
+    Layer.provide([Shell, Layer.succeed(TerminalScrollback, 1000)]),
+  ),
+  { excludeTestServices: true },
+)("A Session's terminal with a short scrollback", (test) => {
+  test.effect("keeps only the latest output for a viewer who comes back", () =>
+    Effect.gen(function* () {
+      const terminals = yield* Terminals;
+      const root = folder();
+      yield* Effect.gen(function* () {
+        const viewer = yield* watch(terminals, "session-long", root);
+        yield* terminals.write(
+          "session-long",
+          "i=0; while [ $i -lt 400 ]; do i=$((i+1)); echo line-$i; done\r",
+        );
+        yield* viewer.until("line-400\r");
+      }).pipe(Effect.scoped);
+
+      const viewer = yield* watch(terminals, "session-long", root);
+      const replay = viewer.output();
+      assert.include(replay, "line-400\r");
+      assert.notInclude(replay, "line-1\r");
+      assert.isAtMost(replay.length, 1000);
+    }),
+  );
+});

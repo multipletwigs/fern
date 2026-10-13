@@ -12,6 +12,7 @@ import {
   Semaphore,
 } from "effect";
 import { Flows } from "../flow/Flows";
+import { Terminals } from "../terminal/Terminals";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { Worktrees } from "./Worktrees";
@@ -29,8 +30,8 @@ export const CleanupInterval = Context.Reference<Duration.Input>(
 export class WorktreeCleanup extends Context.Service<
   WorktreeCleanup,
   {
-    // Stops the Session's turn and closes its Claude Code process, removes its worktree, and
-    // archives it, keeping its branch. Refuses while the worktree has uncommitted changes, unless
+    // Stops the Session's turn and closes its Claude Code process, ends the shell in its terminal,
+    // removes its worktree, and archives it, keeping its branch. Refuses while the worktree has uncommitted changes, unless
     // `force`.
     archive(
       id: string,
@@ -48,6 +49,7 @@ export class WorktreeCleanup extends Context.Service<
       const worktrees = yield* Worktrees;
       const turns = yield* Turns;
       const flows = yield* Flows;
+      const terminals = yield* Terminals;
       const interval = yield* CleanupInterval;
       // One removal at a time, so archiving and the merge sweep never race on a worktree.
       const lock = yield* Semaphore.make(1);
@@ -68,6 +70,7 @@ export class WorktreeCleanup extends Context.Service<
         if (!force && (yield* worktrees.isDirty(session.worktree)))
           return yield* new UncommittedChanges({ id });
         yield* turns.close(id);
+        yield* terminals.kill(id);
         yield* worktrees.remove(session.projectRoot, session.worktree, {
           force,
         });
@@ -97,6 +100,7 @@ export class WorktreeCleanup extends Context.Service<
               // Looked at last, right before the worktree goes: a turn may have started meanwhile.
               if ((yield* turns.running).includes(session.id)) return;
               yield* turns.close(session.id);
+              yield* terminals.kill(session.id);
               yield* worktrees.remove(session.projectRoot, session.worktree, {
                 force: false,
               });

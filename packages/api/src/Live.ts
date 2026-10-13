@@ -117,8 +117,9 @@ export class LiveRpcs extends RpcGroup.make(
     stream: true,
   }),
   // A Session's terminal: a shell in its folder, `root`, started at `cols` by `rows` unless one is
-  // running already, in which case this attaches to it. Streams what the shell prints, then its
-  // exit. Ending the stream detaches; the shell runs on.
+  // running already, in which case this attaches to it. Streams what the shell has printed lately,
+  // then what it goes on to print, then its exit. A shell that has exited is replayed up to its
+  // exit until `TerminalRestart`. Ending the stream detaches; the shell runs on.
   Rpc.make("Terminal", {
     payload: {
       sessionId: Schema.NonEmptyString,
@@ -136,5 +137,9 @@ export class LiveRpcs extends RpcGroup.make(
   // The size a Session's terminal is shown at.
   Rpc.make("TerminalResize", {
     payload: { sessionId: Schema.NonEmptyString, ...TerminalSize.fields },
+  }),
+  // Ends a Session's shell, if it's still running, so the next `Terminal` starts a fresh one.
+  Rpc.make("TerminalRestart", {
+    payload: { sessionId: Schema.NonEmptyString },
   }),
 ) {}

@@ -199,7 +199,6 @@ export const handlersWith = (
       WorktreeCleanup.layer,
       Rounds.layer,
       VerifySlots.layer,
-      Terminals.layer,
       Tools.layer,
     ]),
     // The chat's Agent call rows show where each Subagent stands as its tab does.
@@ -214,6 +213,8 @@ export const handlersWith = (
       Commands.layer,
       Autonomy.layer,
       SubagentFiles.layer,
+      // Archiving a Session ends its terminal's shell.
+      Terminals.layer,
     ]),
     Layer.provide([
       Snapshots.layer,
