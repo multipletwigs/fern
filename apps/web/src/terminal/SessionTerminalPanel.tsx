@@ -45,10 +45,10 @@ export function SessionTerminalPanel({
         setHeight(clampTerminalHeight(next, window.innerHeight))
       }
     >
+      {/* A new folder, as when the Session moves into a worktree, means a fresh shell there. */}
       <SessionTerminal
         key={`${sessionId}\0${root}\0${restarts}`}
         sessionId={sessionId}
-        root={root}
         visible={open}
         onRestarted={() => setRestarts((n) => n + 1)}
       />

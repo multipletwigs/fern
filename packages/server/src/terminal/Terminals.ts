@@ -17,6 +17,7 @@ import {
 } from "effect";
 import { statSync } from "node:fs";
 import * as pty from "node-pty";
+import { type Scrollback, scrollback } from "./scrollback";
 
 // The shell a terminal runs: the developer's own, as a login shell, so their PATH, aliases and
 // prompt are the ones they're used to.
@@ -39,41 +40,26 @@ export const TerminalScrollback = Context.Reference<number>(
   { defaultValue: () => 1_000_000 },
 );
 
-// What a shell printed lately, up to `limit`, the oldest dropped first.
-const scrollback = (limit: number) => {
-  const chunks: Array<string> = [];
-  let size = 0;
-  return {
-    append: (data: string) => {
-      chunks.push(data);
-      size += data.length;
-      while (size > limit) {
-        const over = size - limit;
-        const oldest = chunks[0]!;
-        if (oldest.length <= over) {
-          chunks.shift();
-          size -= oldest.length;
-        } else {
-          chunks[0] = oldest.slice(over);
-          size -= over;
-        }
-      }
-    },
-    text: () => chunks.join(""),
-  };
-};
+// How much of what a shell printed is kept once it has exited, to show how it ended: a page or so.
+export const TerminalExitScrollback = Context.Reference<number>(
+  "@repo/server/terminal/TerminalExitScrollback",
+  { defaultValue: () => 16_000 },
+);
 
 // How long a shell gets to exit on its hangup before it's killed outright.
 const HANGUP_GRACE = "1 second";
 
 type Viewer = Queue.Queue<TerminalEvent, TerminalError | Cause.Done>;
 
-// A Session's shell on its PTY, what it has printed lately, and whoever is watching it. Kept after
-// the shell exits, with its exit code, until it's killed.
+// A Session's shell in its folder, on its PTY, what it has printed lately, and whoever is watching
+// it. Kept after the shell exits, with its exit code and its last lines but not its PTY, until
+// it's killed.
 interface SessionShell {
-  readonly term: pty.IPty;
+  readonly root: string;
+  // Until the shell exits.
+  term: pty.IPty | undefined;
   readonly viewers: Set<Viewer>;
-  readonly printed: ReturnType<typeof scrollback>;
+  readonly printed: Scrollback;
   readonly exited: Deferred.Deferred<number>;
   // Closing it stops the shell.
   readonly scope: Scope.Closeable;
@@ -86,15 +72,16 @@ const exitEvent = (code: number): TerminalEvent => ({
 });
 
 // One shell per Session, on a PTY, in the Session's folder. A shell starts the first time its
-// Session's terminal is opened and runs until it exits, it's killed, or the service's scope closes,
-// which kills every shell still running. Viewers come and go without touching the shell, and each
-// one is first sent what the shell printed before it came.
+// Session's terminal is opened and runs until it exits, it's killed, the Session's folder changes,
+// or the service's scope closes, which kills every shell still running. Viewers come and go without
+// touching the shell, and each one is first sent what the shell printed before it came.
 export class Terminals extends Context.Service<
   Terminals,
   {
-    // Streams what the Session's shell has printed lately and goes on to print, then its exit.
-    // Starts the shell in `root` at `size` when the Session has none, else attaches to the one it
-    // has, at `size`. A shell that has exited is only replayed, up to its exit, until it's killed.
+    // Streams what the Session's shell has printed lately, as a replay, and goes on to print, then
+    // its exit. Starts the shell in `root` at `size` when the Session has none, else attaches to
+    // the one it has, at `size`. One in another folder is ended for a fresh one in `root`. A shell
+    // that has exited is only replayed, up to its exit, until it's killed.
     readonly open: (
       sessionId: string,
       root: string,
@@ -116,6 +103,7 @@ export class Terminals extends Context.Service<
     Effect.gen(function* () {
       const shell = yield* TerminalShell;
       const limit = yield* TerminalScrollback;
+      const exitLimit = yield* TerminalExitScrollback;
       const scope = yield* Effect.scope;
       const shells = new Map<string, SessionShell>();
       // Two viewers opening the same Session at once start one shell, and a kill isn't undone by
@@ -125,7 +113,7 @@ export class Terminals extends Context.Service<
       // Hangs up on the shell, and kills it if it doesn't go.
       const stop = ({ term, exited }: SessionShell) =>
         Effect.gen(function* () {
-          if (Deferred.isDoneUnsafe(exited)) return;
+          if (term === undefined || Deferred.isDoneUnsafe(exited)) return;
           term.kill("SIGHUP");
           const gone = yield* Deferred.await(exited).pipe(
             Effect.timeoutOption(HANGUP_GRACE),
@@ -154,6 +142,7 @@ export class Terminals extends Context.Service<
                 env: { ...process.env, TERM: "xterm-256color", PWD: root },
               });
               const entry: SessionShell = {
+                root,
                 term,
                 viewers: new Set(),
                 printed: scrollback(limit),
@@ -161,18 +150,23 @@ export class Terminals extends Context.Service<
                 scope: own,
                 code: undefined,
               };
-              term.onData((data) => {
+              const printing = term.onData((data) => {
                 entry.printed.append(data);
                 for (const viewer of entry.viewers)
                   Queue.offerUnsafe(viewer, { _tag: "TerminalOutput", data });
               });
-              term.onExit(({ exitCode }) => {
+              const exiting = term.onExit(({ exitCode }) => {
                 entry.code = exitCode;
                 for (const viewer of entry.viewers) {
                   Queue.offerUnsafe(viewer, exitEvent(exitCode));
                   Queue.endUnsafe(viewer);
                 }
                 entry.viewers.clear();
+                // All that's left to show is how it ended.
+                printing.dispose();
+                exiting.dispose();
+                entry.term = undefined;
+                entry.printed.shrink(exitLimit);
                 Deferred.doneUnsafe(exited, Exit.succeed(exitCode));
               });
               return entry;
@@ -183,7 +177,10 @@ export class Terminals extends Context.Service<
               }),
           }),
           stop,
-        ).pipe(Scope.provide(own));
+        ).pipe(
+          Scope.provide(own),
+          Effect.onError(() => Scope.close(own, Exit.void)),
+        );
         shells.set(sessionId, started);
         // Once the shell exits by itself, its finalizer has nothing left to do.
         yield* Deferred.await(exited).pipe(
@@ -193,13 +190,24 @@ export class Terminals extends Context.Service<
         return started;
       });
 
+      // Ends the Session's shell and forgets it.
+      const end = (sessionId: string) =>
+        Effect.gen(function* () {
+          const entry = shells.get(sessionId);
+          if (entry === undefined) return;
+          shells.delete(sessionId);
+          yield* Scope.close(entry.scope, Exit.void);
+        });
+
       const attach = (sessionId: string, root: string, size: TerminalSize) =>
         Effect.gen(function* () {
           const current = shells.get(sessionId);
-          if (current === undefined) return yield* start(sessionId, root, size);
-          if (current.code === undefined)
-            current.term.resize(size.cols, size.rows);
-          return current;
+          if (current?.root === root) {
+            current.term?.resize(size.cols, size.rows);
+            return current;
+          }
+          yield* end(sessionId);
+          return yield* start(sessionId, root, size);
         }).pipe(lock.withPermits(1));
 
       const open = (sessionId: string, root: string, size: TerminalSize) =>
@@ -208,12 +216,10 @@ export class Terminals extends Context.Service<
             const entry = yield* attach(sessionId, root, size);
             yield* Effect.acquireRelease(
               Effect.sync(() => {
-                const before = entry.printed.text();
-                if (before !== "")
-                  Queue.offerUnsafe(viewer, {
-                    _tag: "TerminalOutput",
-                    data: before,
-                  });
+                Queue.offerUnsafe(viewer, {
+                  _tag: "TerminalReplay",
+                  data: entry.printed.text(),
+                });
                 if (entry.code === undefined) entry.viewers.add(viewer);
                 else {
                   Queue.offerUnsafe(viewer, exitEvent(entry.code));
@@ -225,22 +231,16 @@ export class Terminals extends Context.Service<
           }),
         );
 
-      const live = (sessionId: string) => {
-        const entry = shells.get(sessionId);
-        return entry?.code === undefined ? entry : undefined;
-      };
-
       const write = (sessionId: string, data: string) =>
-        Effect.sync(() => live(sessionId)?.term.write(data));
+        Effect.sync(() => shells.get(sessionId)?.term?.write(data));
 
       const resize = (sessionId: string, size: TerminalSize) =>
-        Effect.sync(() => live(sessionId)?.term.resize(size.cols, size.rows));
+        Effect.sync(() =>
+          shells.get(sessionId)?.term?.resize(size.cols, size.rows),
+        );
 
       const kill = Effect.fn("Terminals.kill")(function* (sessionId: string) {
-        const entry = shells.get(sessionId);
-        if (entry === undefined) return;
-        shells.delete(sessionId);
-        yield* Scope.close(entry.scope, Exit.void);
+        yield* end(sessionId);
       }, lock.withPermits(1));
 
       return Terminals.of({ open, write, resize, kill });

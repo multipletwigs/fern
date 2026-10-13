@@ -28,6 +28,7 @@ export const UnusedTranscripts = Layer.succeed(
   Transcripts.of({
     current: Effect.die("unused"),
     projects: Stream.die("unused"),
+    folder: () => Effect.die("unused"),
     live: () => Effect.die("unused"),
   }),
 );

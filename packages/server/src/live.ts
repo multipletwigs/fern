@@ -1,4 +1,4 @@
-import { LiveRpcs } from "@repo/api";
+import { LiveRpcs, TerminalError } from "@repo/api";
 import { Effect, Layer, Stream } from "effect";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { Autonomy } from "./autonomy/Autonomy";
@@ -37,8 +37,24 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
       SessionPhases: () => flows.phases,
       Rounds: ({ session }) => rounds.list(session),
       Autonomy: ({ session }) => autonomy.autonomy(session),
-      Terminal: ({ sessionId, root, cols, rows }) =>
-        terminals.open(sessionId, root, { cols, rows }),
+      // In the Session's own folder, never one the page names.
+      Terminal: ({ sessionId, cols, rows }) =>
+        Stream.unwrap(
+          transcripts.folder(sessionId).pipe(
+            Effect.mapError(
+              (error) =>
+                new TerminalError({
+                  message:
+                    error._tag === "SessionNotFound"
+                      ? "Fern doesn't know this Session's folder"
+                      : error.message,
+                }),
+            ),
+            Effect.map((root) =>
+              terminals.open(sessionId, root, { cols, rows }),
+            ),
+          ),
+        ),
       TerminalInput: ({ sessionId, data }) => terminals.write(sessionId, data),
       TerminalResize: ({ sessionId, cols, rows }) =>
         terminals.resize(sessionId, { cols, rows }),

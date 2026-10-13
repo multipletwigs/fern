@@ -32,7 +32,6 @@ const RESET = "\x1b[0m";
 export const runTerminal = (
   term: Terminal,
   sessionId: string,
-  root: string,
   onExit: (code: number) => void,
 ) =>
   Effect.gen(function* () {
@@ -65,17 +64,19 @@ export const runTerminal = (
       Effect.forkScoped,
     );
     // The connection drops now and then, as when the page sits in the background; the shell
-    // runs on regardless, so attach to it again, at the size the terminal is by then.
+    // runs on regardless, so attach to it again, at the size the terminal is by then. Each
+    // attachment starts with everything the shell printed so far, which takes the place of what
+    // the terminal shows, so nothing shows twice.
     yield* Stream.suspend(() =>
-      client("Terminal", { sessionId, root, cols: term.cols, rows: term.rows }),
+      client("Terminal", { sessionId, cols: term.cols, rows: term.rows }),
     ).pipe(
       Stream.retry(reattach),
       Stream.runForEach((event) =>
-        Effect.sync(() =>
-          event._tag === "TerminalOutput"
-            ? term.write(event.data)
-            : onExit(event.code),
-        ),
+        Effect.sync(() => {
+          if (event._tag === "TerminalExit") return onExit(event.code);
+          if (event._tag === "TerminalReplay") term.reset();
+          term.write(event.data);
+        }),
       ),
       Effect.catch((error) =>
         Effect.sync(() =>

@@ -174,10 +174,10 @@ layer(
 
   it.effect("archiving a Session ends the shell in its terminal", () =>
     Effect.gen(function* () {
-      const { id, worktree } = yield* startSession("Work with a terminal");
+      const { id } = yield* startSession("Work with a terminal");
       const live = yield* makeLive;
       const terminal = yield* live
-        .Terminal({ sessionId: id, root: worktree, cols: 80, rows: 24 })
+        .Terminal({ sessionId: id, cols: 80, rows: 24 })
         .pipe(Stream.runCollect, Effect.forkScoped);
       yield* Effect.sleep("200 millis");
       const client = yield* makeClient;

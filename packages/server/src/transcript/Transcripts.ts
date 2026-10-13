@@ -105,6 +105,11 @@ export class Transcripts extends Context.Service<
     >;
     // Every Project, re-sent whenever a Session starts, changes, or is renamed.
     readonly projects: Stream.Stream<ReadonlyArray<Project>, TranscriptError>;
+    // The folder the Session's code is in, as the sidebar shows it: the worktree it runs in, else
+    // its Project's folder.
+    folder(
+      id: string,
+    ): Effect.Effect<string, SessionNotFound | TranscriptError>;
     // The Session's transcript as a stream of updates, re-read whenever the file changes.
     live(
       id: string,
@@ -153,6 +158,22 @@ export class Transcripts extends Context.Service<
           Stream.changesWith((a, b) => listingKey(a) === listingKey(b)),
           Stream.map(toProjects),
         ),
+
+        // The folder Claude Code runs the Session in, which for one in a worktree is the worktree,
+        // as the listing has it. A Hosted Session whose transcript isn't written yet is found by
+        // the worktree Fern made for it.
+        folder: Effect.fn("Transcripts.folder")(function* (id: string) {
+          const [info, worktrees] = yield* Effect.all(
+            [
+              sdk("getSessionInfo", () => getSessionInfo(id)),
+              sessions.worktrees,
+            ],
+            { concurrency: "unbounded" },
+          );
+          const folder = info?.cwd ?? worktrees.find((w) => w.id === id)?.cwd;
+          if (!folder) return yield* new SessionNotFound({ id });
+          return folder;
+        }),
 
         live: Effect.fn("Transcripts.live")(function* (id: string) {
           const info = sdk("getSessionInfo", () => getSessionInfo(id)).pipe(

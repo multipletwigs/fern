@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  TerminalExitScrollback,
   TerminalScrollback,
   TerminalShell,
   Terminals,
@@ -37,7 +38,7 @@ const watch = Effect.fn(function* (
     Effect.forkScoped,
   );
   const output = () =>
-    seen.flatMap((e) => (e._tag === "TerminalOutput" ? [e.data] : [])).join("");
+    seen.flatMap((e) => (e._tag === "TerminalExit" ? [] : [e.data])).join("");
   // Waits until the output so far holds `text`.
   const until = (text: string | RegExp) =>
     Effect.gen(function* () {
@@ -51,8 +52,11 @@ const watch = Effect.fn(function* (
         `never printed ${String(text)}; got ${JSON.stringify(output())}`,
       );
     });
-  // The shell has started once it prompts.
-  yield* Queue.take(events);
+  // The shell has started once it prompts, or replays what it printed before.
+  while (true) {
+    const event = yield* Queue.take(events);
+    if (event._tag !== "TerminalReplay" || event.data !== "") break;
+  }
   return { sessionId, seen, output, until };
 });
 
@@ -136,11 +140,11 @@ layer(TestTerminals, { excludeTestServices: true })(
           yield* Effect.sleep("500 millis");
 
           const viewer = yield* watch(terminals, "session-back", root);
-          // The first thing the returning viewer sees is the output from before.
+          // The first thing the returning viewer sees is the output from before, as a replay.
           const first = viewer.seen[0];
-          assert.strictEqual(first?._tag, "TerminalOutput");
+          assert.strictEqual(first?._tag, "TerminalReplay");
           assert.include(
-            first?._tag === "TerminalOutput" ? first.data : "",
+            first?._tag === "TerminalReplay" ? first.data : "",
             "away-end\r",
           );
           assert.strictEqual(yield* shellPid(terminals, viewer), before);
@@ -198,6 +202,24 @@ layer(TestTerminals, { excludeTestServices: true })(
           const fresh = yield* watch(terminals, "session-kill", root);
           assert.notInclude(fresh.output(), "before-kill");
           assert.notStrictEqual(yield* shellPid(terminals, fresh), pid);
+        }),
+    );
+
+    test.effect(
+      "starts a fresh shell in the Session's new folder once its folder changes",
+      () =>
+        Effect.gen(function* () {
+          const terminals = yield* Terminals;
+          const [before, after] = [folder(), folder()];
+          const old = yield* watch(terminals, "session-moved", before);
+          const pid = yield* shellPid(terminals, old);
+
+          const moved = yield* watch(terminals, "session-moved", after);
+          yield* terminals.write("session-moved", "echo $PWD\r");
+          yield* moved.until(`${after}\r`);
+          assert.notStrictEqual(yield* shellPid(terminals, moved), pid);
+          assert.isFalse(isAlive(pid));
+          assert.strictEqual((yield* exitOf(old))._tag, "TerminalExit");
         }),
     );
 
@@ -263,6 +285,41 @@ layer(
       assert.include(replay, "line-400\r");
       assert.notInclude(replay, "line-1\r");
       assert.isAtMost(replay.length, 1000);
+    }),
+  );
+});
+
+layer(
+  Terminals.layer.pipe(
+    Layer.provide([
+      Shell,
+      Layer.succeed(TerminalScrollback, 1000),
+      Layer.succeed(TerminalExitScrollback, 200),
+    ]),
+  ),
+  { excludeTestServices: true },
+)("A Session's terminal once its shell has exited", (test) => {
+  test.effect("keeps only its last lines, to show how it ended", () =>
+    Effect.gen(function* () {
+      const terminals = yield* Terminals;
+      const root = folder();
+      yield* Effect.gen(function* () {
+        const viewer = yield* watch(terminals, "session-ended", root);
+        yield* terminals.write(
+          "session-ended",
+          "i=0; while [ $i -lt 400 ]; do i=$((i+1)); echo line-$i; done; exit 5\r",
+        );
+        yield* exitOf(viewer);
+      }).pipe(Effect.scoped);
+
+      const viewer = yield* watch(terminals, "session-ended", root);
+      assert.deepStrictEqual(yield* exitOf(viewer), {
+        _tag: "TerminalExit",
+        code: 5,
+      });
+      const replay = viewer.output();
+      assert.include(replay, "line-400\r");
+      assert.isAtMost(replay.length, 200);
     }),
   );
 });

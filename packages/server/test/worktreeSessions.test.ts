@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { vi } from "vitest";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
+import { TerminalShell } from "../src/terminal/Terminals";
 import { WorktreesDir } from "../src/worktree/Worktrees";
 import { NoWriter } from "./stubs";
 
@@ -315,5 +316,58 @@ layer(
         assert.notStrictEqual(worktree, one.turn.cwd);
         assert.strictEqual(git(worktree, "rev-parse", "HEAD"), mainTip);
       }),
+  );
+});
+
+layer(
+  Layer.mergeAll(
+    handlersWith(NoWriter).pipe(
+      Layer.provide([
+        DatabaseLive(":memory:"),
+        Layer.succeed(WorktreesDir, { dir: dataDir }),
+        Layer.succeed(TerminalShell, { file: "/bin/sh", args: [] }),
+      ]),
+    ),
+    HttpServer.layerServices,
+  ),
+  { excludeTestServices: true },
+)("A worktree Session's terminal", (it) => {
+  it.effect("runs in the Session's worktree", () =>
+    Effect.gen(function* () {
+      const { id, turn } = yield* startSession("Look around");
+      const live = yield* makeLive;
+      const printed: Array<string> = [];
+      yield* live.Terminal({ sessionId: id, cols: 80, rows: 24 }).pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            if (event._tag !== "TerminalExit") printed.push(event.data);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.suspend(() =>
+        live
+          .TerminalInput({ sessionId: id, data: "echo $PWD\r" })
+          .pipe(
+            Effect.andThen(
+              printed.join("").includes(`${turn.cwd}\r`)
+                ? Effect.void
+                : Effect.fail("not yet"),
+            ),
+          ),
+      ).pipe(
+        Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 50 }),
+      );
+    }),
+  );
+
+  it.effect("isn't opened for a Session Fern doesn't know", () =>
+    Effect.gen(function* () {
+      const live = yield* makeLive;
+      const error = yield* live
+        .Terminal({ sessionId: crypto.randomUUID(), cols: 80, rows: 24 })
+        .pipe(Stream.runDrain, Effect.flip);
+      assert.strictEqual(error._tag, "TerminalError");
+    }),
   );
 });

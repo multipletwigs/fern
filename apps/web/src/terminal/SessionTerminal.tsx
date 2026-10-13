@@ -50,12 +50,10 @@ const fernTheme = (): ITheme => {
 // fresh one, which it ends the old one for before telling `onRestarted`, to be mounted afresh.
 export function SessionTerminal({
   sessionId,
-  root,
   visible,
   onRestarted,
 }: {
   sessionId: string;
-  root: string;
   visible: boolean;
   onRestarted: () => void;
 }) {
@@ -108,7 +106,7 @@ export function SessionTerminal({
       observer.observe(element);
       term.current = terminal;
       const fiber = Effect.runForkWith(context)(
-        runTerminal(terminal, sessionId, root, setExited),
+        runTerminal(terminal, sessionId, setExited),
       );
       if (shown.current) terminal.focus();
       unmount = () => {
@@ -129,7 +127,7 @@ export function SessionTerminal({
       cancelled = true;
       unmount?.();
     };
-  }, [context, sessionId, root]);
+  }, [context, sessionId]);
 
   const restart = () => {
     if (!context || restarting.current) return;

@@ -116,14 +116,14 @@ export class LiveRpcs extends RpcGroup.make(
     success: Schema.NullOr(SessionAutonomy),
     stream: true,
   }),
-  // A Session's terminal: a shell in its folder, `root`, started at `cols` by `rows` unless one is
-  // running already, in which case this attaches to it. Streams what the shell has printed lately,
-  // then what it goes on to print, then its exit. A shell that has exited is replayed up to its
-  // exit until `TerminalRestart`. Ending the stream detaches; the shell runs on.
+  // A Session's terminal: a shell in its folder, its worktree or else its Project's, as the server
+  // knows it, started at `cols` by `rows` unless one is running there already, in which case this
+  // attaches to it. Streams what the shell has printed lately, as a replay, then what it goes on to
+  // print, then its exit. A shell that has exited is replayed up to its exit until
+  // `TerminalRestart`. Ending the stream detaches; the shell runs on.
   Rpc.make("Terminal", {
     payload: {
       sessionId: Schema.NonEmptyString,
-      root: Schema.NonEmptyString,
       ...TerminalSize.fields,
     },
     success: TerminalEvent,
