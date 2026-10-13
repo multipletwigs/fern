@@ -278,6 +278,12 @@ const migrations = {
     yield* sql`ALTER TABLE walkthrough_sections ADD COLUMN risk TEXT`;
     yield* sql`ALTER TABLE walkthrough_sections ADD COLUMN risk_reason TEXT`;
   }),
+  // What each PR on a Stack carries: a ticket's work, as every PR before this did, a fix for
+  // Rejections, or the accepted Findings.
+  "0016_stack_pr_kinds": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE stack_prs ADD COLUMN kind TEXT NOT NULL DEFAULT 'ticket'`;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

@@ -107,7 +107,7 @@ The developer-facing explanation of one change a Session made, usually one PR of
 _Avoid_: Diff, summary, changelog, report
 
 **Stack**:
-A Session's work as a chain of pull requests on GitHub, one per ticket in the order the tickets landed on the Session's branch, each based on the one below. Each PR carries its own Walkthrough, as its description too.
+A Session's work as a chain of pull requests on GitHub, one per ticket in the order the tickets landed on the Session's branch, each based on the one below. A fix for Rejections, and the accepted Findings, each go on top as a PR of their own. Each PR carries its own Walkthrough, as its description too.
 _Avoid_: PR chain, series, train
 
 **Land**:

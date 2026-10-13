@@ -338,9 +338,13 @@ export const redirectMessage = (
           `- The unexplained change in \`${h.path}\` (${h.header}): ${h.note ?? ""}`,
       ),
   ];
-  return lines.length === 0
-    ? undefined
-    : `I reviewed Walkthrough ${number} and rejected part of it:\n\n${lines.join("\n")}\n\nPlease address these.`;
+  if (lines.length === 0) return undefined;
+  const ask = rows.walkthroughs.some(
+    (w) => w.id === walkthroughId && w.prId !== null,
+  )
+    ? "Please address these: commit the fix on this Session's branch, then report it with Fern's `fix_landed` tool, which puts it up as a new PR on top of the Stack."
+    : "Please address these.";
+  return `I reviewed Walkthrough ${number} and rejected part of it:\n\n${lines.join("\n")}\n\n${ask}`;
 };
 
 // What the Fork is asked to explain, numbered, the Rejections it may say it fixes, and the
@@ -1034,6 +1038,47 @@ export class Walkthroughs extends Context.Service<
           return yield* new ReviewClosed({ id: walkthroughId });
         return yield* sendRedirect(walkthroughId, sessionId);
       });
+
+      // A PR's Walkthrough Fern was writing when it stopped is written now, as its change is
+      // stored with it. Nothing else would write it, and the Stack waits on it.
+      const unfinished = SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({
+          id: Schema.String,
+          sessionId: Schema.String,
+          repo: Schema.String,
+        }),
+        execute: () => sql`
+          SELECT id, session_id, repo FROM walkthroughs
+          WHERE status = 'writing' AND pr_id IS NOT NULL ORDER BY created_at, number`,
+      });
+      const resume = Effect.fn("Walkthroughs.resume")(function* (walkthrough: {
+        readonly id: string;
+        readonly sessionId: string;
+        readonly repo: string;
+      }) {
+        const { id, sessionId } = walkthrough;
+        const info = yield* sdk("getSessionInfo", () =>
+          getSessionInfo(sessionId),
+        ).pipe(Effect.orElseSucceed(() => undefined));
+        const rows = yield* load(sessionId);
+        // Stored in the order they were numbered, so they number the same again.
+        const stored = rows.hunks.filter((h) => h.walkthroughId === id);
+        const prepared = requestOf(
+          sessionId,
+          info?.cwd ?? walkthrough.repo,
+          "pr",
+          stored,
+          rows,
+          yield* citable(sessionId, walkthrough.repo),
+        );
+        yield* started(sessionId);
+        yield* start({ id, ...prepared });
+      });
+      yield* unfinished().pipe(
+        Effect.orDie,
+        Effect.flatMap((rows) => Effect.forEach(rows, resume)),
+      );
 
       // Fern writes a Walkthrough whenever a turn it ran finishes on its own, except where the
       // Session's work lands as a Stack: there each PR gets its own, as its ticket lands.

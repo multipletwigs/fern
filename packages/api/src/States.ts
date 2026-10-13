@@ -130,6 +130,11 @@ export type RiskLevel = typeof RiskLevel.Type;
 export const VerdictMode = Schema.Literals(["idle", "noting", "changing"]);
 export type VerdictMode = typeof VerdictMode.Type;
 
+// What a PR on a Session's Stack carries: a ticket's work, a fix for Rejections of the PRs below,
+// or the Setup change from the Retro's accepted Findings.
+export const StackPrKind = Schema.Literals(["ticket", "fix", "findings"]);
+export type StackPrKind = typeof StackPrKind.Type;
+
 // The issue tracker
 
 // Whether an issue on the Project's issue tracker is open.
