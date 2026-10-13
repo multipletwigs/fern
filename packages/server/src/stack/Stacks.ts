@@ -12,7 +12,7 @@ import {
 } from "effect";
 import { SqlClient, SqlSchema } from "effect/sql";
 import { z } from "zod";
-import { CodeHost } from "../codehost/CodeHost";
+import { CodeHost, MergeRefused } from "../codehost/CodeHost";
 import { Git, type GitError } from "../git/Git";
 import { IssueTracker, IssueTrackerTimeout } from "../issue/IssueTracker";
 import { FernTools } from "../turn/FernTools";
@@ -81,6 +81,11 @@ const TICKET_LANDED = `Report that a ticket merged into this Session's branch. F
 
 const FIX_LANDED = `Report a fix for the developer's Rejections, committed on this Session's branch. Fern pushes a branch at the commit and opens its draft PR on top of the Session's Stack, then writes its Walkthrough in the background, linked to the Rejections it fixes.`;
 
+const PRS_UPDATED = `After GitHub refused to land this Session's Stack and Fern sent you why, report the new head commit of each PR you changed to fix it, bottom first. Fern moves each PR's branch on GitHub to its new head. Each new head must be on this Session's branch and build on the head of the PR below.`;
+
+// The most PRs one report may name.
+const MAX_STACK = 100;
+
 // The placeholder description a PR opens with, until its Walkthrough becomes the description.
 const openingBody = (report: Landed) =>
   [
@@ -114,6 +119,12 @@ export class Stacks extends Context.Service<
     // Puts what landed at the commit up as the top PR of the Session's Stack. What to answer the
     // agent, never a failure.
     landed(sessionId: string, report: Landed): Effect.Effect<Answer>;
+    // Marks the Session's PRs ready and squash-merges its Stack into `main`, all at once. Fails
+    // with GitHub's reason when it refuses, or when Fern can't reach it.
+    land(sessionId: string): Effect.Effect<void, MergeRefused>;
+    // Whether the Session's Stack has merged into `main`, as GitHub says; never for a Session
+    // without one, or when GitHub can't say.
+    merged(sessionId: string): Effect.Effect<boolean>;
   }
 >()("@repo/server/stack/Stacks") {
   static readonly layer = Layer.effect(
@@ -326,6 +337,136 @@ export class Stacks extends Context.Service<
             }),
           );
 
+      const worktreeOf = (sessionId: string) =>
+        hosted.worktrees.pipe(
+          Effect.map((all) => all.find((w) => w.id === sessionId)),
+        );
+
+      const land = Effect.fn("Stacks.land")(
+        function* (sessionId: string) {
+          const stack = yield* prs(sessionId);
+          const session = yield* worktreeOf(sessionId);
+          if (!session || stack.length === 0)
+            return yield* new MergeRefused({
+              reason: "This Session has no Stack to land.",
+            });
+          // Merged already: outside Fern, or by an earlier try GitHub finished late.
+          if ((yield* codeHost.state(session.cwd, stack)).merged)
+            return yield* Effect.void;
+          yield* codeHost.markReady(session.cwd, stack);
+          return yield* codeHost.merge(session.cwd, stack);
+        },
+        Effect.catchTag("CodeHostError", (error) =>
+          Effect.fail(
+            new MergeRefused({
+              reason: `Fern couldn't reach GitHub (${error.message}).`,
+            }),
+          ),
+        ),
+      );
+
+      const merged = Effect.fn("Stacks.merged")(function* (sessionId: string) {
+        const stack = yield* prs(sessionId);
+        const session = yield* worktreeOf(sessionId);
+        if (!session || stack.length === 0) return false;
+        return yield* codeHost.state(session.cwd, stack).pipe(
+          Effect.map((state) => state.merged),
+          Effect.catch((error) =>
+            Effect.logWarning(
+              "Couldn't read the Stack's state",
+              error.message,
+            ).pipe(Effect.as(false)),
+          ),
+        );
+      });
+
+      // After a refused Land, the agent reports the new heads of the PRs it changed, bottom first:
+      // Fern moves each PR's branch to its new head, as long as every PR still builds on the one
+      // below and only the branches Fern last pushed are moved.
+      const repush = Effect.fn("Stacks.repush")(function* (
+        sessionId: string,
+        heads: ReadonlyArray<{ readonly pr: number; readonly commit: string }>,
+      ) {
+        const stack = yield* prs(sessionId);
+        const session = yield* worktreeOf(sessionId);
+        if (!session || stack.length === 0)
+          return refused("This Session has no Stack to update.");
+        const repo = session.worktree;
+        const moved = new Map<number, string>();
+        for (const head of heads) {
+          if (!stack.some((pr) => pr.number === head.pr))
+            return refused(
+              `PR #${head.pr} isn't on this Session's Stack: ${stack.map((pr) => `#${pr.number}`).join(", ")}.`,
+            );
+          if (moved.has(head.pr))
+            return refused(`PR #${head.pr} is reported twice.`);
+          const found = yield* commitOf(repo, head.commit).pipe(Effect.option);
+          if (Option.isNone(found))
+            return refused(
+              `${head.commit} isn't a commit in this repository. Report each commit's full hash.`,
+            );
+          if (
+            !(yield* isAncestor(
+              repo,
+              found.value,
+              `refs/heads/${session.branch}`,
+            ))
+          )
+            return refused(
+              `${head.commit} isn't on this Session's branch, ${session.branch}. Merge PR #${head.pr}'s new head into it, then report again.`,
+            );
+          moved.set(head.pr, found.value);
+        }
+        const after = stack.map((pr) => ({
+          ...pr,
+          mergeCommit: moved.get(pr.number) ?? pr.mergeCommit,
+        }));
+        for (const [i, pr] of after.entries()) {
+          const below = after[i - 1];
+          if (below && !(yield* isAncestor(repo, below.mergeCommit, pr.mergeCommit)))
+            return refused(
+              `PR #${pr.number}'s head doesn't build on PR #${below.number}'s ${moved.has(below.number) ? "new " : ""}head, so the Stack would break. Merge PR #${below.number}'s head into it, then report PR #${pr.number}'s new head too.`,
+            );
+        }
+        const changed = stack.filter(
+          (pr) => (moved.get(pr.number) ?? pr.mergeCommit) !== pr.mergeCommit,
+        );
+        for (const pr of changed) {
+          const commit = moved.get(pr.number) ?? pr.mergeCommit;
+          yield* codeHost.push(session.cwd, {
+            commit,
+            branch: pr.branch,
+            replacing: pr.mergeCommit,
+          });
+          yield* sql`UPDATE stack_prs SET merge_commit = ${commit} WHERE id = ${pr.id}`.pipe(
+            Effect.orDie,
+          );
+        }
+        return {
+          text:
+            changed.length === 0
+              ? "Nothing changed: every PR already points at those commits."
+              : `Fern pushed ${changed.map((pr) => `PR #${pr.number}`).join(", ")} to ${changed.length === 1 ? "its new head" : "their new heads"}. The developer tries landing the Stack again once you end your turn.`,
+          isError: false,
+        };
+      });
+
+      const prsUpdated = (
+        sessionId: string,
+        heads: ReadonlyArray<{ readonly pr: number; readonly commit: string }>,
+      ) =>
+        reporting
+          .withPermits(1)(repush(sessionId, heads))
+          .pipe(
+            Effect.catchTag("CodeHostError", (error) =>
+              Effect.succeed(
+                refused(
+                  `Fern couldn't push to GitHub (${error.message}). Report the heads again once that's fixed.`,
+                ),
+              ),
+            ),
+          );
+
       const landsAsStack = (sessionId: string) =>
         prs(sessionId).pipe(
           Effect.flatMap((up) =>
@@ -377,10 +518,28 @@ export class Stacks extends Context.Service<
                 ),
               ),
           ),
+          tool(
+            "prs_updated",
+            PRS_UPDATED,
+            {
+              prs: z
+                .array(
+                  z.object({
+                    pr: z.number().int().positive().describe("The PR's number"),
+                    commit: commitArg("the PR's new head"),
+                  }),
+                )
+                .min(1)
+                .max(MAX_STACK)
+                .describe("Each PR you changed, bottom first"),
+            },
+            ({ prs: heads }) =>
+              run(prsUpdated(sessionId, heads).pipe(Effect.map(reply))),
+          ),
         ],
       });
 
-      return Stacks.of({ prs, landsAsStack, landed });
+      return Stacks.of({ prs, landsAsStack, landed, land, merged });
     }),
   ).pipe(Layer.provide(Git.layer));
 }

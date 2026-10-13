@@ -2,16 +2,17 @@ import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { MilestoneStatus } from "./States";
 
-// Fern earns Autonomy per Project at two Phase boundaries: the end of Spec (Spec → Implement) and
-// the end of Implement (Implement → Retro). Each counts a streak of clean passes, approved with no
-// declined Checkpoint; at AUTONOMY_THRESHOLD in a row a Milestone offers Autonomy there. Ending a
-// Grill and accepting Findings (the end of Retro) are never earnable.
+// Fern earns Autonomy per Project at three boundaries: the end of Spec (Spec → Implement), the end
+// of Implement (Implement → Retro), and Land, where a Session's Stack merges into `main` once Retro
+// is over. Each counts a streak of clean passes, approved with no declined Checkpoint; at
+// AUTONOMY_THRESHOLD in a row a Milestone offers Autonomy there. Ending a Grill and accepting
+// Findings (the end of Retro) are never earnable.
 
-// An earnable boundary, named by the Phase it ends.
-export const Boundary = Schema.Literals(["spec", "implement"]);
+// An earnable boundary, named by the Phase it ends, or Land.
+export const Boundary = Schema.Literals(["spec", "implement", "land"]);
 export type Boundary = typeof Boundary.Type;
 
-export const BOUNDARIES: ReadonlyArray<Boundary> = ["spec", "implement"];
+export const BOUNDARIES: ReadonlyArray<Boundary> = ["spec", "implement", "land"];
 
 // Clean passes in a row that earn a Milestone.
 export const AUTONOMY_THRESHOLD = 5;
@@ -55,7 +56,7 @@ export class SessionAutonomy extends Schema.Class<SessionAutonomy>(
 )({
   sessionId: Schema.String,
   project: Schema.String,
-  // The end of Spec, then the end of Implement.
+  // The end of Spec, the end of Implement, then Land.
   boundaries: Schema.Array(BoundaryAutonomy),
 }) {}
 

@@ -1,5 +1,6 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { CheckpointCard } from "@repo/ui/CheckpointCard";
+import { LandWaitingCard } from "@repo/ui/LandWaitingCard";
 import { SpecIssues } from "@repo/ui/SpecIssues";
 import { Exit } from "effect";
 import { AsyncResult } from "effect/reactivity";
@@ -10,20 +11,32 @@ import {
   flowAtom,
 } from "./atoms";
 import { CheckpointWalkthrough } from "./CheckpointWalkthrough";
+import { LandCheckpoint } from "./LandCheckpoint";
 import { CHECKPOINT_QUESTIONS, PHASE_TITLES } from "./phases";
 import { RetroFindings } from "./RetroFindings";
 
-// The Checkpoint the Session is waiting at, if any, above its composer.
+// The Checkpoint the Session is waiting at, if any, above its composer; before its Land
+// Checkpoint opens, what the Stack still waits on.
 export function SessionCheckpoint({ sessionId }: { sessionId: string }) {
   const result = useAtomValue(flowAtom(sessionId));
   const approve = useAtomSet(approveCheckpointAtom, { mode: "promiseExit" });
   const decline = useAtomSet(declineCheckpointAtom, { mode: "promiseExit" });
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
-  const checkpoint = AsyncResult.isSuccess(result)
-    ? result.value?.checkpoint
-    : undefined;
-  if (!checkpoint) return null;
+  const flow = AsyncResult.isSuccess(result) ? result.value : null;
+  const checkpoint = flow?.checkpoint;
+  if (!checkpoint)
+    return flow?.landWaitsOn ? (
+      <LandWaitingCard waiting={flow.landWaitsOn} />
+    ) : null;
+  if (checkpoint.land)
+    return (
+      <LandCheckpoint
+        key={checkpoint.id}
+        checkpoint={checkpoint}
+        land={checkpoint.land}
+      />
+    );
   if (checkpoint.findings)
     return (
       <RetroFindings

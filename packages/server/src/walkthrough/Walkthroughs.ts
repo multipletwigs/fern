@@ -3,6 +3,7 @@ import {
   CitedDecision,
   Hunk,
   NothingToReview,
+  NotRewritable,
   PullRequest,
   ReviewClosed,
   ReviewItemNotFound,
@@ -456,6 +457,18 @@ export class Walkthroughs extends Context.Service<
       | SessionBusy
       | SessionInUse
       | WalkthroughError
+    >;
+    // Writes a PR's Walkthrough that couldn't be written again, of the same change.
+    rewrite(
+      walkthroughId: string,
+    ): Effect.Effect<void, WalkthroughNotFound | NotRewritable>;
+    // The Session's Rejections no later Section says it fixes: each with the Walkthrough it's in
+    // and what was rejected.
+    openRejections(sessionId: string): Effect.Effect<
+      ReadonlyArray<{
+        readonly walkthroughId: string;
+        readonly title: string;
+      }>
     >;
   }
 >()("@repo/server/walkthrough/Walkthroughs") {
@@ -1117,6 +1130,43 @@ export class Walkthroughs extends Context.Service<
         Effect.flatMap((rows) => Effect.forEach(rows, resume)),
       );
 
+      const walkthroughRow = SqlSchema.findOneOption({
+        Request: Schema.String,
+        Result: Schema.Struct({
+          id: Schema.String,
+          sessionId: Schema.String,
+          repo: Schema.String,
+          status: WalkthroughStatus,
+          prId: Schema.NullOr(Schema.String),
+        }),
+        execute: (id) =>
+          sql`SELECT id, session_id, repo, status, pr_id FROM walkthroughs WHERE id = ${id}`,
+      });
+      // Its change is stored with it, so it's written again the way Fern resumes one after a
+      // restart. A snapshot Walkthrough isn't: the next one covers what it missed.
+      const rewrite = Effect.fn("Walkthroughs.rewrite")(function* (
+        walkthroughId: string,
+      ) {
+        const found = yield* walkthroughRow(walkthroughId).pipe(Effect.orDie);
+        if (Option.isNone(found))
+          return yield* new WalkthroughNotFound({ id: walkthroughId });
+        if (found.value.status !== "failed" || found.value.prId === null)
+          return yield* new NotRewritable({ id: walkthroughId });
+        yield* sql`UPDATE walkthroughs SET status = 'writing', error = NULL
+          WHERE id = ${walkthroughId}`.pipe(Effect.orDie);
+        return yield* resume(found.value);
+      }, reviewing.withPermits(1));
+
+      const rejectionsOf = (sessionId: string) =>
+        load(sessionId).pipe(
+          Effect.map((rows) =>
+            openRejections(rows).map(({ walkthroughId, title }) => ({
+              walkthroughId,
+              title,
+            })),
+          ),
+        );
+
       // Fern writes a Walkthrough whenever a turn it ran finishes on its own, except where the
       // Session's work lands as a Stack: there each PR gets its own, as its ticket lands.
       yield* turns.finished.pipe(
@@ -1140,7 +1190,15 @@ export class Walkthroughs extends Context.Service<
         Effect.forkScoped,
       );
 
-      return Walkthroughs.of({ list, write, writePr, verdict, redirect });
+      return Walkthroughs.of({
+        list,
+        write,
+        writePr,
+        verdict,
+        redirect,
+        rewrite,
+        openRejections: rejectionsOf,
+      });
     }),
   );
 }

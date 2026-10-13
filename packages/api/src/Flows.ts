@@ -1,7 +1,13 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { SessionInUse, SessionNotFound, TranscriptError } from "./Sessions";
-import { CheckpointStatus, FindingVerdictKind, PhaseStatus } from "./States";
+import {
+  CheckpointKind,
+  CheckpointStatus,
+  FindingVerdictKind,
+  PhaseStatus,
+} from "./States";
+import { PullRequest } from "./Walkthroughs";
 
 // Every Hosted Session follows the Flow: Grill, Spec, Implement, then Retro. The agent reports its
 // Phase done through a tool Fern gives it; Fern then raises a Checkpoint for the developer, and
@@ -67,12 +73,41 @@ export class Finding extends Schema.Class<Finding>("Finding")({
   verdict: Schema.optional(FindingVerdict),
 }) {}
 
-// A Session waiting on the developer at the end of a Phase: approving it moves the Flow on to the
-// next Phase, or, at the end of Retro, finishes it.
+// What a Session's Stack still waits on before it can Land: a PR's Walkthrough not yet written or
+// Reviewed, a Rejection with no fix on the Stack, or the accepted Findings not yet up.
+export const LandWait = Schema.Struct({
+  // The PR it's about, when it's about one.
+  pr: Schema.optional(PullRequest),
+  why: Schema.String,
+});
+export type LandWait = typeof LandWait.Type;
+
+// What a Land Checkpoint lands: the Session's Stack, and how the last try to merge it went.
+export const Land = Schema.Struct({
+  // Bottom first.
+  prs: Schema.Array(PullRequest),
+  // Where the developer sees the Stack on GitHub.
+  url: Schema.String,
+  // Fern is marking the PRs ready and merging the Stack right now.
+  landing: Schema.Boolean,
+  // Why GitHub refused the last try, in plain words.
+  refusal: Schema.optional(Schema.String),
+  // When that reason went to the Session's agent.
+  refusalSentAt: Schema.optional(Schema.DateTimeUtcFromMillis),
+  // What the Stack waits on again since the Checkpoint opened, such as a new fix PR's Walkthrough.
+  // Nothing can land until it's empty.
+  waiting: Schema.Array(LandWait),
+});
+export type Land = typeof Land.Type;
+
+// A Session waiting on the developer: at the end of a Phase, where approving it moves the Flow on
+// to the next Phase, or, at the end of Retro, finishes it; or with its Stack ready to Land, where
+// approving it merges the Stack into `main`.
 export class Checkpoint extends Schema.Class<Checkpoint>("Checkpoint")({
   id: Schema.String,
   sessionId: Schema.String,
-  // The Phase the agent reported done.
+  kind: CheckpointKind,
+  // The Phase the agent reported done; for Land, Retro, the Phase it follows.
   phase: Phase,
   // What the agent says it did in the Phase.
   summary: Schema.String,
@@ -86,6 +121,8 @@ export class Checkpoint extends Schema.Class<Checkpoint>("Checkpoint")({
   // The Findings reported with Retro, in order. A Checkpoint with Findings is settled by a verdict
   // on each, never by approving it, and never by Autonomy.
   findings: Schema.optional(Schema.Array(Finding)),
+  // On a Land Checkpoint, the Stack it lands.
+  land: Schema.optional(Land),
   raisedAt: Schema.DateTimeUtcFromMillis,
   decidedAt: Schema.optional(Schema.DateTimeUtcFromMillis),
 }) {}
@@ -97,6 +134,8 @@ export class Flow extends Schema.Class<Flow>("Flow")({
   phases: Schema.Array(FlowPhase),
   // The Checkpoint the Session is waiting at, if any.
   checkpoint: Schema.optional(Checkpoint),
+  // Once Retro is over, what the Session's Stack waits on before its Land Checkpoint opens.
+  landWaitsOn: Schema.optional(Schema.Array(LandWait)),
 }) {}
 
 // A Hosted Session's current Phase, for the sidebar. None once the Flow is over.
@@ -147,6 +186,21 @@ export class FindingsUndecided extends Schema.TaggedError<FindingsUndecided>()(
   { httpApiStatus: 409 },
 ) {}
 
+// The Checkpoint doesn't take that action: a Land Checkpoint is never declined, and only a Land
+// Checkpoint whose merge GitHub refused goes to the agent.
+export class CheckpointActionUnavailable extends Schema.TaggedError<CheckpointActionUnavailable>()(
+  "CheckpointActionUnavailable",
+  { id: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
+// The Stack can't Land yet: it waits on the developer's review again, or Fern is landing it already.
+export class LandNotReady extends Schema.TaggedError<LandNotReady>()(
+  "LandNotReady",
+  { id: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
 // The Session is Archived: its worktree is gone, so its Flow can't move on.
 export class SessionArchived extends Schema.TaggedError<SessionArchived>()(
   "SessionArchived",
@@ -163,7 +217,9 @@ const SendErrors = [
 
 export class FlowsApi extends HttpApiGroup.make("flows")
   .add(
-    // Marks the Phase done, makes the next one current and sends its command into the Session.
+    // Marks the Phase done, makes the next one current and sends its command into the Session. On
+    // a Land Checkpoint, starts marking the PRs ready and merging the Stack, which the Checkpoint
+    // shows; again after GitHub refused, to try again.
     HttpApiEndpoint.post("approve", "/checkpoints/:id/approve", {
       params: { id: Schema.NonEmptyString },
       success: HttpApiSchema.NoContent,
@@ -171,6 +227,7 @@ export class FlowsApi extends HttpApiGroup.make("flows")
         CheckpointNotFound,
         CheckpointClosed,
         FindingsUndecided,
+        LandNotReady,
         ...SendErrors,
       ],
     }),
@@ -181,7 +238,26 @@ export class FlowsApi extends HttpApiGroup.make("flows")
       params: { id: Schema.NonEmptyString },
       payload: Schema.Struct({ note: Schema.NonEmptyString }),
       success: HttpApiSchema.NoContent,
-      error: [CheckpointNotFound, CheckpointClosed, ...SendErrors],
+      error: [
+        CheckpointNotFound,
+        CheckpointClosed,
+        CheckpointActionUnavailable,
+        ...SendErrors,
+      ],
+    }),
+  )
+  .add(
+    // Sends GitHub's reason for refusing a Land Checkpoint's merge to the Session, for the agent to
+    // fix. The Checkpoint stays open.
+    HttpApiEndpoint.post("send", "/checkpoints/:id/send", {
+      params: { id: Schema.NonEmptyString },
+      success: HttpApiSchema.NoContent,
+      error: [
+        CheckpointNotFound,
+        CheckpointClosed,
+        CheckpointActionUnavailable,
+        ...SendErrors,
+      ],
     }),
   )
   .add(

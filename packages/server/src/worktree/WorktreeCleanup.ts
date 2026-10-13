@@ -12,6 +12,7 @@ import {
   Semaphore,
 } from "effect";
 import { Flows } from "../flow/Flows";
+import { Stacks } from "../stack/Stacks";
 import { Terminals } from "../terminal/Terminals";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
@@ -24,9 +25,9 @@ export const CleanupInterval = Context.Reference<Duration.Input>(
 );
 
 // Takes Sessions' worktrees away once they're done with (ADR 0005): when the developer archives a
-// Session, and when its branch has merged into `main` and its Flow is over. A merged Session is
-// archived too. Worktrees with
-// uncommitted changes are only removed when the developer says so.
+// Session, and when its work has merged into `main` and its Flow is over: its branch, or its Stack
+// as GitHub says (ADR 0009). A merged Session is archived too. Worktrees with uncommitted changes
+// are only removed when the developer says so.
 export class WorktreeCleanup extends Context.Service<
   WorktreeCleanup,
   {
@@ -49,6 +50,7 @@ export class WorktreeCleanup extends Context.Service<
       const worktrees = yield* Worktrees;
       const turns = yield* Turns;
       const flows = yield* Flows;
+      const stacks = yield* Stacks;
       const terminals = yield* Terminals;
       const interval = yield* CleanupInterval;
       // One removal at a time, so archiving and the merge sweep never race on a worktree.
@@ -83,7 +85,7 @@ export class WorktreeCleanup extends Context.Service<
         return yield* hosted.archive(id);
       }, lock.withPermits(1));
 
-      // Archives every Session whose branch merged once its Flow is over, unless its turn is running
+      // Archives every Session whose work merged once its Flow is over, unless its turn is running
       // or its worktree has uncommitted changes.
       const sweep = Effect.gen(function* () {
         const sessions = (yield* hosted.worktrees).filter(
@@ -94,14 +96,17 @@ export class WorktreeCleanup extends Context.Service<
           (session) =>
             Effect.gen(function* () {
               if (!(yield* flows.isOver(session.id))) return;
-              if (
-                !(yield* worktrees.isMerged(
-                  session.projectRoot,
-                  session.branch,
-                  session.baseCommit,
-                ))
-              )
-                return;
+              // A squash-merged Stack leaves the branch out of `main`'s history, so GitHub says when
+              // it landed (ADR 0009).
+              const landed =
+                (yield* stacks.prs(session.id)).length > 0
+                  ? yield* stacks.merged(session.id)
+                  : yield* worktrees.isMerged(
+                      session.projectRoot,
+                      session.branch,
+                      session.baseCommit,
+                    );
+              if (!landed) return;
               if (yield* worktrees.isDirty(session.worktree)) return;
               // Looked at last, right before the worktree goes: a turn may have started meanwhile.
               if ((yield* turns.running).includes(session.id)) return;

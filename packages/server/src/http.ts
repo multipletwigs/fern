@@ -107,6 +107,7 @@ export const WalkthroughsHandlers = HttpApiBuilder.group(
       verdict: ({ params, payload }) =>
         walkthroughs.verdict(params.id, params.item, payload),
       redirect: ({ params }) => walkthroughs.redirect(params.id),
+      rewrite: ({ params }) => walkthroughs.rewrite(params.id),
     });
   }),
 );
@@ -119,6 +120,7 @@ export const FlowsHandlers = HttpApiBuilder.group(
     return handlers.handleAll({
       approve: ({ params }) => flows.approve(params.id),
       decline: ({ params, payload }) => flows.decline(params.id, payload.note),
+      send: ({ params }) => flows.send(params.id),
       skip: ({ params, payload }) =>
         flows.skip(params.session, payload.phase, payload.reason),
       findingVerdict: ({ params, payload }) =>

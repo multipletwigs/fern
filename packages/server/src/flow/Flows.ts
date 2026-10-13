@@ -1,7 +1,9 @@
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import {
   Checkpoint,
+  CheckpointActionUnavailable,
   CheckpointClosed,
+  CheckpointKind,
   type CheckpointWalkthrough,
   CheckpointNotFound,
   type CheckpointStatus,
@@ -12,6 +14,8 @@ import {
   type FindingVerdict,
   FindingVerdictKind,
   FlowPhase,
+  type Land,
+  LandNotReady,
   Phase,
   PHASES,
   PhaseNotSkippable,
@@ -50,6 +54,7 @@ import {
 import { Autonomy } from "../autonomy/Autonomy";
 import { Snapshots } from "../snapshot/Snapshots";
 import { commitArg, Stacks } from "../stack/Stacks";
+import { refusalMessage, shownPr, waitsOf } from "./land";
 import { FernTools } from "../turn/FernTools";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
@@ -107,6 +112,7 @@ const encodeSpec = Schema.encodeSync(SpecColumn);
 const CheckpointRow = Schema.Struct({
   id: Schema.String,
   sessionId: Schema.String,
+  kind: CheckpointKind,
   phase: Phase,
   summary: Schema.String,
   spec: Schema.NullOr(SpecColumn),
@@ -116,6 +122,9 @@ const CheckpointRow = Schema.Struct({
   decidedAt: Schema.NullOr(Schema.Finite),
   walkthroughId: Schema.NullOr(Schema.String),
   walkthroughNumber: Schema.NullOr(Schema.Int),
+  // On a Land Checkpoint, GitHub's reason for refusing its last merge, and when it went to the agent.
+  refusal: Schema.NullOr(Schema.String),
+  refusalSentAt: Schema.NullOr(Schema.Finite),
 });
 type CheckpointRow = typeof CheckpointRow.Type;
 
@@ -151,11 +160,14 @@ interface ReportedFinding {
 const toCheckpoint = (
   row: CheckpointRow,
   findings: ReadonlyArray<FindingRow> = [],
+  land?: Land,
 ) =>
   Checkpoint.make({
     id: row.id,
     sessionId: row.sessionId,
+    kind: row.kind,
     phase: row.phase,
+    land,
     summary: row.summary,
     spec: row.spec ?? undefined,
     walkthrough:
@@ -258,6 +270,16 @@ const acceptedMessage = (accepted: ReadonlyArray<FindingRow>, stack: boolean) =>
 
 const FINDINGS_LANDED = `Report the commit with the Setup changes from the Findings the developer accepted in the Retro, once Fern has sent them. Fern pushes a branch at the commit and opens its draft PR on top of the Session's Stack, then writes its Walkthrough in the background.`;
 
+// Whether Retro is behind the Session: done, or skipped.
+const pastRetro = (phases: ReadonlyArray<FlowPhase>) => {
+  const retro = phases.find((p) => p.phase === "retro")?.status;
+  return retro === "done" || retro === "skipped";
+};
+
+// What a Land Checkpoint says about the Stack it lands.
+const landSummary = (prs: number) =>
+  `Landing the Stack marks ${prs === 1 ? "its PR" : `its ${prs} PRs`} ready and squash-merges ${prs === 1 ? "it" : "them"} into main, all at once.`;
+
 // What a Fern tool answers the agent.
 interface Answer {
   readonly text: string;
@@ -293,7 +315,8 @@ export class Flows extends Context.Service<
     readonly phases: Stream.Stream<ReadonlyArray<SessionPhase>>;
     // Whether the Session's Flow is over: Retro done or skipped, and no Checkpoint pending or held.
     isOver(sessionId: string): Effect.Effect<boolean>;
-    // Marks the Checkpoint's Phase done and starts the next one by sending its command.
+    // Marks the Checkpoint's Phase done and starts the next one by sending its command. On a Land
+    // Checkpoint, starts marking the PRs ready and merging the Stack; again after GitHub refused.
     approve(
       id: string,
     ): Effect.Effect<
@@ -301,12 +324,13 @@ export class Flows extends Context.Service<
       | CheckpointNotFound
       | CheckpointClosed
       | FindingsUndecided
+      | LandNotReady
       | SessionNotFound
       | SessionArchived
       | SessionInUse
       | TranscriptError
     >;
-    // Sends the note to the Session as a Redirect; the Phase stays current.
+    // Sends the note to the Session as a Redirect; the Phase stays current. Never on Land.
     decline(
       id: string,
       note: string,
@@ -314,6 +338,21 @@ export class Flows extends Context.Service<
       void,
       | CheckpointNotFound
       | CheckpointClosed
+      | CheckpointActionUnavailable
+      | SessionNotFound
+      | SessionArchived
+      | SessionInUse
+      | TranscriptError
+    >;
+    // Sends GitHub's reason for refusing the Land Checkpoint's merge to the Session, for the agent
+    // to fix. The Checkpoint stays open.
+    send(
+      id: string,
+    ): Effect.Effect<
+      void,
+      | CheckpointNotFound
+      | CheckpointClosed
+      | CheckpointActionUnavailable
       | SessionNotFound
       | SessionArchived
       | SessionInUse
@@ -506,14 +545,36 @@ export class Flows extends Context.Service<
           if (!(yield* inFlow(sessionId))) return null;
           const phases = yield* phasesOf(sessionId);
           const waiting = yield* pendingOf(sessionId).pipe(Effect.orDie);
-          if (Option.isNone(waiting)) return Flow.make({ sessionId, phases });
+          const stack = pastRetro(phases)
+            ? yield* standing(sessionId)
+            : undefined;
+          if (Option.isNone(waiting)) {
+            // Once the Land Checkpoint opened, the Stack waits on nothing more before it.
+            const opened =
+              stack !== undefined &&
+              Option.isSome(yield* landRowOf(sessionId).pipe(Effect.orDie));
+            return Flow.make({
+              sessionId,
+              phases,
+              landWaitsOn:
+                stack && !opened && stack.waiting.length > 0
+                  ? stack.waiting
+                  : undefined,
+            });
+          }
           const findings = yield* findingsOf(waiting.value.id).pipe(
             Effect.orDie,
           );
           return Flow.make({
             sessionId,
             phases,
-            checkpoint: toCheckpoint(waiting.value, findings),
+            checkpoint: toCheckpoint(
+              waiting.value,
+              findings,
+              waiting.value.kind === "land" && stack
+                ? landOf(waiting.value, stack)
+                : undefined,
+            ),
           });
         });
 
@@ -649,6 +710,148 @@ export class Flows extends Context.Service<
         walkthroughs
           .list(sessionId)
           .pipe(Stream.runHead, Effect.map(Option.getOrElse(() => [])));
+
+      // Land (ADR 0009): once Retro is behind a Session with a Stack, and every Walkthrough in it is
+      // Reviewed with no Rejection left open, a Land Checkpoint opens. Approving it marks the PRs
+      // ready and merges the Stack; GitHub's refusal keeps it open, with the reason.
+
+      // The Session's Land Checkpoint, pending or approved, if it has one.
+      const landRowOf = SqlSchema.findOneOption({
+        Request: Schema.String,
+        Result: CheckpointRow,
+        execute: (sessionId) => sql`
+          SELECT ${checkpointColumns} FROM checkpoints
+          LEFT JOIN walkthroughs ON walkthroughs.id = checkpoints.walkthrough_id
+          WHERE checkpoints.session_id = ${sessionId} AND checkpoints.kind = 'land'
+          ORDER BY checkpoints.raised_at DESC LIMIT 1`,
+      });
+
+      // The Session's Stack and what it waits on before it can Land; nothing without a Stack.
+      const standing = (sessionId: string) =>
+        Effect.gen(function* () {
+          const prs = yield* stacks.prs(sessionId);
+          if (prs.length === 0) return undefined;
+          const [all, open, { accepted }] = yield* Effect.all([
+            walkthroughsNow(sessionId),
+            walkthroughs.openRejections(sessionId),
+            acceptedOf(sessionId).pipe(Effect.orDie),
+          ]);
+          return { prs, waiting: waitsOf(prs, all, open, accepted > 0) };
+        });
+      type Standing = NonNullable<Effect.Success<ReturnType<typeof standing>>>;
+
+      // Land Checkpoints Fern is merging right now, by id.
+      const landing = new Set<string>();
+      // Each Session's watch on its Walkthroughs once Retro is behind it, by Session.
+      const landWatches = yield* FiberMap.make<string>();
+      // Each merge under way, by Land Checkpoint.
+      const merges = yield* FiberMap.make<string>();
+
+      const landOf = (row: CheckpointRow, stack: Standing): Land => ({
+        prs: stack.prs.map(shownPr),
+        url: stack.prs.at(-1)?.url ?? "",
+        landing: landing.has(row.id),
+        refusal: row.refusal ?? undefined,
+        refusalSentAt:
+          row.refusalSentAt === null
+            ? undefined
+            : Schema.decodeSync(Schema.DateTimeUtcFromMillis)(
+                row.refusalSentAt,
+              ),
+        waiting: stack.waiting,
+      });
+
+      // Marks the PRs ready and merges the Stack, in the background: the Checkpoint shows it's
+      // landing until GitHub answers. Merged, the Checkpoint is approved; refused, it stays open
+      // with the reason.
+      const startLanding = (id: string, sessionId: string, byFern: boolean) =>
+        Effect.gen(function* () {
+          landing.add(id);
+          yield* bump;
+          // GitHub can take a while, so only what it answered is recorded under the lock.
+          const settle = stacks.land(sessionId).pipe(
+            Effect.matchEffect({
+              onSuccess: () =>
+                Effect.gen(function* () {
+                  const decidedAt = yield* Clock.currentTimeMillis;
+                  yield* sql`UPDATE checkpoints
+                    SET status = 'approved', decided_at = ${decidedAt}, refusal = NULL
+                    WHERE id = ${id}`.pipe(Effect.orDie);
+                  yield* byFern
+                    ? autonomy.approvedByFern(sessionId, "land")
+                    : autonomy.approved(sessionId, "land");
+                  yield* FiberMap.remove(landWatches, sessionId);
+                }).pipe(deciding.withPermits(1)),
+              onFailure: (refused) =>
+                sql`UPDATE checkpoints
+                  SET refusal = ${refused.reason}, refusal_sent_at = NULL
+                  WHERE id = ${id}`.pipe(
+                  Effect.orDie,
+                  deciding.withPermits(1),
+                ),
+            }),
+            Effect.ensuring(
+              Effect.sync(() => landing.delete(id)).pipe(Effect.andThen(bump)),
+            ),
+          );
+          yield* FiberMap.run(merges, id, settle, { onlyIfMissing: true });
+        });
+
+      // Opens the Session's Land Checkpoint once its Stack waits on nothing, under Autonomy landing
+      // it straight away. Until then, and once it's open, each change to the Session's Walkthroughs
+      // may change what the Stack waits on, so the Flow reloads.
+      const settleLand = (sessionId: string) =>
+        Effect.gen(function* () {
+          const session = yield* hosted.session(sessionId);
+          if (!session || session.archivedAt !== null) return yield* Effect.void;
+          if (!pastRetro(yield* phasesOf(sessionId))) return yield* Effect.void;
+          if (Option.isSome(yield* landRowOf(sessionId).pipe(Effect.orDie)))
+            return yield* bump;
+          const stack = yield* standing(sessionId);
+          if (!stack) return yield* Effect.void;
+          if (stack.waiting.length > 0) return yield* bump;
+          const id = crypto.randomUUID();
+          yield* sql`INSERT INTO checkpoints ${sql.insert({
+            id,
+            sessionId,
+            kind: "land",
+            phase: "retro",
+            summary: landSummary(stack.prs.length),
+            status: "pending",
+            raisedAt: yield* Clock.currentTimeMillis,
+          })}`.pipe(Effect.orDie);
+          yield* bump;
+          return yield* (yield* autonomy.covers(sessionId, "land"))
+            ? startLanding(id, sessionId, true)
+            : Effect.void;
+        }).pipe(deciding.withPermits(1));
+
+      // Starts watching the Session's Walkthroughs for its Land Checkpoint, once Retro is behind it.
+      const watchLand = (sessionId: string) =>
+        FiberMap.run(
+          landWatches,
+          sessionId,
+          walkthroughs
+            .list(sessionId)
+            .pipe(Stream.runForEach(() => settleLand(sessionId))),
+          { onlyIfMissing: true },
+        ).pipe(Effect.asVoid);
+
+      // Approving the Land Checkpoint, or approving it again after GitHub refused: only while the
+      // Stack waits on nothing and Fern isn't merging it already.
+      const tryLand = (checkpoint: CheckpointRow) =>
+        Effect.gen(function* () {
+          if (landing.has(checkpoint.id))
+            return yield* new LandNotReady({ id: checkpoint.id });
+          const stack = yield* standing(checkpoint.sessionId);
+          if (!stack || stack.waiting.length > 0)
+            return yield* new LandNotReady({ id: checkpoint.id });
+          return yield* startLanding(
+            checkpoint.id,
+            checkpoint.sessionId,
+            false,
+          );
+        });
 
       // With nothing changed since it, the Session's latest written Walkthrough covers the working
       // tree, so the Checkpoint links to it; none at all when the Session never changed anything.
@@ -1009,6 +1212,7 @@ export class Flows extends Context.Service<
 
       const approve = Effect.fn("Flows.approve")(function* (id: string) {
         const checkpoint = yield* open(id);
+        if (checkpoint.kind === "land") return yield* tryLand(checkpoint);
         // Findings settle their Checkpoint through a verdict on each, never through approval.
         yield* findingsOf(id).pipe(
           Effect.orDie,
@@ -1028,6 +1232,9 @@ export class Flows extends Context.Service<
                 WHERE id = ${id}`,
           autonomy.approved(checkpoint.sessionId, checkpoint.phase),
         );
+        return yield* checkpoint.phase === "retro"
+          ? watchLand(checkpoint.sessionId)
+          : Effect.void;
       }, deciding.withPermits(1));
 
       const decline = Effect.fn("Flows.decline")(function* (
@@ -1035,6 +1242,8 @@ export class Flows extends Context.Service<
         note: string,
       ) {
         const checkpoint = yield* open(id);
+        if (checkpoint.kind === "land")
+          return yield* new CheckpointActionUnavailable({ id });
         const title = TITLES[checkpoint.phase];
         yield* turns.send(checkpoint.sessionId, {
           text: `The developer declined the Checkpoint at the end of ${title}, so ${title} isn't done yet:\n\n${note.trim()}`,
@@ -1044,7 +1253,23 @@ export class Flows extends Context.Service<
             SET status = 'declined', note = ${note.trim()}, decided_at = ${decidedAt}
             WHERE id = ${id}`.pipe(Effect.orDie);
         yield* autonomy.declined(checkpoint.sessionId, checkpoint.phase);
-        yield* bump;
+        return yield* bump;
+      }, deciding.withPermits(1));
+
+      const send = Effect.fn("Flows.send")(function* (id: string) {
+        const checkpoint = yield* open(id);
+        if (checkpoint.kind !== "land" || checkpoint.refusal === null)
+          return yield* new CheckpointActionUnavailable({ id });
+        yield* turns.send(checkpoint.sessionId, {
+          text: refusalMessage(
+            checkpoint.refusal,
+            yield* stacks.prs(checkpoint.sessionId),
+          ),
+        });
+        const sentAt = yield* Clock.currentTimeMillis;
+        yield* sql`UPDATE checkpoints SET refusal_sent_at = ${sentAt}
+            WHERE id = ${id}`.pipe(Effect.orDie);
+        return yield* bump;
       }, deciding.withPermits(1));
 
       // The Session's Flow, if the Phase is its current one and isn't waiting at a Checkpoint.
@@ -1090,6 +1315,7 @@ export class Flows extends Context.Service<
             })}`,
           Effect.void,
         );
+        if (phase === "retro") yield* watchLand(sessionId);
       }, deciding.withPermits(1));
 
       // The last Finding has its verdict: Retro is done, and the accepted Findings go back to the
@@ -1125,6 +1351,7 @@ export class Flows extends Context.Service<
               ]),
             )
             .pipe(Effect.orDie);
+          yield* watchLand(checkpoint.sessionId);
         });
 
       const findingVerdict = Effect.fn("Flows.findingVerdict")(function* (
@@ -1285,13 +1512,43 @@ export class Flows extends Context.Service<
           ),
         ),
       );
+      // So do the watches for Land, on every Session past Retro whose Stack hasn't landed.
+      yield* flowRows().pipe(
+        Effect.orDie,
+        Effect.flatMap((rows) =>
+          Effect.forEach(
+            rows.filter((row) => pastRetro(row.phases)),
+            ({ sessionId }) =>
+              Effect.gen(function* () {
+                const session = yield* hosted.session(sessionId);
+                if (!session || session.archivedAt !== null) return;
+                if ((yield* stacks.prs(sessionId)).length === 0) return;
+                const row = yield* landRowOf(sessionId).pipe(Effect.orDie);
+                if (Option.isSome(row) && row.value.status === "approved")
+                  return;
+                yield* watchLand(sessionId);
+              }),
+            { discard: true },
+          ),
+        ),
+      );
+
+      // A Land Checkpoint in the queue shows the Stack it lands, as in its Session's Flow.
+      const queued = (row: CheckpointRow) =>
+        row.kind === "land"
+          ? standing(row.sessionId).pipe(
+              Effect.map((stack) =>
+                toCheckpoint(row, [], stack && landOf(row, stack)),
+              ),
+            )
+          : Effect.succeed(toCheckpoint(row));
 
       return Flows.of({
         flow: (sessionId) => reloading(load(sessionId)),
         checkpoints: reloading(
           pending().pipe(
             Effect.orDie,
-            Effect.map((rows) => rows.map((row) => toCheckpoint(row))),
+            Effect.flatMap((rows) => Effect.forEach(rows, queued)),
           ),
         ),
         phases: reloading(phases),
@@ -1305,6 +1562,7 @@ export class Flows extends Context.Service<
           ),
         approve,
         decline,
+        send,
         skip,
         findingVerdict,
       });

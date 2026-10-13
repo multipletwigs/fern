@@ -116,6 +116,9 @@ const FakeCodeHost = Layer.succeed(
       Effect.sync(() => {
         bodies.push({ cwd, pr, body });
       }),
+    markReady: () => Effect.void,
+    merge: () => Effect.void,
+    state: () => Effect.succeed({ merged: false }),
   }),
 );
 
