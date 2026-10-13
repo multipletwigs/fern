@@ -86,12 +86,22 @@ export function ReviewLayout({
   return (
     <div
       ref={root}
+      role="group"
       tabIndex={-1}
       aria-label={label}
       onKeyDown={(event) => {
         if (event.metaKey || event.ctrlKey || event.altKey) return;
         if (isEditable(event.target)) return;
         onKeyDown(event);
+      }}
+      // Focus that falls out of the layout to nowhere, as when a field lets go of it on Escape,
+      // comes back to it. When the window loses focus the field keeps it, so that's left alone.
+      onBlur={(event) => {
+        if (event.relatedTarget) return;
+        setTimeout(() => {
+          if (document.activeElement === document.body)
+            root.current?.focus({ preventScroll: true });
+        });
       }}
       className="@container flex h-full min-h-0 outline-none"
     >
@@ -109,7 +119,12 @@ export function ReviewLayout({
                 tabIndex={-1}
                 data-active={index === at || undefined}
                 aria-current={index === at ? "step" : undefined}
-                onClick={() => onSelect(index)}
+                // Focus stays with the layout, so its keys keep working after a click.
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  root.current?.focus({ preventScroll: true });
+                  onSelect(index);
+                }}
                 className="side-row h-auto justify-center py-2 text-left @3xl:px-2.5"
               >
                 {item.entry}
@@ -127,7 +142,7 @@ export function ReviewLayout({
           <section
             key={item.key}
             inert={index !== at}
-            className="h-full w-full shrink-0 snap-start snap-always overflow-y-auto"
+            className="h-full w-full shrink-0 snap-start snap-always overflow-x-hidden overflow-y-auto"
           >
             {item.pane}
           </section>
