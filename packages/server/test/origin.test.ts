@@ -1,13 +1,11 @@
 import { NodeHttpServer } from "@effect/platform-node";
 import { assert, layer } from "@effect/vitest";
-import { FernApi } from "@repo/api";
 import { Effect, Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
-import { HttpApiBuilder } from "effect/http-api";
 import { createServer, request } from "node:http";
 import { HandlersNoDeps } from "../src/http";
-import { LiveHandlersNoDeps, LiveServer } from "../src/live";
-import { OriginGuard } from "../src/origin";
+import { LiveHandlersNoDeps } from "../src/live";
+import { fernRoutes } from "../src/routes";
 import { Turns } from "../src/turn/Turns";
 import {
   UnusedAutonomy,
@@ -45,11 +43,9 @@ const Unused = Layer.mergeAll(
 );
 
 const Server = HttpRouter.serve(
-  Layer.mergeAll(HttpApiBuilder.layer(FernApi), LiveServer, OriginGuard).pipe(
-    Layer.provide(
-      Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
-        Layer.provide(Unused),
-      ),
+  fernRoutes(
+    Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
+      Layer.provide(Unused),
     ),
   ),
   { disableLogger: true },
@@ -176,6 +172,51 @@ layer(Server)("Fern's server", (it) => {
         },
       });
       assert.strictEqual(status, 403);
+    }),
+  );
+
+  // An <img> or <script> on another website sends no Origin with its GET, but says where it's from.
+  it.effect("refuses another website's GET that carries no Origin", () =>
+    Effect.gen(function* () {
+      const at = yield* serverPort;
+      const status = yield* statusOf(at, {
+        path: "/api/health",
+        headers: { Host: `127.0.0.1:${at}`, "Sec-Fetch-Site": "cross-site" },
+      });
+      assert.strictEqual(status, 403);
+    }),
+  );
+
+  it.effect("refuses another page on this machine's GET", () =>
+    Effect.gen(function* () {
+      const at = yield* serverPort;
+      const status = yield* statusOf(at, {
+        path: "/api/health",
+        headers: { Host: `127.0.0.1:${at}`, "Sec-Fetch-Site": "same-site" },
+      });
+      assert.strictEqual(status, 403);
+    }),
+  );
+
+  it.effect("answers Fern's own page's GET", () =>
+    Effect.gen(function* () {
+      const at = yield* serverPort;
+      const status = yield* statusOf(at, {
+        path: "/api/health",
+        headers: { Host: `127.0.0.1:${at}`, "Sec-Fetch-Site": "same-origin" },
+      });
+      assert.isBelow(status, 300);
+    }),
+  );
+
+  it.effect("answers the window opening Fern's page", () =>
+    Effect.gen(function* () {
+      const at = yield* serverPort;
+      const status = yield* statusOf(at, {
+        path: "/api/health",
+        headers: { Host: `127.0.0.1:${at}`, "Sec-Fetch-Site": "none" },
+      });
+      assert.isBelow(status, 300);
     }),
   );
 
