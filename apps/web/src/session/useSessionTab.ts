@@ -3,10 +3,14 @@ import type { SubagentSummary } from "@repo/api";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { roundsAtom } from "../grill/atoms";
+import { reviewShownAtom } from "../review/atoms";
+import { waitingCount } from "../review/queue";
+import { walkthroughsAtom } from "../walkthrough/atoms";
 import { closeSubagentAtom, reopenSubagentAtom, subagentsAtom } from "./atoms";
 
-// A tab on the Session's chat column: the Grill, the chat, or one of its Subagents by agent id.
-export type SessionTab = "grill" | "chat" | `agent:${string}`;
+// A tab on the Session's chat column: the Grill, the chat, the Review tab, or one of its Subagents
+// by agent id.
+export type SessionTab = "grill" | "chat" | "review" | `agent:${string}`;
 
 export const subagentTab = (agentId: string): SessionTab => `agent:${agentId}`;
 
@@ -17,7 +21,8 @@ export const agentOf = (tab: SessionTab) =>
 const NO_SUBAGENTS: ReadonlyArray<SubagentSummary> = [];
 
 // Which tab of the Session shows: the Grill while a Round is open, the chat otherwise, unless the
-// developer switched. Their switch holds until a Round opens or closes. A new Subagent never takes
+// developer switched. Their switch holds until a Round opens or closes. Opening the Review tab from
+// outside it, as from the status above the composer, switches to it. A new Subagent never takes
 // the selection. A Subagent tab the developer closed stays out of the bar, for the Session, until
 // they open it again from its row in the chat.
 export function useSessionTab(sessionId: string) {
@@ -42,6 +47,16 @@ export function useSessionTab(sessionId: string) {
     (next: SessionTab) => setChosen({ round, tab: next }),
     [round],
   );
+  const shown = useAtomValue(reviewShownAtom(sessionId));
+  const [seenShown, setSeenShown] = useState(shown);
+  if (shown !== seenShown) {
+    setSeenShown(shown);
+    setChosen({ round, tab: "review" });
+  }
+  const walkthroughs = useAtomValue(walkthroughsAtom(sessionId));
+  const reviewWaiting = AsyncResult.isSuccess(walkthroughs)
+    ? waitingCount(walkthroughs.value)
+    : 0;
   // Selects a Subagent's tab, reopening it first if it was closed. Every chat row holds it, so it
   // reads the list through a ref rather than change with each list update.
   const listedRef = useRef(all);
@@ -74,6 +89,8 @@ export function useSessionTab(sessionId: string) {
   return {
     rounds,
     grill,
+    // Items across the Session's Walkthroughs still waiting on a verdict.
+    reviewWaiting,
     subagents,
     tab: (preferred === "grill" && !grill) || missing ? "chat" : preferred,
     select,
