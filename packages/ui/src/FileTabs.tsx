@@ -29,7 +29,7 @@ export function FileTabs({
 }) {
   return (
     <div className="overflow-hidden rounded-xl border border-hairline bg-white/[0.02]">
-      <div className="overflow-x-auto border-b border-hairline px-1.5 py-1 [scrollbar-width:none]">
+      <div className="border-b border-hairline px-1.5 py-0.5">
         <TabBar
           label="Files"
           tabs={paths.map((path) => ({

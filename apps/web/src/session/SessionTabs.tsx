@@ -1,15 +1,13 @@
 import type { SubagentSummary } from "@repo/api";
+import { AgentsMenu } from "@repo/ui/AgentsMenu";
 import { SubagentTabLabel } from "@repo/ui/SubagentTabLabel";
-import { TabBar } from "@repo/ui/TabBar";
-import { TabOverflowMenu } from "@repo/ui/TabOverflowMenu";
-import type { ReactNode } from "react";
-import { subagentTabs } from "./tabBar";
+import { TabBar, type TabBarSlot, type TabBarTab } from "@repo/ui/TabBar";
+import { agentsMenu } from "./tabBar";
 import { agentOf, type SessionTab, subagentTab } from "./useSessionTab";
 
 // The tabs on the Session's chat column: the Grill, while there is one, then the chat, then one
-// muted tab per Subagent in the order they started. Past four, finished Subagents wait behind a
-// "+N" menu at the end. The Grill tab glows amber while a Round waits on the developer and another
-// tab shows.
+// Agents menu holding every open Subagent. The Subagent picked from it shows as one more tab after
+// the menu. The Grill tab glows amber while a Round waits on the developer and another tab shows.
 export function SessionTabs({
   tab,
   grill,
@@ -27,13 +25,7 @@ export function SessionTabs({
   // Closes a Subagent's tab, by agent id. Grill and Chat can't be closed.
   onClose: (agentId: string) => void;
 }) {
-  const tabs: Array<{
-    value: SessionTab;
-    label: ReactNode;
-    muted?: boolean;
-    title?: string;
-    onClose?: () => void;
-  }> = [];
+  const tabs: Array<TabBarTab<SessionTab> | TabBarSlot> = [];
   if (grill)
     tabs.push({
       value: "grill",
@@ -47,27 +39,38 @@ export function SessionTabs({
       ),
     });
   tabs.push({ value: "chat", label: "Chat" });
-  const { shown, overflow } = subagentTabs(subagents, agentOf(tab));
-  for (const subagent of shown)
+  const { running, active } = agentsMenu(subagents, agentOf(tab));
+  tabs.push({
+    slot: "agents",
+    element: (
+      <AgentsMenu
+        agents={subagents.map((subagent) => ({
+          value: subagentTab(subagent.agentId),
+          description: subagent.description || subagent.agentType,
+          agentType: subagent.agentType,
+          status: subagent.status,
+        }))}
+        running={running}
+        value={tab}
+        onChange={onSelect}
+        onClose={(value) => {
+          const agentId = agentOf(value);
+          if (agentId !== undefined) onClose(agentId);
+        }}
+      />
+    ),
+  });
+  if (active)
     tabs.push({
-      ...subagentTabOf(subagent),
-      muted: true,
-      onClose: () => onClose(subagent.agentId),
+      value: subagentTab(active.agentId),
+      label: (
+        <SubagentTabLabel
+          description={active.description || active.agentType}
+          status={active.status}
+        />
+      ),
+      title: `${active.agentType}: ${active.description}`,
+      onClose: () => onClose(active.agentId),
     });
-  return (
-    <TabBar label="Session" value={tab} onChange={onSelect} tabs={tabs}>
-      <TabOverflowMenu tabs={overflow.map(subagentTabOf)} onChange={onSelect} />
-    </TabBar>
-  );
+  return <TabBar label="Session" value={tab} onChange={onSelect} tabs={tabs} />;
 }
-
-const subagentTabOf = (subagent: SubagentSummary) => ({
-  value: subagentTab(subagent.agentId),
-  label: (
-    <SubagentTabLabel
-      description={subagent.description || subagent.agentType}
-      status={subagent.status}
-    />
-  ),
-  title: `${subagent.agentType}: ${subagent.description}`,
-});

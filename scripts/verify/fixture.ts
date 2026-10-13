@@ -5,7 +5,7 @@ import { join } from "node:path";
 // Writes a hand-made External Session with Subagents into a CLAUDE_CONFIG_DIR, in Claude Code's
 // own on-disk shape (see packages/server/docs/claude-code-files.md). It covers a background
 // Subagent with a nested one, two back-to-back foreground ones (one hands back through
-// SubagentHandback, one with plain text), enough finished ones to overflow the tab bar, and one
+// SubagentHandback, one with plain text), enough finished ones to fill the Agents menu, and one
 // still running.
 
 export const FIXTURE_SESSION = "f2121212-2121-4121-8121-212121212121";
