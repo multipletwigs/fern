@@ -20,3 +20,15 @@ it("needs attention once any tool isn't ready", () => {
       state,
     );
 });
+
+// Fern runs without Stacks, so a missing gh-stack extension shows in Settings but never flags it.
+it("needs no attention for gh-stack alone, as Stacks are optional", () => {
+  assert.isFalse(
+    needsAttention([
+      ready("claude"),
+      ready("gh"),
+      ready("git"),
+      ToolStatus.make({ tool: "gh-stack", state: "missing" }),
+    ]),
+  );
+});

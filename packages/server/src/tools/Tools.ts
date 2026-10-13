@@ -13,7 +13,21 @@ const INSTALL: Record<DeveloperTool, string> = {
   claude: "https://code.claude.com/docs/en/setup",
   gh: "https://cli.github.com",
   git: "https://git-scm.com/downloads",
+  "gh-stack": "https://github.com/github/gh-stack",
 };
+
+// How each tool is run. gh-stack is an extension, run through `gh`, so it's missing whenever `gh`
+// is, and then installed from where `gh` is.
+const RUN_AS: Record<
+  DeveloperTool,
+  { readonly command: DeveloperTool; readonly args: ReadonlyArray<string> }
+> = {
+  claude: { command: "claude", args: [] },
+  gh: { command: "gh", args: [] },
+  git: { command: "git", args: [] },
+  "gh-stack": { command: "gh", args: ["stack"] },
+};
+const STACK_INSTALL = "gh extension install github/gh-stack";
 
 // What a command printed and how it exited.
 interface Answer {
@@ -52,12 +66,14 @@ export class Tools extends Context.Service<
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const timeout = yield* ToolCheckTimeout;
 
-      // Runs the command, failing with what to show when it can't be read.
-      const ask = (command: DeveloperTool, args: ReadonlyArray<string>) => {
-        const line = [command, ...args].join(" ");
+      // Runs the tool, failing with what to show when it can't be read.
+      const ask = (tool: DeveloperTool, args: ReadonlyArray<string>) => {
+        const { command, args: before } = RUN_AS[tool];
+        const all = [...before, ...args];
+        const line = [command, ...all].join(" ");
         return spawner
           .spawn(
-            ChildProcess.make(command, args, {
+            ChildProcess.make(command, all, {
               extendEnv: true,
               stdin: "ignore",
             }),
@@ -102,6 +118,14 @@ export class Tools extends Context.Service<
       const checkOne = Effect.fn("Tools.checkOne")(
         function* (tool: DeveloperTool) {
           const answer = yield* ask(tool, ["--version"]);
+          // `gh` answers an extension it doesn't have as an unknown command.
+          if (tool === "gh-stack" && answer.exitCode !== 0)
+            return new ToolStatus({
+              tool,
+              state: "missing",
+              detail: "The gh-stack extension isn't installed",
+              fix: new ToolFix({ url: INSTALL[tool], command: STACK_INSTALL }),
+            });
           if (answer.exitCode !== 0)
             return new ToolStatus({
               tool,

@@ -1,5 +1,13 @@
 import { GhIssueState, IssueState } from "@repo/api";
-import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
+import {
+  Context,
+  type Duration,
+  Effect,
+  Layer,
+  Option,
+  Schema,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 // An issue on a Project's issue tracker, as Fern sees it.
@@ -10,6 +18,12 @@ export const TrackedIssue = Schema.Struct({
   state: IssueState,
 });
 export type TrackedIssue = typeof TrackedIssue.Type;
+
+// How long Fern waits on the issue tracker, as when it checks a Phase's exit criteria.
+export const IssueTrackerTimeout = Context.Reference<Duration.Input>(
+  "@repo/server/flow/IssueTrackerTimeout",
+  { defaultValue: () => "15 seconds" },
+);
 
 export class IssueTrackerError extends Schema.TaggedError<IssueTrackerError>()(
   "IssueTrackerError",

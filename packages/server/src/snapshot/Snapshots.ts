@@ -55,6 +55,8 @@ export class Snapshots extends Context.Service<
     markStart(repo: string, sessionId: string): Effect.Effect<void, GitError>;
     // The last commit's tree, or the empty tree in a repository without commits.
     head(repo: string): Effect.Effect<string, GitError>;
+    // The commit's tree.
+    treeOf(repo: string, commit: string): Effect.Effect<string, GitError>;
     diff(
       repo: string,
       from: string,
@@ -173,6 +175,13 @@ export class Snapshots extends Context.Service<
         ),
       );
 
+      const treeOf = Effect.fn("Snapshots.treeOf")(
+        (repo: string, commit: string) =>
+          git
+            .run(repo, ["rev-parse", "--verify", "-q", `${commit}^{tree}`])
+            .pipe(Effect.map(trim)),
+      );
+
       const diff = Effect.fn("Snapshots.diff")(
         (repo: string, from: string, to: string) =>
           git
@@ -212,6 +221,7 @@ export class Snapshots extends Context.Service<
         start,
         markStart,
         head: headTree,
+        treeOf,
         diff,
         numstat,
       });

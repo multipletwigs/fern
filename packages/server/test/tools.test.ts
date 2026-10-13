@@ -36,8 +36,12 @@ const stubs = (scripts: Record<string, string>) => {
 
 const claude = `echo "2.1.296 (Claude Code)"`;
 const git = `echo "git version 2.50.1 (Apple Git-155)"`;
-// `gh` signed in as `octocat`, as gh 2.99 prints it.
+// `gh` signed in as `octocat`, as gh 2.99 prints it, with the gh-stack extension installed.
 const gh = `
+if [ "$1" = "stack" ]; then
+  echo "gh stack version 0.1.0"
+  exit 0
+fi
 if [ "$1" = "auth" ]; then
   echo "github.com"
   echo "  ✓ Logged in to github.com account octocat (keyring)"
@@ -46,6 +50,17 @@ if [ "$1" = "auth" ]; then
 fi
 echo "gh version 2.99.0 (2026-09-01)"
 echo "https://github.com/cli/cli/releases/tag/v2.99.0"`;
+// `gh` without the gh-stack extension, as gh 2.99 answers a command it doesn't know.
+const ghWithoutStack = `
+if [ "$1" = "stack" ]; then
+  echo 'unknown command "stack" for "gh"' >&2
+  exit 1
+fi
+if [ "$1" = "auth" ]; then
+  echo "  ✓ Logged in to github.com account octocat (keyring)"
+  exit 0
+fi
+echo "gh version 2.99.0 (2026-09-01)"`;
 const ghSignedOut = `
 if [ "$1" = "auth" ]; then
   echo "You are not logged into any GitHub hosts. To log in, run: gh auth login" >&2
@@ -87,7 +102,34 @@ layer(serving, { excludeTestServices: true })("Tools", (it) => {
           account: "octocat",
         }),
         new ToolStatus({ tool: "git", state: "ready", version: "2.50.1" }),
+        new ToolStatus({ tool: "gh-stack", state: "ready", version: "0.1.0" }),
       ]);
+    }),
+  );
+
+  it.effect(
+    "gh without the gh-stack extension reports it missing, fixed by installing the extension",
+    () =>
+      Effect.gen(function* () {
+        const tools = yield* checkWith(
+          stubs({ claude, gh: ghWithoutStack, git }),
+        );
+        const status = tools.find((t) => t.tool === "gh-stack");
+        assert.strictEqual(status?.state, "missing");
+        assert.strictEqual(
+          status?.fix?.command,
+          "gh extension install github/gh-stack",
+        );
+        assert.strictEqual(tools.find((t) => t.tool === "gh")?.state, "ready");
+      }),
+  );
+
+  it.effect("without gh, gh-stack is missing too, with where to get gh", () =>
+    Effect.gen(function* () {
+      const tools = yield* checkWith(stubs({ claude, git }));
+      const status = tools.find((t) => t.tool === "gh-stack");
+      assert.strictEqual(status?.state, "missing");
+      assert.match(status?.fix?.url ?? "", /cli\.github\.com/);
     }),
   );
 
@@ -108,7 +150,7 @@ layer(serving, { excludeTestServices: true })("Tools", (it) => {
       const tools = yield* checkWith(stubs({ gh, git }));
       assert.deepStrictEqual(
         tools.map((t) => t.tool),
-        ["claude", "gh", "git"],
+        ["claude", "gh", "git", "gh-stack"],
       );
       const status = tools[0];
       assert.strictEqual(status?.state, "missing");
