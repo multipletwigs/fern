@@ -3,10 +3,8 @@ import { type Components, Virtuoso } from "react-virtuoso";
 import { CodeLine } from "./CodeLine";
 import { highlight, type Line } from "./highlight";
 
-// Every line is this tall, so the list never measures one.
+// An unwrapped line's height, which the list guesses before it measures a line.
 const LINE_HEIGHT = 20;
-// A tab's width, as `pre` renders it.
-const TAB = 8;
 
 const plain = (text: string): Line => [[text, undefined]];
 const textOf = (line: Line) => line.map(([content]) => content).join("");
@@ -41,47 +39,23 @@ const useHighlighted = (path: string, content: string) => {
 interface Context {
   // Characters in the widest line number.
   readonly gutter: number;
-  // Characters in the widest line, tabs expanded.
-  readonly widest: number;
 }
 
 const components: Components<Line, Context> = {
   Header: () => <div className="h-3" />,
   Footer: () => <div className="h-3" />,
-  // Lines off screen aren't on the page to stretch it, so the list takes the widest line's width
-  // up front: the gutter, the line, and its right padding.
-  List: ({ style, children, ref, context }) => (
-    <div
-      ref={ref}
-      style={{
-        ...style,
-        minWidth: `calc(${context.gutter + 3 + context.widest}ch + 1.5rem)`,
-      }}
-    >
-      {children}
-    </div>
-  ),
 };
 
 const renderLine = (index: number, line: Line, context: Context) => (
   <CodeLine number={index + 1} gutter={context.gutter} line={line} />
 );
 
-// A file's content with line numbers and syntax highlighting. Only the lines in view are on the
-// page, so a long file opens about as fast as a short one.
+// A file's content with line numbers and syntax highlighting, long lines wrapped. Only the lines in
+// view are on the page, so a long file opens about as fast as a short one.
 export function CodeView({ path, content }: { path: string; content: string }) {
   const lines = useHighlighted(path, content);
   const context = useMemo(
-    (): Context => ({
-      gutter: String(lines.length).length,
-      widest: Math.max(
-        0,
-        ...lines.map((line) => {
-          const text = textOf(line);
-          return text.length + (TAB - 1) * (text.split("\t").length - 1);
-        }),
-      ),
-    }),
+    (): Context => ({ gutter: String(lines.length).length }),
     [lines],
   );
 
@@ -92,7 +66,7 @@ export function CodeView({ path, content }: { path: string; content: string }) {
       context={context}
       components={components}
       itemContent={renderLine}
-      fixedItemHeight={LINE_HEIGHT}
+      defaultItemHeight={LINE_HEIGHT}
       increaseViewportBy={LINE_HEIGHT * 20}
     />
   );

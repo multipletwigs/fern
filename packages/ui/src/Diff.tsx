@@ -10,7 +10,7 @@ export function Diff({ lines }: { lines: ReadonlyArray<string> }) {
           // oxlint-disable-next-line react/no-array-index-key
           key={index}
           className={clsx(
-            "px-3 whitespace-pre-wrap",
+            "px-3 whitespace-pre-wrap wrap-anywhere",
             line.startsWith("+")
               ? "bg-mint/[0.07] text-mint/90"
               : "bg-danger/[0.07] text-danger/85",

@@ -1,7 +1,7 @@
 import { memo } from "react";
 import type { Line } from "./highlight";
 
-// One numbered line of code; its number stays put while the line scrolls sideways.
+// One numbered line of code. A long line wraps, its continuations aligned past the number.
 export const CodeLine = memo(function CodeLine({
   number,
   gutter,
@@ -13,14 +13,14 @@ export const CodeLine = memo(function CodeLine({
   line: Line;
 }) {
   return (
-    <div className="flex h-5 hover:bg-white/[0.025]">
+    <div className="flex min-h-5 hover:bg-white/[0.025]">
       <span
-        className="sticky left-0 shrink-0 bg-panel pr-4 pl-4 text-right text-faint select-none"
+        className="shrink-0 pr-4 pl-4 text-right text-faint select-none"
         style={{ width: `${gutter + 3}ch` }}
       >
         {number}
       </span>
-      <span className="pr-6 whitespace-pre text-ink/90">
+      <span className="min-w-0 flex-1 pr-6 whitespace-pre-wrap wrap-anywhere text-ink/90">
         {line.map(([content, color], at) => (
           <span
             // Tokens are positional; nothing else identifies them.
