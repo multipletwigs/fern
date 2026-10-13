@@ -19,3 +19,7 @@ _Avoid_: Walkthrough panel, review mode
 **Code panel**:
 The Session's files and their changes beside its transcript. It opens only when the developer toggles it.
 _Avoid_: Diff view, editor
+
+**Pull requests page**:
+A Project's open pull requests on GitHub, whoever wrote them, grouped into their Stacks and narrowed by filters, where the developer opens any PR to review its Walkthrough. A PR from a Hosted Session's Stack opens in that Session's Review tab instead.
+_Avoid_: Repo viewer, PR inbox, dashboard

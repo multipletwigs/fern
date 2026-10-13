@@ -103,8 +103,12 @@ _Avoid_: Suggestion, improvement, action item
 ### Review
 
 **Walkthrough**:
-The developer-facing explanation of one change a Session made, usually one PR of its Stack: Sections in dependency order (contract before service before API before UI), in natural language, that together account for every changed line of the net change. The developer reviews a Walkthrough instead of the raw diff. Fern produces one whenever a Session's work completes; it is not a Phase, so no Flow can leave it out.
+The developer-facing explanation of one change, usually one PR: of a Session's Stack, or a Foreign PR. It has Sections in dependency order (contract before service before API before UI), in natural language, that together account for every changed line of the net change. The developer reviews a Walkthrough instead of the raw diff. Fern produces one whenever a Session's work completes, and for a Foreign PR whenever the developer asks; it is not a Phase, so no Flow can leave it out.
 _Avoid_: Diff, summary, changelog, report
+
+**Foreign PR**:
+An open or closed pull request on a Project's repo that no Hosted Session's Stack holds, whoever wrote it, the developer included. Its Walkthrough comes from the PR alone, with no Session's intent behind it, and its verdicts stay with the developer until they post them to GitHub as a review.
+_Avoid_: Outside PR, external PR, teammate's PR
 
 **Stack**:
 A Session's work as a chain of pull requests on GitHub, one per ticket in the order the tickets landed on the Session's branch, each based on the one below, and the bottom one on the repo's default branch. A fix for Rejections, and the accepted Findings, each go on top as a PR of their own. Each PR carries its own Walkthroughs, which are its description too: usually one, and another for each change to the PR after a refused Land, or, on a Session's one PR, for each of its turns.
@@ -139,7 +143,7 @@ Said of a Walkthrough once the developer has approved or rejected every Section.
 _Avoid_: Done, signed off
 
 **Unplanned**:
-Said of a Section that cites no Decision: the agent changed something the developer never agreed to.
+Said of a Section that cites no Decision: the agent changed something the developer never agreed to. A Foreign PR's Sections are never Unplanned.
 _Avoid_: Scope creep, extra
 
 **Unexplained change**:
@@ -147,7 +151,7 @@ A changed hunk that no Section claims. A Walkthrough shows every Unexplained cha
 _Avoid_: Orphan, leftover
 
 **Rejection**:
-The developer turning down a Section, with a note. The note goes back to the Session as a Redirect, and the reason becomes material for a Retro.
+The developer turning down a Section, with a note. The note goes back to the Session as a Redirect, and the reason becomes material for a Retro; on a Foreign PR it goes nowhere until the developer posts their review.
 _Avoid_: Decline, revert
 
 ### Workflow
@@ -176,7 +180,7 @@ An optional duration on a Phase; overrunning it raises a Checkpoint, never stops
 _Avoid_: Timeout, deadline, budget
 
 **Preview**:
-The developer's app running from one Session's worktree, frontend and backend both, shown in Fern beside that Session.
+The developer's app running from one worktree, frontend and backend both: a Session's, shown beside that Session, or one checked out at a Foreign PR's head so the developer can try it.
 _Avoid_: Dev server, browser tab, sandbox
 
 **Verify slot**:
@@ -184,7 +188,7 @@ An isolated Fern an agent starts from its worktree with `pnpm verify:up`, to che
 _Avoid_: Sandbox, instance
 
 **Terminal**:
-A Session's own login shell, running in the Session's folder, shown in a panel under its screen. It outlives its viewers: switching away or reloading the page detaches, and coming back replays what it printed. It ends when the developer restarts it, the Session is archived, or Fern quits.
+A login shell in a Session's folder, or in a Foreign PR's worktree, shown in a panel under its screen. It outlives its viewers: switching away or reloading the page detaches, and coming back replays what it printed. It ends when the developer restarts it, its Session is archived or its worktree removed, or Fern quits.
 _Avoid_: Console, shell panel
 
 **Tool check**:
