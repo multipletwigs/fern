@@ -80,7 +80,7 @@ export function LandCard({
         <div className="mt-3">
           <Callout tone="danger">
             <p className="font-mono text-[10px] tracking-wide text-danger/70 uppercase">
-              GitHub said
+              Why it didn't land
             </p>
             <p className="mt-1 text-ink/85">{refusal}</p>
             {refusalSent && (

@@ -52,6 +52,10 @@ const PrBlockers = Schema.fromJsonString(
   }),
 );
 
+// A line as a sentence: capitalised, and ending in a full stop.
+const sentence = (line: string) =>
+  `${line.charAt(0).toUpperCase()}${line.slice(1)}${/[.!?]$/u.test(line) ? "" : "."}`;
+
 // What `gh` printed when it refused, as sentences: without its marks and prefixes.
 const plainly = (printed: string) =>
   printed
@@ -63,6 +67,7 @@ const plainly = (printed: string) =>
         .trim(),
     )
     .filter((line) => line !== "")
+    .map(sentence)
     .join(" ");
 
 // Why GitHub won't merge the PR, in plain words, from what `gh pr view` says stops it.

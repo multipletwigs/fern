@@ -278,7 +278,7 @@ const pastRetro = (phases: ReadonlyArray<FlowPhase>) => {
 
 // What a Land Checkpoint says about the Stack it lands.
 const landSummary = (prs: number) =>
-  `Every Walkthrough in the Stack is Reviewed. Landing it marks ${prs === 1 ? "its PR" : `its ${prs} PRs`} ready and squash-merges ${prs === 1 ? "it" : "them"} into main, all at once.`;
+  `Landing the Stack marks ${prs === 1 ? "its PR" : `its ${prs} PRs`} ready and squash-merges ${prs === 1 ? "it" : "them"} into main, all at once.`;
 
 // What a Fern tool answers the agent.
 interface Answer {

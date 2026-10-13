@@ -79,7 +79,7 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
           assert.strictEqual(refused._tag, "MergeRefused");
           assert.strictEqual(
             refused._tag === "MergeRefused" ? refused.reason : "",
-            "cannot merge the whole stack: pull request #101 is blocked PR #101 needs an approving review. PR #102 needs an approving review.",
+            "Cannot merge the whole stack: pull request #101 is blocked. PR #101 needs an approving review. PR #102 needs an approving review.",
           );
           assert.include(calls(), "stack merge 7 --squash --yes");
           assert.isFalse(calls().some((call) => call.includes("--admin")));
