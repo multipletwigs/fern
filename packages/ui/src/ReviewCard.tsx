@@ -1,7 +1,7 @@
 import { clsx } from "clsx";
 import type { ReactNode } from "react";
 
-// One thing the developer reviews: a Section or an Unexplained change, with its verdict controls
+// One thing the developer reviews, such as a Retro Finding, with its verdict controls
 // at the foot. Settled cards recede so the open ones stand out.
 export function ReviewCard({
   eyebrow,

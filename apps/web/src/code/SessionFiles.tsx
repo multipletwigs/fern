@@ -1,21 +1,18 @@
 import { CommitRow } from "@repo/ui/CommitRow";
 import { FileGroup } from "@repo/ui/FileGroup";
 import { FileRow } from "@repo/ui/FileRow";
-import type { ReactNode } from "react";
 import type { SessionCommit } from "./commits";
 import type { ChangedFile, ReadFile } from "./paths";
 
 // The files Claude touched this Session: the ones it changed, then the commits it made and the
-// files it only read, each folded away until asked for. `header` sits above them all.
+// files it only read, each folded away until asked for.
 export function SessionFiles({
-  header,
   changed,
   commits,
   read,
   current,
   onPick,
 }: {
-  header?: ReactNode;
   changed: ReadonlyArray<ChangedFile>;
   commits: ReadonlyArray<SessionCommit>;
   read: ReadonlyArray<ReadFile>;
@@ -24,7 +21,6 @@ export function SessionFiles({
 }) {
   return (
     <div className="h-full space-y-0.5 overflow-y-auto p-2">
-      {header}
       {changed.map((file) => (
         <FileRow
           key={file.path}

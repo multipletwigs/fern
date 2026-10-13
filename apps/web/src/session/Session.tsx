@@ -22,6 +22,7 @@ import { SessionChecklist } from "../flow/SessionChecklist";
 import { type PendingPrompt, pendingPromptAtom, transcriptAtom } from "./atoms";
 import { GrillView } from "../grill/GrillView";
 import { ItemView } from "./ItemView";
+import { ReviewView } from "../review/ReviewView";
 import { type Row, toRows } from "./rows";
 import { SessionComposer } from "./SessionComposer";
 import { SessionTabs } from "./SessionTabs";
@@ -343,6 +344,7 @@ export function Session({
             tab={tabs.tab}
             grill={tabs.grill}
             waiting={tabs.rounds?.open !== undefined}
+            reviewWaiting={tabs.reviewWaiting}
             subagents={tabs.subagents}
             onSelect={tabs.select}
             onClose={tabs.close}
@@ -391,6 +393,9 @@ export function Session({
             }
             onFailed={() => setPending(undefined)}
           />
+        )}
+        {tabs.tab === "review" && (
+          <ReviewView sessionId={id} active={visible} />
         )}
         {agent !== undefined && (
           <SubagentView

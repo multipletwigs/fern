@@ -2,11 +2,11 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { CheckpointWalkthrough as Linked } from "@repo/api";
 import { WalkthroughRow } from "@repo/ui/WalkthroughRow";
 import { AsyncResult } from "effect/reactivity";
-import { showInCodeAtom } from "../code/panel";
+import { showReviewAtom } from "../review/atoms";
 import { walkthroughsAtom } from "../walkthrough/atoms";
 import { rowStatus } from "../walkthrough/review";
 
-// The Session's Walkthrough on the Implement Checkpoint, opening it in the code panel.
+// The Session's Walkthrough on the Implement Checkpoint, opening it in the Review tab.
 export function CheckpointWalkthrough({
   sessionId,
   walkthrough,
@@ -15,7 +15,7 @@ export function CheckpointWalkthrough({
   walkthrough: Linked;
 }) {
   const result = useAtomValue(walkthroughsAtom(sessionId));
-  const open = useAtomSet(showInCodeAtom(sessionId));
+  const open = useAtomSet(showReviewAtom(sessionId));
   const found = AsyncResult.isSuccess(result)
     ? result.value.find((w) => w.id === walkthrough.id)
     : undefined;
@@ -31,7 +31,7 @@ export function CheckpointWalkthrough({
         number={walkthrough.number}
         {...(found ? rowStatus(found) : { status: "", tone: "muted" })}
         active={false}
-        onSelect={() => open({ kind: "walkthrough", id: walkthrough.id })}
+        onSelect={() => open({ walkthrough: walkthrough.id })}
       />
     </section>
   );

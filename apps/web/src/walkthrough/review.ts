@@ -19,21 +19,6 @@ export const rowStatus = (
   return { status: `${openItems(walkthrough)} to review`, tone: "amber" };
 };
 
-export const totalItems = (walkthrough: Walkthrough) =>
-  walkthrough.sections.length + walkthrough.unexplained.length;
-
-// The newest Walkthrough while Claude writes it or while it waits on the developer.
-export const waitingWalkthrough = (
-  walkthroughs: ReadonlyArray<Walkthrough>,
-) => {
-  const latest = walkthroughs.at(-1);
-  return latest &&
-    (latest.status === "writing" ||
-      (latest.status === "ready" && latest.reviewedAt === undefined))
-    ? latest
-    : undefined;
-};
-
 export const sinceLabel: Record<WalkthroughSince, string> = {
   previous: "Since the previous Walkthrough",
   start: "Since the Session started",

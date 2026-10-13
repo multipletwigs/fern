@@ -1,38 +1,62 @@
-import { CheckIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
+import {
+  CheckIcon,
+  PaperPlaneTiltIcon,
+  WarningIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import { clsx } from "clsx";
+
+// How an entry was settled, or why it can't be yet, when a check or an empty ring says too little:
+// approved or rejected, or a Walkthrough still being written or that failed.
+export type ReviewMark = "approved" | "rejected" | "writing" | "failed";
 
 // One item in a review layout's list: a check once it's settled, else an empty ring, then its
 // number and what it is, with how it was settled beneath. A `step`, such as sending a Round's
 // answers, is something to do rather than settle, and is marked with a paper plane, lit once it's
-// `settled`, meaning ready. In a narrow layout only the mark shows.
+// `settled`, meaning ready. A `mark` takes the place of the check or ring. In a narrow layout only
+// the mark shows.
 export function ReviewEntry({
   number,
   title,
   detail,
   settled,
   step = false,
+  mark,
 }: {
   number?: number;
   title: string;
   detail?: string;
   settled: boolean;
   step?: boolean;
+  mark?: ReviewMark;
 }) {
   return (
     <span className="flex w-full min-w-0 items-start gap-2.5 @max-3xl:justify-center">
       <span
         className={clsx(
           "mt-px flex size-[18px] shrink-0 items-center justify-center rounded-full transition-colors",
-          step
-            ? settled
-              ? "bg-ice/[0.14] text-ice"
-              : "text-faint"
-            : settled
-              ? "bg-mint/[0.12] text-mint"
-              : "border border-white/[0.16]",
+          mark === "approved" && "bg-mint/[0.12] text-mint",
+          mark === "rejected" && "bg-danger/[0.12] text-danger",
+          mark === "writing" &&
+            "border border-dashed border-white/[0.24] motion-safe:animate-spin motion-safe:[animation-duration:3s]",
+          mark === "failed" && "text-danger/80",
+          mark === undefined &&
+            (step
+              ? settled
+                ? "bg-ice/[0.14] text-ice"
+                : "text-faint"
+              : settled
+                ? "bg-mint/[0.12] text-mint"
+                : "border border-white/[0.16]"),
         )}
       >
-        {step ? (
+        {mark === "approved" ? (
+          <CheckIcon weight="bold" className="size-2.5" />
+        ) : mark === "rejected" ? (
+          <XIcon weight="bold" className="size-2.5" />
+        ) : mark === "failed" ? (
+          <WarningIcon weight="fill" className="size-3.5" />
+        ) : mark === "writing" ? null : step ? (
           <PaperPlaneTiltIcon weight="fill" className="size-3" />
         ) : (
           settled && <CheckIcon weight="bold" className="size-2.5" />
@@ -48,7 +72,12 @@ export function ReviewEntry({
           <span className="line-clamp-2 min-w-0">{title}</span>
         </span>
         {detail && (
-          <span className="mt-0.5 block truncate text-[12px] text-muted">
+          <span
+            className={clsx(
+              "mt-0.5 block truncate text-[12px]",
+              mark === "rejected" ? "text-danger/70" : "text-muted",
+            )}
+          >
             {detail}
           </span>
         )}

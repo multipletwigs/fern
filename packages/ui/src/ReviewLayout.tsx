@@ -10,6 +10,8 @@ export interface ReviewItem {
   readonly key: string;
   // Its row in the list on the left, such as a `ReviewEntry`.
   readonly entry: ReactNode;
+  // Above its entry in the list, as for the first item of a group, such as a `ReviewHeading`.
+  readonly heading?: ReactNode;
   // What fills the right while it's the open item.
   readonly pane: ReactNode;
 }
@@ -50,6 +52,7 @@ export function ReviewLayout({
   onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLOListElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const placed = useRef(false);
 
@@ -70,6 +73,9 @@ export function ReviewLayout({
         behavior: placed.current && !reducedMotion() ? "smooth" : "instant",
       });
     placed.current = true;
+    list.current
+      ?.querySelector("[data-active]")
+      ?.scrollIntoView({ block: "nearest" });
     const focused = document.activeElement;
     if (focused === document.body || focused?.closest("[inert]"))
       root.current?.focus({ preventScroll: true });
@@ -111,9 +117,13 @@ export function ReviewLayout({
             {header}
           </div>
         )}
-        <ol className="flex-1 space-y-0.5 overflow-y-auto px-1.5 pt-3 pb-6 @3xl:px-2 @3xl:pt-0">
+        <ol
+          ref={list}
+          className="flex-1 space-y-0.5 overflow-y-auto px-1.5 pt-3 pb-6 @3xl:px-2 @3xl:pt-0"
+        >
           {items.map((item, index) => (
             <li key={item.key}>
+              {item.heading}
               <button
                 type="button"
                 tabIndex={-1}
@@ -142,7 +152,9 @@ export function ReviewLayout({
           <section
             key={item.key}
             inert={index !== at}
-            className="h-full w-full shrink-0 snap-start snap-always overflow-x-hidden overflow-y-auto"
+            // The browser skips laying out panes out of sight, so a long queue, with a diff in every
+            // pane, stays light. Emptying them instead would make a sideways snap overshoot.
+            className="h-full w-full shrink-0 snap-start snap-always overflow-x-hidden overflow-y-auto [content-visibility:auto]"
           >
             {item.pane}
           </section>
