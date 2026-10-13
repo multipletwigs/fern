@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { vi } from "vitest";
-import { CodeHost } from "../src/codehost/CodeHost";
+import { CodeHost, CodeHostError } from "../src/codehost/CodeHost";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
 import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
@@ -62,9 +62,9 @@ const transcript = (
 
 // A Project of its own: a repo on `main` with one commit, where the developer has run a Session,
 // its `origin` on GitHub unless it's `offGitHub`.
-const project = ({ offGitHub = false } = {}) => {
+const project = ({ offGitHub = false, trunk = "main" } = {}) => {
   const repo = realpathSync(mkdtempSync(join(tmpdir(), "fern-repo-")));
-  git(repo, "init", "-q", "-b", "main");
+  git(repo, "init", "-q", "-b", trunk);
   writeFileSync(join(repo, "a.ts"), "export const a = 1;\n");
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "Initial");
@@ -120,21 +120,34 @@ const commit = (cwd: string, files: Record<string, string>) => {
 };
 
 // The code host, faked: what Fern asked it, in order, by the folder it asked from. While
-// `signedOut`, `gh` isn't ready.
+// `signedOut`, `gh` isn't ready. The repo's default branch is `defaultBranch`, or GitHub can't say.
+// Each folder Fern asked whether `gh` is ready from, once per asking, is in `readyAsked`.
 interface Asked {
   readonly cwd: string;
   readonly call: string;
   readonly args: Record<string, unknown>;
 }
 const asked: Array<Asked> = [];
+const readyAsked: Array<string> = [];
 let signedOut = false;
+let defaultBranch: string | undefined = "main";
 let nextPr = 100;
 const askedFrom = (cwd: string) =>
   asked.filter((a) => a.cwd === cwd).map(({ call, args }) => ({ call, args }));
 const FakeCodeHost = Layer.succeed(
   CodeHost,
   CodeHost.of({
-    ready: () => Effect.sync(() => !signedOut),
+    ready: (cwd) =>
+      Effect.sync(() => {
+        readyAsked.push(cwd);
+        return !signedOut;
+      }),
+    defaultBranch: () =>
+      Effect.suspend(() =>
+        defaultBranch === undefined
+          ? Effect.fail(new CodeHostError({ message: "No default branch" }))
+          : Effect.succeed(defaultBranch),
+      ),
     push: (cwd, args) =>
       Effect.sync(() => {
         asked.push({ cwd, call: "push", args });
@@ -401,7 +414,7 @@ layer(fern, { excludeTestServices: true })("Stacks", (it) => {
         );
         assert.match(
           turn.options.systemPrompt?.append ?? "",
-          /call Fern's `ticket_landed` tool[^]*never push to `main`/,
+          /call Fern's `ticket_landed` tool[^]*replaces pushing to `main`, or whatever the repo's default branch is: never push to it/,
         );
       }),
   );
@@ -410,7 +423,7 @@ layer(fern, { excludeTestServices: true })("Stacks", (it) => {
     "a landed ticket goes up as a draft PR on main, and the next one on top of it, linked into one Stack",
     () =>
       Effect.gen(function* () {
-        const { turn, cwd } = yield* startIn(project());
+        const { turn, cwd } = yield* implementing();
         const branch = git(cwd, "branch", "--show-current");
 
         const first = land(cwd, 3, { "theme.ts": "export const theme = 1;\n" });
@@ -480,7 +493,7 @@ layer(fern, { excludeTestServices: true })("Stacks", (it) => {
     "each PR's Walkthrough covers only its ticket's change, with what no Section claims shown as Unexplained, and no snapshot Walkthrough after the turn",
     () =>
       Effect.gen(function* () {
-        const { id, turn, cwd } = yield* startIn(project());
+        const { id, turn, cwd } = yield* implementing();
         const first = land(cwd, 3, { "theme.ts": "export const theme = 1;\n" });
         yield* callTool(turn, "ticket_landed", { ticket: 3, commit: first });
         const second = land(cwd, 4, {
@@ -529,7 +542,7 @@ layer(fern, { excludeTestServices: true })("Stacks", (it) => {
       Effect.gen(function* () {
         const held = yield* Deferred.make<void>();
         gate = held;
-        const { id, turn, cwd } = yield* startIn(project());
+        const { id, turn, cwd } = yield* implementing();
         yield* callTool(turn, "ticket_landed", {
           ticket: 3,
           commit: land(cwd, 3, { "theme.ts": "export const theme = 1;\n" }),
@@ -576,7 +589,7 @@ layer(fern, { excludeTestServices: true })("Stacks", (it) => {
     () =>
       Effect.gen(function* () {
         const root = project();
-        const { turn, cwd } = yield* startIn(root);
+        const { turn, cwd } = yield* implementing(root);
         const elsewhere = git(root, "rev-parse", "HEAD");
         writeFileSync(join(root, "b.ts"), "export const b = 1;\n");
         git(root, "add", "-A");
@@ -617,6 +630,83 @@ layer(fern, { excludeTestServices: true })("Stacks", (it) => {
         const all = yield* walkthroughsWhen(id, (ws) => ws.length > 0);
         assert.strictEqual(all[0]?.since, "start");
         assert.isUndefined(all[0]?.pr);
+      }),
+  );
+
+  it.effect(
+    "only the Session's own tickets go up, as landing closes them: one Spec didn't write, or any before Spec, is refused and nothing reaches GitHub",
+    () =>
+      Effect.gen(function* () {
+        const early = yield* startIn(project());
+        const before = yield* callTool(early.turn, "ticket_landed", {
+          ticket: 3,
+          commit: land(early.cwd, 3, { "theme.ts": "export {};\n" }),
+        });
+        early.turn.finish();
+        const { turn, cwd } = yield* implementing();
+        const other = yield* callTool(turn, "ticket_landed", {
+          ticket: 1,
+          commit: land(cwd, 1, { "theme.ts": "export {};\n" }),
+        });
+        turn.finish();
+
+        assert.isTrue(before.isError);
+        assert.include(textOf(before), "hasn't written its tickets");
+        assert.isTrue(other.isError);
+        assert.include(textOf(other), "#1 isn't one of this Session's tickets");
+        assert.deepStrictEqual(askedFrom(early.cwd), []);
+        assert.deepStrictEqual(askedFrom(cwd), []);
+      }),
+  );
+
+  it.effect(
+    "in a repo whose default branch isn't main, the bottom PR is based on that branch",
+    () =>
+      Effect.gen(function* () {
+        defaultBranch = "trunk";
+        const { turn, cwd } = yield* implementing(project({ trunk: "trunk" }));
+        const reported = yield* callTool(turn, "ticket_landed", {
+          ticket: 3,
+          commit: land(cwd, 3, { "theme.ts": "export const theme = 1;\n" }),
+        });
+        turn.finish();
+
+        assert.isNotTrue(reported.isError, textOf(reported));
+        assert.include(textOf(reported), "based on trunk");
+        assert.strictEqual(
+          askedFrom(cwd).find((a) => a.call === "openDraft")?.args.base,
+          "trunk",
+        );
+      }).pipe(Effect.ensuring(Effect.sync(() => (defaultBranch = "main")))),
+  );
+
+  it.effect(
+    "where Fern can't tell the repo's default branch, a Session gets no ticket_landed tool",
+    () =>
+      Effect.gen(function* () {
+        defaultBranch = undefined;
+        const { turn } = yield* startIn(project());
+        turn.finish();
+
+        assert.isUndefined(toolOf(turn, "ticket_landed"));
+      }).pipe(Effect.ensuring(Effect.sync(() => (defaultBranch = "main")))),
+  );
+
+  it.effect(
+    "opening a Session and ending its turn ask whether gh is ready once, not once per question",
+    () =>
+      Effect.gen(function* () {
+        const { id, turn, cwd } = yield* startIn(project());
+        turn.finish();
+        const client = yield* makeClient;
+        yield* client.sessions.send({
+          params: { id },
+          payload: { text: "And the docs" },
+        });
+        (yield* turnWhere(id, (text) => text === "And the docs")).finish();
+        yield* Effect.sleep("100 millis");
+
+        assert.strictEqual(readyAsked.filter((at) => at === cwd).length, 1);
       }),
   );
 
@@ -750,7 +840,7 @@ layer(fern, { excludeTestServices: true })("Stacks", (it) => {
     "a fix for a Rejection goes up as a new PR on top of the Stack, its Sections linked to the Rejection, and the Walkthrough below keeps its verdicts",
     () =>
       Effect.gen(function* () {
-        const { id, turn, cwd } = yield* startIn(project());
+        const { id, turn, cwd } = yield* implementing();
         const branch = git(cwd, "branch", "--show-current");
         yield* callTool(turn, "ticket_landed", {
           ticket: 3,

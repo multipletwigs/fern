@@ -105,6 +105,7 @@ const FakeCodeHost = Layer.succeed(
   CodeHost,
   CodeHost.of({
     ready: () => Effect.succeed(true),
+    defaultBranch: () => Effect.succeed("main"),
     push: () => Effect.void,
     openDraft: () =>
       Effect.sync(() => {
@@ -164,6 +165,7 @@ interface TurnOptions {
 // Each turn Claude Code is asked to run, and how to end it.
 interface StartedTurn {
   readonly sessionId: string | undefined;
+  readonly text: string;
   readonly options: TurnOptions;
   readonly finish: () => void;
 }
@@ -179,13 +181,13 @@ vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => {
       const { promise: ended, resolve: finish } = Promise.withResolvers<void>();
       if (first && options.sessionId)
         transcript(options.cwd, options.sessionId, text, "sdk-ts");
-      started.push({ sessionId, options, finish });
+      started.push({ sessionId, text, options, finish });
       return ended;
     }),
   };
 });
 
-const makeClient = HttpApiTest.groups(FernApi, ["sessions", "rounds"]);
+const makeClient = HttpApiTest.groups(FernApi, ["sessions", "rounds", "flows"]);
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
 const fern = Layer.mergeAll(
@@ -276,6 +278,55 @@ const grilled = (root: string, reply: { choice?: string; text?: string }) =>
     return { id, turn: yield* turnOf(id, 1) };
   });
 
+// The Session's turn on the first message Fern sent it that satisfies the predicate.
+const turnWhere = (id: string, predicate: (text: string) => boolean) =>
+  Effect.suspend(() =>
+    Effect.fromNullishOr(
+      started.find((t) => t.sessionId === id && predicate(t.text)),
+    ),
+  ).pipe(
+    Effect.retry({ schedule: Schedule.spaced("5 millis"), times: 400 }),
+    Effect.orDie,
+  );
+
+// The agent reports the Phase done in the turn and ends it; the developer approves the Checkpoint.
+const doneAndApproved = (
+  id: string,
+  turn: StartedTurn,
+  phase: string,
+  extra: Record<string, unknown> = {},
+) =>
+  Effect.gen(function* () {
+    yield* callTool(turn, "phase_done", {
+      phase,
+      summary: `${phase} done.`,
+      ...extra,
+    });
+    turn.finish();
+    const live = yield* makeLive;
+    const flow = yield* firstWhere(
+      live.Flow({ session: id }),
+      (f) => f?.checkpoint?.phase === phase,
+    );
+    const client = yield* makeClient;
+    yield* client.flows.approve({ params: { id: flow?.checkpoint?.id ?? "" } });
+  });
+
+// The grilled Session taken through Spec (the Brief #2, its tickets #3 and #4): its turn on
+// `/implement-spec`.
+const specced = (id: string, grill: StartedTurn) =>
+  Effect.gen(function* () {
+    yield* doneAndApproved(id, grill, "grill");
+    (yield* turnWhere(id, (text) => text === "/to-spec")).finish();
+    yield* doneAndApproved(
+      id,
+      yield* turnWhere(id, (text) => text === "/to-tickets"),
+      "spec",
+      { spec: { brief: 2, tickets: [3, 4] } },
+    );
+    return yield* turnWhere(id, (text) => text.startsWith("/implement-spec"));
+  });
+
 // The Session's Walkthroughs once they satisfy the condition.
 const walkthroughsWhen = (
   id: string,
@@ -308,10 +359,12 @@ layer(fern, { excludeTestServices: true })("PR descriptions", (it) => {
     "once a PR's Walkthrough is written, it becomes the PR's description: each Section's title, Risk, prose and cited Decisions, no hunks, the Unexplained changes counted, closing the ticket",
     () =>
       Effect.gen(function* () {
-        const { id, turn } = yield* grilled(project(), {
+        const grill = yield* grilled(project(), {
           choice: "Settings page",
           text: "Next to the font size",
         });
+        const { id } = grill;
+        const turn = yield* specced(id, grill.turn);
         const cwd = turn.options.cwd;
         answer = (request) => {
           const hunk = (path: string) =>
@@ -388,7 +441,9 @@ layer(fern, { excludeTestServices: true })("PR descriptions", (it) => {
     () =>
       Effect.gen(function* () {
         failing = true;
-        const { id, turn } = yield* grilled(project(), { choice: "Top bar" });
+        const grill = yield* grilled(project(), { choice: "Top bar" });
+        const { id } = grill;
+        const turn = yield* specced(id, grill.turn);
         const landed = yield* callTool(turn, "ticket_landed", {
           ticket: 4,
           commit: land(turn.options.cwd, 4, {

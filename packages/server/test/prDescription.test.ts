@@ -19,11 +19,12 @@ const section = (fields: Partial<Section> & { title: string }) =>
 const walkthrough = (
   sections: ReadonlyArray<Section>,
   pr?: { ticket?: number },
+  number = 1,
 ) =>
   Walkthrough.make({
-    id: "w1",
+    id: `w${number}`,
     sessionId: "session",
-    number: 1,
+    number,
     status: "ready",
     since: "pr",
     pr: pr
@@ -41,9 +42,23 @@ const walkthrough = (
     unexplained: [],
   });
 
+// The `number`th Walkthrough of a PR, with a thousand Sections.
+const longWalkthrough = (number: number) =>
+  walkthrough(
+    Array.from({ length: 1000 }, (_, i) =>
+      section({
+        id: `s${i}`,
+        title: `Section ${number}.${i}`,
+        explanation: "x".repeat(40),
+      }),
+    ),
+    {},
+    number,
+  );
+
 describe("prDescription", () => {
   it("quotes the developer's own words alone, and keeps a cited question on one line", () => {
-    const body = prDescription(
+    const body = prDescription([
       walkthrough(
         [
           section({
@@ -61,7 +76,7 @@ describe("prDescription", () => {
         ],
         { ticket: 9 },
       ),
-    );
+    ]);
     assert.strictEqual(
       body,
       "## Toggle\n\nExplains it.\n\n**Decisions**\n\n- **Where does the toggle live?** Answer: Next to the font size\n\n---\n\nCloses #9\n",
@@ -70,7 +85,7 @@ describe("prDescription", () => {
 
   it("a PR without a ticket closes nothing, and a Section written before Risk and citations shows neither", () => {
     assert.strictEqual(
-      prDescription(walkthrough([section({ title: "Old" })], {})),
+      prDescription([walkthrough([section({ title: "Old" })], {})]),
       "## Old\n\nExplains it.\n",
     );
   });
@@ -83,11 +98,29 @@ describe("prDescription", () => {
         explanation: "x".repeat(40),
       }),
     );
-    const body = prDescription(walkthrough(long, { ticket: 3 }));
+    const body = prDescription([walkthrough(long, { ticket: 3 })]);
     assert.isAtMost(body.length, MAX_DESCRIPTION);
     assert.match(
       body,
       /x\n\n_The rest of this Walkthrough is in Fern\._\n\n---\n\nCloses #3\n$/,
     );
+  });
+
+  it("a PR with several Walkthroughs is described by all of them, oldest first, each under a heading of its own", () => {
+    assert.strictEqual(
+      prDescription([
+        walkthrough([section({ title: "First this" })], {}),
+        walkthrough([section({ title: "Then this" })], {}, 2),
+      ]),
+      "# Walkthrough 1\n\n## First this\n\nExplains it.\n\n# Walkthrough 2\n\n## Then this\n\nExplains it.\n",
+    );
+  });
+
+  it("several Walkthroughs longer than GitHub allows keep the oldest Sections that fit", () => {
+    const body = prDescription([longWalkthrough(1), longWalkthrough(2)]);
+    assert.isAtMost(body.length, MAX_DESCRIPTION);
+    assert.isTrue(body.startsWith("# Walkthrough 1\n\n## Section 1.0\n"));
+    assert.include(body, "## Section 1.999");
+    assert.match(body, /_The rest of this Walkthrough is in Fern\._\n$/);
   });
 });

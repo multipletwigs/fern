@@ -126,7 +126,10 @@ export const SnapshotsOnly = Layer.effect(
 // No Session's work lands as a Stack.
 export const NoStacks = Layer.succeed(
   StackEligibility,
-  StackEligibility.of({ applies: () => Effect.succeed(false) }),
+  StackEligibility.of({
+    applies: () => Effect.succeed(false),
+    trunk: () => Effect.succeedNone,
+  }),
 );
 
 // A code host Fern never asks, where no Session's work lands as a Stack.
@@ -134,6 +137,7 @@ export const UnusedCodeHost = Layer.succeed(
   CodeHost,
   CodeHost.of({
     ready: () => Effect.die("unused"),
+    defaultBranch: () => Effect.die("unused"),
     push: () => Effect.die("unused"),
     openDraft: () => Effect.die("unused"),
     link: () => Effect.die("unused"),

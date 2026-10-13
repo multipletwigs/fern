@@ -179,6 +179,30 @@ layer(Server)("Fern's server", (it) => {
     }),
   );
 
+  // Stacks' endpoints change what lands on GitHub, so they're behind the same guard.
+  for (const [method, path] of [
+    ["PUT", "/api/projects/settings"],
+    ["POST", "/api/flows/checkpoints/some-checkpoint/send"],
+    ["POST", "/api/walkthroughs/some-walkthrough/rewrite"],
+  ] as const)
+    it.effect(
+      `refuses another website's ${method} ${path.replace("/api", "")}`,
+      () =>
+        Effect.gen(function* () {
+          const at = yield* serverPort;
+          const status = yield* statusOf(at, {
+            method,
+            path,
+            headers: {
+              Host: `127.0.0.1:${at}`,
+              Origin: "https://evil.example",
+              "Content-Type": "application/json",
+            },
+          });
+          assert.strictEqual(status, 403);
+        }),
+    );
+
   // An <img> or <script> on another website sends no Origin with its GET, but says where it's from.
   it.effect("refuses another website's GET that carries no Origin", () =>
     Effect.gen(function* () {

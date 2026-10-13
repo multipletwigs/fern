@@ -664,22 +664,26 @@ export class Walkthroughs extends Context.Service<
         sql`UPDATE walkthroughs SET status = 'failed', error = ${message}
           WHERE id = ${walkthroughId}`.pipe(Effect.orDie, Effect.asVoid);
 
-      // Makes a PR's Walkthrough, once written, the PR's description, so GitHub never shows a stale
-      // one. A failed Walkthrough leaves the description as it was; so does a code host that can't
-      // be reached, until the next Walkthrough of the PR.
+      // Makes a PR's Walkthroughs, once one is written, the PR's description, so GitHub never shows
+      // a stale one: every written Walkthrough of the PR, oldest first, as the PR carries every
+      // change they cover. A failed Walkthrough leaves the description as it was; so does a code
+      // host that can't be reached, until the next Walkthrough of the PR.
       const describe = (
         walkthroughId: string,
         sessionId: string,
         cwd: string,
       ) =>
         Effect.gen(function* () {
-          const walkthrough = assemble(yield* load(sessionId)).find(
-            (w) => w.id === walkthroughId,
-          );
+          const all = assemble(yield* load(sessionId));
+          const walkthrough = all.find((w) => w.id === walkthroughId);
           if (walkthrough?.status !== "ready" || walkthrough.pr === undefined)
             return;
+          const number = walkthrough.pr.number;
+          const ofPr = all.filter(
+            (w) => w.status === "ready" && w.pr?.number === number,
+          );
           yield* codeHost
-            .setBody(cwd, walkthrough.pr.number, prDescription(walkthrough))
+            .setBody(cwd, number, prDescription(ofPr))
             .pipe(
               Effect.catch((error) =>
                 Effect.logWarning(

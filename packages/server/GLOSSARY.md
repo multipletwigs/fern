@@ -107,11 +107,11 @@ The developer-facing explanation of one change a Session made, usually one PR of
 _Avoid_: Diff, summary, changelog, report
 
 **Stack**:
-A Session's work as a chain of pull requests on GitHub, one per ticket in the order the tickets landed on the Session's branch, each based on the one below. A fix for Rejections, and the accepted Findings, each go on top as a PR of their own. Each PR carries its own Walkthrough, as its description too.
+A Session's work as a chain of pull requests on GitHub, one per ticket in the order the tickets landed on the Session's branch, each based on the one below, and the bottom one on the repo's default branch. A fix for Rejections, and the accepted Findings, each go on top as a PR of their own. Each PR carries its own Walkthroughs, which are its description too: usually one, and another for each change to the PR after a refused Land, or, on a Session's one PR, for each of its turns.
 _Avoid_: PR chain, series, train
 
 **Land**:
-To merge a Session's Stack into `main`, all at once, through a Checkpoint that opens once every Walkthrough in the Stack is Reviewed with no Rejection left open.
+To merge a Session's Stack into the repo's default branch (`main`, usually), all at once, through a Checkpoint that opens once every Walkthrough in the Stack is Reviewed with no Rejection left open.
 _Avoid_: Ship, deploy, merge (for the whole Stack)
 
 **Section**:

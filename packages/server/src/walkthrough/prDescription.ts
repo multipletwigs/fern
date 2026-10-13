@@ -56,24 +56,38 @@ const cut = (sections: ReadonlyArray<string>, room: number) => {
   return `${shown.trimEnd()}\n\n${CUT}`;
 };
 
-// A PR's description, rendered from its Walkthrough (ADR 0009): each Section's title, Risk, prose
-// and cited Decisions, as the developer answered them, but no hunks, so it reads as a guide to the
-// diff GitHub shows below it. Then how many changes no Section explains, and the line that closes
-// the PR's ticket.
-export const prDescription = (walkthrough: Walkthrough) => {
-  const unexplained = walkthrough.unexplained.length;
+// A Walkthrough's Sections as the description shows them: under a heading of its own when the PR
+// has several, which the heading goes with when the description is cut.
+const sectionsOf = (walkthrough: Walkthrough, headed: boolean) => {
+  const sections = walkthrough.sections.map(sectionOf);
+  if (!headed) return sections;
+  const heading = `# Walkthrough ${walkthrough.number}`;
+  const [first, ...rest] = sections;
+  return [first === undefined ? heading : `${heading}\n\n${first}`, ...rest];
+};
+
+// A PR's description, rendered from its Walkthroughs (ADR 0009), oldest first: each Section's
+// title, Risk, prose and cited Decisions, as the developer answered them, but no hunks, so it reads
+// as a guide to the diff GitHub shows below it. Then how many changes no Section explains, and the
+// line that closes the PR's ticket.
+export const prDescription = (walkthroughs: ReadonlyArray<Walkthrough>) => {
+  const unexplained = walkthroughs.reduce(
+    (n, w) => n + w.unexplained.length,
+    0,
+  );
+  const ticket = walkthroughs[0]?.pr?.ticket;
   const footer = [
     ...(unexplained > 0
       ? [
           `${unexplained} ${unexplained === 1 ? "change" : "changes"} no Section explains.`,
         ]
       : []),
-    ...(walkthrough.pr?.ticket === undefined
-      ? []
-      : [`Closes #${walkthrough.pr.ticket}`]),
+    ...(ticket === undefined ? [] : [`Closes #${ticket}`]),
   ].join("\n\n");
   const tail = footer === "" ? "" : `\n\n---\n\n${footer}`;
-  const sections = walkthrough.sections.map(sectionOf);
+  const sections = walkthroughs.flatMap((w) =>
+    sectionsOf(w, walkthroughs.length > 1),
+  );
   const body = sections.join("\n\n");
   const room = MAX_DESCRIPTION - tail.length - 1;
   return `${body.length <= room ? body : cut(sections, room)}${tail}\n`;

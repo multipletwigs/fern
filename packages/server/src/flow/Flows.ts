@@ -278,8 +278,8 @@ const pastRetro = (phases: ReadonlyArray<FlowPhase>) => {
 };
 
 // What a Land Checkpoint says about the Stack it lands.
-const landSummary = (prs: number) =>
-  `Landing the Stack marks ${prs === 1 ? "its PR" : `its ${prs} PRs`} ready and squash-merges ${prs === 1 ? "it" : "them"} into main, all at once.`;
+const landSummary = (prs: ReadonlyArray<{ readonly base: string }>) =>
+  `Landing the Stack marks ${prs.length === 1 ? "its PR" : `its ${prs.length} PRs`} ready and squash-merges ${prs.length === 1 ? "it" : "them"} into ${prs[0]?.base ?? "main"}, all at once.`;
 
 // What a Fern tool answers the agent.
 interface Answer {
@@ -514,10 +514,6 @@ export class Flows extends Context.Service<
           sql`SELECT checkpoint_id FROM findings WHERE id = ${id}`,
       });
 
-      // Hosted Sessions follow the Flow (ADR 0005).
-      const inFlow = (sessionId: string) =>
-        hosted.session(sessionId).pipe(Effect.map((s) => s !== undefined));
-
       // Fails for an Archived Session, whose Flow can't move on.
       const unarchived = (sessionId: string) =>
         hosted
@@ -544,17 +540,25 @@ export class Flows extends Context.Service<
 
       const load = (sessionId: string) =>
         Effect.gen(function* () {
-          if (!(yield* inFlow(sessionId))) return null;
+          // Hosted Sessions follow the Flow (ADR 0005).
+          const session = yield* hosted.session(sessionId);
+          if (session === undefined) return null;
           const phases = yield* phasesOf(sessionId);
           const waiting = yield* pendingOf(sessionId).pipe(Effect.orDie);
-          const stack = pastRetro(phases)
-            ? yield* standing(sessionId)
-            : undefined;
+          const land = pastRetro(phases)
+            ? yield* landRowOf(sessionId).pipe(Effect.orDie)
+            : Option.none();
+          // A Stack that landed, or an Archived Session's, waits on nothing, so there's no asking
+          // git and GitHub what it waits on.
+          const stack =
+            pastRetro(phases) &&
+            session.archivedAt === null &&
+            !(Option.isSome(land) && land.value.status === "approved")
+              ? yield* standing(sessionId)
+              : undefined;
           if (Option.isNone(waiting)) {
             // Once the Land Checkpoint opened, the Stack waits on nothing more before it.
-            const opened =
-              stack !== undefined &&
-              Option.isSome(yield* landRowOf(sessionId).pipe(Effect.orDie));
+            const opened = stack !== undefined && Option.isSome(land);
             return Flow.make({
               sessionId,
               phases,
@@ -746,9 +750,7 @@ export class Flows extends Context.Service<
             prs,
             waiting: [
               ...waitsOf(prs, all, open, accepted > 0 && one === undefined),
-              ...(one
-                ? own.map((why) => ({ pr: shownPr(one), why }))
-                : []),
+              ...(one ? own.map((why) => ({ pr: shownPr(one), why })) : []),
             ],
           };
         });
@@ -799,10 +801,7 @@ export class Flows extends Context.Service<
               onFailure: (refused) =>
                 sql`UPDATE checkpoints
                   SET refusal = ${refused.reason}, refusal_sent_at = NULL
-                  WHERE id = ${id}`.pipe(
-                  Effect.orDie,
-                  deciding.withPermits(1),
-                ),
+                  WHERE id = ${id}`.pipe(Effect.orDie, deciding.withPermits(1)),
             }),
             Effect.ensuring(
               Effect.sync(() => landing.delete(id)).pipe(Effect.andThen(bump)),
@@ -817,7 +816,8 @@ export class Flows extends Context.Service<
       const settleLand = (sessionId: string) =>
         Effect.gen(function* () {
           const session = yield* hosted.session(sessionId);
-          if (!session || session.archivedAt !== null) return yield* Effect.void;
+          if (!session || session.archivedAt !== null)
+            return yield* Effect.void;
           if (!pastRetro(yield* phasesOf(sessionId))) return yield* Effect.void;
           if (Option.isSome(yield* landRowOf(sessionId).pipe(Effect.orDie)))
             return yield* bump;
@@ -830,7 +830,7 @@ export class Flows extends Context.Service<
             sessionId,
             kind: "land",
             phase: "retro",
-            summary: landSummary(stack.prs.length),
+            summary: landSummary(stack.prs),
             status: "pending",
             raisedAt: yield* Clock.currentTimeMillis,
           })}`.pipe(Effect.orDie);
@@ -873,9 +873,18 @@ export class Flows extends Context.Service<
 
       // With nothing changed since it, the Session's latest written Walkthrough covers the working
       // tree, so the Checkpoint links to it; none at all when the Session never changed anything.
+      // A Session's one PR's latest Walkthrough that couldn't be written covers nothing, though
+      // nothing was committed since: the agent hears why.
       const covering = (sessionId: string) =>
         walkthroughsNow(sessionId).pipe(
-          Effect.map((all) => ({ link: linkOf(all) })),
+          Effect.map(
+            (all): Answer | { link: CheckpointWalkthrough | undefined } => {
+              const latest = all.at(-1);
+              return latest?.status === "failed" && latest.pr !== undefined
+                ? unwritten(latest.error ?? "the Fork failed")
+                : { link: linkOf(all) };
+            },
+          ),
         );
 
       // The Walkthrough a write just started, once its Fork is done: what the Checkpoint links to,
@@ -1303,7 +1312,12 @@ export class Flows extends Context.Service<
 
       const send = Effect.fn("Flows.send")(function* (id: string) {
         const checkpoint = yield* open(id);
-        if (checkpoint.kind !== "land" || checkpoint.refusal === null)
+        // Once for each refusal: the agent has it already.
+        if (
+          checkpoint.kind !== "land" ||
+          checkpoint.refusal === null ||
+          checkpoint.refusalSentAt !== null
+        )
           return yield* new CheckpointActionUnavailable({ id });
         yield* turns.send(checkpoint.sessionId, {
           text: refusalMessage(
