@@ -23,9 +23,16 @@ export function ProjectStacksRow({
   return (
     <li className="flex items-center gap-4 py-4">
       <div className="min-w-0 flex-1">
-        <div className="flex h-6 items-baseline gap-2.5">
-          <span className="text-[14px] text-ink">{name}</span>
-          <span className="truncate font-mono text-xs text-faint">{path}</span>
+        <div className="flex h-6 min-w-0 items-baseline gap-2.5">
+          <span className="max-w-1/2 shrink-0 truncate text-[14px] text-ink">
+            {name}
+          </span>
+          <span
+            title={path}
+            className="min-w-0 truncate font-mono text-xs text-faint"
+          >
+            {path}
+          </span>
         </div>
         <p className="text-[13px] text-muted">
           {failed ?? (on ? "Lands as a GitHub Stack" : "Lands as before")}

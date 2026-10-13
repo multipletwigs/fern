@@ -19,6 +19,21 @@ export const rowStatus = (
   return { status: `${openItems(walkthrough)} to review`, tone: "amber" };
 };
 
+// Where a PR's review stands across its Walkthroughs: the first that isn't Reviewed speaks for it,
+// with every open item counted; once all are, Reviewed.
+export const prStatus = (
+  walkthroughs: ReadonlyArray<Walkthrough>,
+): { status: string; tone: WalkthroughTone } => {
+  const unsettled = walkthroughs.filter(
+    (w) => w.status !== "ready" || w.redirectError || !w.reviewedAt,
+  );
+  const [first] = unsettled;
+  if (!first) return { status: "Reviewed", tone: "muted" };
+  if (first.status !== "ready" || first.redirectError) return rowStatus(first);
+  const open = unsettled.reduce((sum, w) => sum + openItems(w), 0);
+  return { status: `${open} to review`, tone: "amber" };
+};
+
 export const sinceLabel: Record<WalkthroughSince, string> = {
   previous: "Since the previous Walkthrough",
   start: "Since the Session started",
