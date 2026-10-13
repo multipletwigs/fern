@@ -59,6 +59,7 @@ import { FernTools } from "../turn/FernTools";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { Walkthroughs } from "../walkthrough/Walkthroughs";
+import { Worktrees } from "../worktree/Worktrees";
 
 export { IssueTrackerTimeout };
 
@@ -400,6 +401,7 @@ export class Flows extends Context.Service<
       const issues = yield* IssueTracker;
       const autonomy = yield* Autonomy;
       const stacks = yield* Stacks;
+      const worktrees = yield* Worktrees;
       const patience = Duration.fromInputUnsafe(yield* IssueTrackerTimeout);
       // An issue on the tracker, unless it keeps Fern waiting too long.
       const lookUp = (cwd: string, number: number) =>
@@ -731,12 +733,24 @@ export class Flows extends Context.Service<
         Effect.gen(function* () {
           const prs = yield* stacks.prs(sessionId);
           if (prs.length === 0) return undefined;
-          const [all, open, { accepted }] = yield* Effect.all([
+          const [all, open, { accepted }, own] = yield* Effect.all([
             walkthroughsNow(sessionId),
             walkthroughs.openRejections(sessionId),
             acceptedOf(sessionId).pipe(Effect.orDie),
+            stacks.onePrWaits(sessionId),
           ]);
-          return { prs, waiting: waitsOf(prs, all, open, accepted > 0) };
+          // A Session's one PR carries the accepted Findings too, so there's no PR of theirs to wait
+          // for, only what the one PR waits on itself.
+          const one = prs.find((pr) => pr.kind === "session");
+          return {
+            prs,
+            waiting: [
+              ...waitsOf(prs, all, open, accepted > 0 && one === undefined),
+              ...(one
+                ? own.map((why) => ({ pr: shownPr(one), why }))
+                : []),
+            ],
+          };
         });
       type Standing = NonNullable<Effect.Success<ReturnType<typeof standing>>>;
 
@@ -831,9 +845,13 @@ export class Flows extends Context.Service<
         FiberMap.run(
           landWatches,
           sessionId,
-          walkthroughs
-            .list(sessionId)
-            .pipe(Stream.runForEach(() => settleLand(sessionId))),
+          walkthroughs.list(sessionId).pipe(
+            // A turn ending can change what a Session's one PR waits on, without any Walkthrough.
+            Stream.merge(
+              turns.finished.pipe(Stream.filter(({ id }) => id === sessionId)),
+            ),
+            Stream.runForEach(() => settleLand(sessionId)),
+          ),
           { onlyIfMissing: true },
         ).pipe(Effect.asVoid);
 
@@ -885,6 +903,31 @@ export class Flows extends Context.Service<
           })),
         );
 
+      // Whether the Session's work lands as a Stack of tickets, each PR with its own Walkthrough,
+      // rather than as one PR, or without a Stack.
+      const ticketedStack = (sessionId: string) =>
+        Effect.all([
+          stacks.landsAsStack(sessionId),
+          stacks.landsAsOnePr(sessionId),
+        ]).pipe(Effect.map(([stack, one]) => stack && !one));
+
+      // Where the work goes up as one PR, which carries only what's committed: what to tell the
+      // agent while the worktree has changes that aren't, if it does.
+      const uncommitted = (sessionId: string) =>
+        Effect.gen(function* () {
+          if (!(yield* stacks.landsAsOnePr(sessionId))) return undefined;
+          const session = yield* hosted.session(sessionId);
+          if (session?.worktree == null) return undefined;
+          const dirty = yield* worktrees
+            .isDirty(session.worktree)
+            .pipe(Effect.orElseSucceed(() => false));
+          if (!dirty) return undefined;
+          return {
+            text: "Implement isn't done: this Session's worktree has changes that aren't committed. Its PR carries only what's committed on this Session's branch, so commit them there, or throw away what shouldn't land, then report Implement done again.",
+            isError: true,
+          } satisfies Answer;
+        });
+
       // Implement's other exit criterion: a written Walkthrough that covers the working tree as it
       // is now. Fern writes one of whatever changed since the last: "writing" while it does. Else
       // what the Checkpoint links to, or what to tell the agent instead.
@@ -896,7 +939,7 @@ export class Flows extends Context.Service<
       // A Session in place outside git has nothing Fern can review, so there's nothing to link.
       const walkthroughExit = (sessionId: string) =>
         Effect.gen(function* () {
-          if (yield* stacks.landsAsStack(sessionId)) {
+          if (yield* ticketedStack(sessionId)) {
             const all = yield* walkthroughsNow(sessionId);
             return all.some((w) => w.status === "writing")
               ? ("writing" as const)
@@ -905,7 +948,7 @@ export class Flows extends Context.Service<
           const session = yield* hosted.session(sessionId);
           if (session?.worktree === null && !(yield* inGit(session.cwd)))
             return { link: undefined };
-          return yield* walkthroughs.write(sessionId).pipe(
+          return yield* stacks.write(sessionId).pipe(
             Effect.as("writing" as const),
             Effect.catchTags({
               WalkthroughInProgress: () => Effect.succeed("writing" as const),
@@ -1051,9 +1094,9 @@ export class Flows extends Context.Service<
           const row = yield* checkpointRow(id).pipe(Effect.orDie);
           if (Option.isNone(row)) return;
           const { sessionId } = row.value;
-          const outcome = (yield* stacks.landsAsStack(sessionId))
+          const outcome = (yield* ticketedStack(sessionId))
             ? yield* stackWritten(sessionId)
-            : yield* walkthroughs.write(sessionId).pipe(
+            : yield* stacks.write(sessionId).pipe(
                 Effect.retry({
                   while: (error) => error._tag === "WalkthroughInProgress",
                   schedule: Schedule.spaced("250 millis"),
@@ -1168,6 +1211,8 @@ export class Flows extends Context.Service<
               ? yield* prsExit(sessionId)
               : yield* ticketsExit(sessionId);
             if (open) return open;
+            const loose = yield* uncommitted(sessionId);
+            if (loose) return loose;
             const exit = yield* walkthroughExit(sessionId);
             if (exit !== "writing" && "isError" in exit) return exit;
             walkthrough = exit === "writing" ? exit : exit.link;
@@ -1333,7 +1378,7 @@ export class Flows extends Context.Service<
             yield* turns.send(checkpoint.sessionId, {
               text: acceptedMessage(
                 accepted,
-                yield* stacks.landsAsStack(checkpoint.sessionId),
+                yield* ticketedStack(checkpoint.sessionId),
               ),
             });
           const phases = yield* phasesOf(checkpoint.sessionId);
@@ -1485,7 +1530,7 @@ export class Flows extends Context.Service<
         ],
       });
       yield* tools.register({
-        when: (sessionId) => stacks.landsAsStack(sessionId),
+        when: ticketedStack,
         tools: (sessionId) => [
           tool(
             "findings_landed",

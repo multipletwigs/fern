@@ -20,6 +20,7 @@ import {
   unusedTurns,
   UnusedVerifySlots,
   UnusedWalkthroughs,
+  UnusedStacks,
   UnusedWorkspace,
   UnusedWorktreeCleanup,
 } from "./stubs";
@@ -37,6 +38,7 @@ const Unused = Layer.mergeAll(
   UnusedProjectSettings,
   UnusedWorkspace,
   UnusedWalkthroughs,
+  UnusedStacks,
   UnusedWorktreeCleanup,
   UnusedSubagents,
   UnusedVerifySlots,

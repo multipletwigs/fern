@@ -36,6 +36,7 @@ import {
 import {
   NoEscapes,
   NoStacks,
+  SnapshotsOnly,
   UnusedCodeHost,
   UnusedCommands,
   UnusedProjectSettings,
@@ -172,16 +173,20 @@ const Services = Layer.mergeAll(
   UnusedWorkspace,
   UnusedWorktreeCleanup,
   FakeTurns,
-  Walkthroughs.layer.pipe(
-    Layer.provide(HostedSessions.layer),
-    Layer.provide([
-      FakeTurns,
-      Writer,
-      NoEscapes,
-      NoStacks,
-      UnusedCodeHost,
-      DatabaseLive(":memory:"),
-    ]),
+  SnapshotsOnly.pipe(
+    Layer.provideMerge(
+      Walkthroughs.layer.pipe(
+        Layer.provide(HostedSessions.layer),
+        Layer.provide([
+          FakeTurns,
+          Writer,
+          NoEscapes,
+          NoStacks,
+          UnusedCodeHost,
+          DatabaseLive(":memory:"),
+        ]),
+      ),
+    ),
   ),
 ).pipe(Layer.provideMerge(Snapshots.layer), Layer.provide(NodeServices.layer));
 

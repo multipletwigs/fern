@@ -13,6 +13,7 @@ import {
   type SessionBusy,
   type SessionInUse,
   SessionNotFound,
+  StackPrKind,
   UnexplainedChange,
   type Verdict,
   type VerdictInput,
@@ -152,6 +153,7 @@ const PrRow = Schema.Struct({
   title: Schema.String,
   position: Schema.Int,
   ticket: Schema.NullOr(Schema.Int),
+  kind: StackPrKind,
 });
 type PrRow = typeof PrRow.Type;
 
@@ -342,11 +344,16 @@ export const redirectMessage = (
       ),
   ];
   if (lines.length === 0) return undefined;
-  const ask = rows.walkthroughs.some(
-    (w) => w.id === walkthroughId && w.prId !== null,
-  )
-    ? "Please address these: commit the fix on this Session's branch, then report it with Fern's `fix_landed` tool, which puts it up as a new PR on top of the Stack."
-    : "Please address these.";
+  // A Session's one PR takes the fix itself, with its next Walkthrough; a PR of a ticketed Stack
+  // never changes once it's up, so the fix goes up as a PR of its own.
+  const prId = rows.walkthroughs.find((w) => w.id === walkthroughId)?.prId;
+  const kind = rows.prs.find((pr) => pr.id === prId)?.kind;
+  const ask =
+    kind !== undefined && kind !== "session"
+      ? "Please address these: commit the fix on this Session's branch, then report it with Fern's `fix_landed` tool, which puts it up as a new PR on top of the Stack."
+      : kind === "session"
+        ? "Please address these: commit the fix on this Session's branch, and Fern's next Walkthrough of its PR shows it."
+        : "Please address these.";
   return `I reviewed Walkthrough ${number} and rejected part of it:\n\n${lines.join("\n")}\n\n${ask}`;
 };
 
@@ -410,6 +417,15 @@ const redirectFailure = (
     ? error.message
     : REDIRECT_REFUSED[error._tag];
 
+// The change a Walkthrough of a PR covers: between two commits on the Session's branch.
+export interface PrChange {
+  readonly id: string;
+  readonly cwd: string;
+  readonly from: string;
+  readonly to: string;
+  readonly since?: WalkthroughSince;
+}
+
 // Writes, stores, and reviews Walkthroughs (ADR 0003, stored per ADR 0004).
 export class Walkthroughs extends Context.Service<
   Walkthroughs,
@@ -426,17 +442,13 @@ export class Walkthroughs extends Context.Service<
       | WalkthroughInProgress
       | WalkthroughError
     >;
-    // Starts writing the Walkthrough of one PR of the Session's Stack: the change from the commit
-    // `from` to the commit `to`. Fern writes a Session's Walkthroughs one at a time, so it waits its
-    // turn behind any being written; until then it shows as being written.
+    // Starts writing a Walkthrough of one PR of the Session's Stack: the change from the commit
+    // `from` to the commit `to`, which is the whole PR's (`pr`, the default), or, on a Session's one
+    // PR, what changed since its previous Walkthrough. Fern writes a Session's Walkthroughs one at a
+    // time, so it waits its turn behind any being written; until then it shows as being written.
     writePr(
       sessionId: string,
-      pr: {
-        readonly id: string;
-        readonly cwd: string;
-        readonly from: string;
-        readonly to: string;
-      },
+      pr: PrChange,
     ): Effect.Effect<void, NothingToReview | WalkthroughError>;
     verdict(
       walkthroughId: string,
@@ -543,7 +555,7 @@ export class Walkthroughs extends Context.Service<
         Request: Schema.String,
         Result: PrRow,
         execute: (sessionId) => sql`
-          SELECT id, number, url, title, position, ticket FROM stack_prs
+          SELECT id, number, url, title, position, ticket, kind FROM stack_prs
           WHERE session_id = ${sessionId} ORDER BY position`,
       });
       const sessionOf = SqlSchema.findOneOption({
@@ -902,13 +914,9 @@ export class Walkthroughs extends Context.Service<
       // nothing from other Sessions to tell apart.
       const preparePr = Effect.fn("Walkthroughs.preparePr")(function* (
         sessionId: string,
-        pr: {
-          readonly id: string;
-          readonly cwd: string;
-          readonly from: string;
-          readonly to: string;
-        },
+        pr: PrChange,
       ) {
+        const since = pr.since ?? "pr";
         const repo = yield* snapshots
           .repo(pr.cwd)
           .pipe(Effect.mapError(gitFailed));
@@ -929,7 +937,7 @@ export class Walkthroughs extends Context.Service<
         const prepared = requestOf(
           sessionId,
           pr.cwd,
-          "pr",
+          since,
           patch,
           rows,
           yield* citable(sessionId, repo),
@@ -939,7 +947,7 @@ export class Walkthroughs extends Context.Service<
             id,
             sessionId,
             repo,
-            since: "pr",
+            since,
             prId: pr.id,
             baseTree,
             headCommit: pr.to,
@@ -953,12 +961,7 @@ export class Walkthroughs extends Context.Service<
 
       const writePr = Effect.fn("Walkthroughs.writePr")(function* (
         sessionId: string,
-        pr: {
-          readonly id: string;
-          readonly cwd: string;
-          readonly from: string;
-          readonly to: string;
-        },
+        pr: PrChange,
       ) {
         yield* started(sessionId);
         const prepared = yield* preparePr(sessionId, pr).pipe(
@@ -1097,15 +1100,17 @@ export class Walkthroughs extends Context.Service<
           id: Schema.String,
           sessionId: Schema.String,
           repo: Schema.String,
+          since: WalkthroughSince,
         }),
         execute: () => sql`
-          SELECT id, session_id, repo FROM walkthroughs
+          SELECT id, session_id, repo, since FROM walkthroughs
           WHERE status = 'writing' AND pr_id IS NOT NULL ORDER BY created_at, number`,
       });
       const resume = Effect.fn("Walkthroughs.resume")(function* (walkthrough: {
         readonly id: string;
         readonly sessionId: string;
         readonly repo: string;
+        readonly since: WalkthroughSince;
       }) {
         const { id, sessionId } = walkthrough;
         const info = yield* sdk("getSessionInfo", () =>
@@ -1117,7 +1122,7 @@ export class Walkthroughs extends Context.Service<
         const prepared = requestOf(
           sessionId,
           info?.cwd ?? walkthrough.repo,
-          "pr",
+          walkthrough.since,
           stored,
           rows,
           yield* citable(sessionId, walkthrough.repo),
@@ -1136,11 +1141,12 @@ export class Walkthroughs extends Context.Service<
           id: Schema.String,
           sessionId: Schema.String,
           repo: Schema.String,
+          since: WalkthroughSince,
           status: WalkthroughStatus,
           prId: Schema.NullOr(Schema.String),
         }),
         execute: (id) =>
-          sql`SELECT id, session_id, repo, status, pr_id FROM walkthroughs WHERE id = ${id}`,
+          sql`SELECT id, session_id, repo, since, status, pr_id FROM walkthroughs WHERE id = ${id}`,
       });
       // Its change is stored with it, so it's written again the way Fern resumes one after a
       // restart. A snapshot Walkthrough isn't: the next one covers what it missed.
@@ -1167,13 +1173,29 @@ export class Walkthroughs extends Context.Service<
           ),
         );
 
+      // Whether the Session's work lands as a Stack: it has PRs up already, or would put them up.
+      const stackUp = SqlSchema.findAll({
+        Request: Schema.String,
+        Result: Schema.Struct({ id: Schema.String }),
+        execute: (sessionId) =>
+          sql`SELECT id FROM stack_prs WHERE session_id = ${sessionId} LIMIT 1`,
+      });
+      const landsAsStack = (sessionId: string) =>
+        stackUp(sessionId).pipe(
+          Effect.orDie,
+          Effect.flatMap((up) =>
+            up.length > 0 ? Effect.succeed(true) : stacks.applies(sessionId),
+          ),
+        );
+
       // Fern writes a Walkthrough whenever a turn it ran finishes on its own, except where the
-      // Session's work lands as a Stack: there each PR gets its own, as its ticket lands.
+      // Session's work lands as a Stack: there each PR gets its own, as its ticket lands, or, without
+      // tickets, as Stacks writes the one PR's.
       yield* turns.finished.pipe(
         Stream.runForEach(({ id }) =>
           Effect.when(
             write(id),
-            stacks.applies(id).pipe(Effect.map((applies) => !applies)),
+            landsAsStack(id).pipe(Effect.map((stack) => !stack)),
           ).pipe(
             Effect.catchTags({
               NothingToReview: () => Effect.void,
