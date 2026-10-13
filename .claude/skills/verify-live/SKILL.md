@@ -42,7 +42,8 @@ One External Session (`f2121212-…`) whose cwd is your worktree. It has:
 - a background Subagent that starts a nested one (spawnDepth 2);
 - two back-to-back foreground Explore Subagents, one handing back through `SubagentHandback` and one with plain text;
 - three finished background Subagents, enough to fill the Agents menu;
-- one Subagent still running, which ends on a tool call with no result.
+- one Subagent still running, which ends on a tool call with no result;
+- at the end, the developer's turns: a slash command, a message with an image, and an unanswered message with its Resend notice.
 
 Add a case by extending `writeFixture`.
 

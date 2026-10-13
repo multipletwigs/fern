@@ -19,6 +19,8 @@ Application logic is written with [Effect v4](https://effect.website/docs/v4/get
 - `apps/desktop/src`: the Electron main process is an Effect program (`NodeRuntime.runMain`); resources use `Effect.acquireRelease`.
 - `apps/web`: talks to the API through `ApiClient` (`AtomHttpApi`) and `@effect/atom-react`.
 
+Run `pnpm bootstrap` in a fresh worktree and after pulling in main: lint and type errors about missing modules or an unreadable `@effect/tsgo` preset mean packages are missing.
+
 `pnpm lint` runs oxlint with the Effect rules from `@effect/tsgo`; `pnpm install` patches TypeScript and oxlint for them via `prepare`.
 
 Reading Claude Code's transcript or Subagent files: `packages/server/docs/claude-code-files.md`.

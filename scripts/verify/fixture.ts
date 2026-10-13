@@ -6,7 +6,12 @@ import { join } from "node:path";
 // own on-disk shape (see packages/server/docs/claude-code-files.md). It covers a background
 // Subagent with a nested one, two back-to-back foreground ones (one hands back through
 // SubagentHandback, one with plain text), enough finished ones to fill the Agents menu, and one
-// still running.
+// still running. It ends on the developer's turns: a slash command, a message with an image, and
+// one Claude Code never replied to.
+
+// A 1x1 PNG, for the developer's message with an image.
+const PIXEL =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 export const FIXTURE_SESSION = "f2121212-2121-4121-8121-212121212121";
 
@@ -93,6 +98,23 @@ export const writeFixture = (configDir: string, cwd: string) => {
             origin: { kind: "peer", from, name, body, handback: true },
           },
         ),
+      // What Claude Code records in place of a reply to a message it never answered.
+      noResponse: () =>
+        add("assistant", {
+          model: "<synthetic>",
+          id: `msg_${randomUUID().slice(0, 20)}`,
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "No response requested." }],
+          stop_reason: "stop_sequence",
+          stop_sequence: "",
+          usage: {
+            input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_tokens: 0,
+          },
+        }),
       write: (path: string) =>
         writeFileSync(
           path,
@@ -195,6 +217,26 @@ export const writeFixture = (configDir: string, cwd: string) => {
     main.result(`toolu_fixtureEdit00000${i}`, "The file has been updated.");
   });
   main.text("Most Subagents are back; the last ticket is still running.");
+  main.user(
+    "<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>the transcript code</command-args>",
+    { origin: { kind: "human" } },
+  );
+  main.text("Reviewed: no findings.");
+  main.user(
+    [
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: PIXEL },
+      },
+      { type: "text", text: "Fixture: this screenshot shows the tab bar." },
+    ],
+    { origin: { kind: "human" } },
+  );
+  main.text("The tab bar fits.");
+  main.user("Fixture: a message Claude Code never replied to.", {
+    origin: { kind: "human" },
+  });
+  main.noResponse();
   main.write(join(root, `${FIXTURE_SESSION}.jsonl`));
 
   subagent(
