@@ -121,6 +121,10 @@ export type WalkthroughStatus = typeof WalkthroughStatus.Type;
 export const VerdictKind = Schema.Literals(["approved", "rejected"]);
 export type VerdictKind = typeof VerdictKind.Type;
 
+// How closely the developer should read a Section.
+export const RiskLevel = Schema.Literals(["low", "medium", "high"]);
+export type RiskLevel = typeof RiskLevel.Type;
+
 // Where the controls for one verdict stand: showing the buttons or the verdict, taking a
 // Rejection's note, or changing a verdict given already.
 export const VerdictMode = Schema.Literals(["idle", "noting", "changing"]);

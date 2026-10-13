@@ -138,6 +138,8 @@ const Writer = Layer.succeed(
               title: "The toggle",
               explanation: "Adds the toggle.",
               hunks: request.hunks.map((h) => h.id),
+              decisions: [],
+              risk: { level: "low" as const, reason: "Small." },
             },
           ],
           notFromSession: [],

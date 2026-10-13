@@ -36,6 +36,8 @@ const section = (id: string, verdict?: Verdict) =>
     id,
     title: `Section ${id}`,
     explanation: "",
+    decisions: [],
+    unplanned: false,
     hunks: [hunk(`${id}-hunk`)],
     verdict,
   });

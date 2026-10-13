@@ -104,11 +104,12 @@ describe("parseNumstat", () => {
 });
 
 describe("coverage", () => {
+  const plain = { decisions: [], risk: { level: "low" as const, reason: "" } };
   const draft = {
     sections: [
-      { title: "One", explanation: "x", hunks: ["h1", "h2", "h9"] },
-      { title: "Two", explanation: "y", hunks: ["h2"] },
-      { title: " ", explanation: "z", hunks: ["h3"], dropped: " " },
+      { title: "One", explanation: "x", hunks: ["h1", "h2", "h9"], ...plain },
+      { title: "Two", explanation: "y", hunks: ["h2"], ...plain },
+      { title: " ", explanation: "z", hunks: ["h3"], dropped: " ", ...plain },
     ],
     notFromSession: ["h4", "h8"],
   };
