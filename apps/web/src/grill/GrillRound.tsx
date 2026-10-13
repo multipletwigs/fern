@@ -1,13 +1,15 @@
 import { useAtom, useAtomSet } from "@effect/atom-react";
 import type { Round } from "@repo/api";
-import { DecisionRow } from "@repo/ui/DecisionRow";
-import { KeyHint } from "@repo/ui/KeyHint";
+import { ReviewEntry } from "@repo/ui/ReviewEntry";
+import { ReviewLayout } from "@repo/ui/ReviewLayout";
 import { RoundProgress } from "@repo/ui/RoundProgress";
 import { Cause, Exit, Option } from "effect";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { type KeyboardEvent, useRef, useState } from "react";
+import { type Move, moveFrom } from "../review/navigation";
 import { answerRoundAtom, draftAtom } from "./atoms";
 import {
   type Answer,
+  type Draft,
   answerLabel,
   answersText,
   emptyDraft,
@@ -31,18 +33,11 @@ const failureNotice = (tag: string | undefined) => {
   }
 };
 
-// Keys typed into a field are the field's.
-const isEditable = (target: EventTarget | null) =>
-  target instanceof HTMLElement &&
-  (target.isContentEditable ||
-    target.tagName === "INPUT" ||
-    target.tagName === "TEXTAREA" ||
-    target.tagName === "SELECT");
-
-// An open Round, one question at a time: the recommended answer picked to begin with, Enter to
-// accept, the number keys to pick another, ← to go back. Answered questions collapse into a list
-// above, and the answers go to the Session together once the last is answered. `active` is false
-// while the Session is out of sight, so its keys are left alone.
+// An open Round in the review layout: its questions listed on the left, checked once answered, and
+// one question at a time on the right, with the review step after the last. The recommended answer
+// is picked to begin with; Enter accepts it and slides to the next open question, the number keys
+// pick another, `j`/`k` and ← move. The answers go to the Session together from the review step.
+// `active` is false while the Session is out of sight.
 export function GrillRound({
   round,
   active,
@@ -66,7 +61,18 @@ export function GrillRound({
   const question = questions[index];
   const picked = question ? pickedFor(question, draft) : undefined;
   const answered = questions.filter((q) => draft.answers[q.id]).length;
+  // The review step comes last and is never open, so moving to the next open question skips it.
+  const settled = (answers: Draft["answers"]) => [
+    ...questions.map((q) => answers[q.id] !== undefined),
+    true,
+  ];
 
+  const goTo = (to: number) => {
+    setFailure(undefined);
+    setDraft({ ...draft, index: Math.max(0, Math.min(to, questions.length)) });
+  };
+  const move = (how: Move) =>
+    goTo(moveFrom(settled(draft.answers), index, how) ?? questions.length);
   const pick = (answer: Answer) => {
     if (!question) return;
     setDraft({ ...draft, picks: { ...draft.picks, [question.id]: answer } });
@@ -74,15 +80,12 @@ export function GrillRound({
   const accept = () => {
     if (!question || !picked || !isComplete(picked)) return;
     const { [question.id]: _, ...picks } = draft.picks;
+    const answers = { ...draft.answers, [question.id]: picked };
     setDraft({
-      index: index + 1,
-      answers: { ...draft.answers, [question.id]: picked },
+      index: moveFrom(settled(answers), index, "nextOpen") ?? questions.length,
+      answers,
       picks,
     });
-  };
-  const goTo = (to: number) => {
-    setFailure(undefined);
-    setDraft({ ...draft, index: Math.max(0, Math.min(to, questions.length)) });
   };
   const submit = async () => {
     if (sending) return;
@@ -103,20 +106,23 @@ export function GrillRound({
     setFailure(failureNotice(Option.getOrUndefined(error)?._tag));
   };
 
-  // The keys, read from the page while the Grill shows, so they work without clicking into it.
-  const onKey = useEffectEvent((event: KeyboardEvent) => {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    if (isEditable(event.target)) return;
+  const onKey = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Enter") {
       event.preventDefault();
       if (question) accept();
+      else if (answered < questions.length) move("nextOpen");
       else void submit();
+      return;
+    }
+    if (event.key === "j" || event.key === "k") {
+      event.preventDefault();
+      move(event.key === "j" ? "next" : "previous");
       return;
     }
     if (event.key === "ArrowLeft" || event.key === "Backspace") {
       if (index > 0) {
         event.preventDefault();
-        goTo(index - 1);
+        move("previous");
       }
       return;
     }
@@ -147,94 +153,71 @@ export function GrillRound({
       const choice = options[next];
       if (choice !== undefined) pick({ kind: "choice", choice });
     }
-  });
-  useEffect(() => {
-    if (!active) return undefined;
-    const listener = (event: KeyboardEvent) => onKey(event);
-    window.addEventListener("keydown", listener);
-    return () => window.removeEventListener("keydown", listener);
-  }, [active]);
+  };
 
-  // Answered questions other than the one on screen, in the Round's order.
-  const settled = questions.flatMap((q, at) => {
-    const answer = draft.answers[q.id];
-    return answer && at !== index ? [{ q, at, answer }] : [];
-  });
+  const items = [
+    ...questions.map((q, at) => {
+      const answer = draft.answers[q.id];
+      const choosing = pickedFor(q, draft);
+      return {
+        key: q.id,
+        entry: (
+          <ReviewEntry
+            number={at + 1}
+            title={q.title}
+            detail={answer && answerLabel(answer)}
+            settled={answer !== undefined}
+          />
+        ),
+        pane: (
+          <GrillQuestion
+            question={q}
+            number={at + 1}
+            total={questions.length}
+            picked={choosing}
+            last={questions.every(
+              (other) => other.id === q.id || draft.answers[other.id],
+            )}
+            freeTextRef={at === index ? freeText : undefined}
+            onPick={pick}
+            onAccept={accept}
+            onBack={at > 0 ? () => move("previous") : undefined}
+          />
+        ),
+      };
+    }),
+    {
+      key: "review",
+      entry: (
+        <ReviewEntry
+          title="Send answers"
+          detail={`${answered} of ${questions.length} answered`}
+          settled={answered === questions.length}
+          step
+        />
+      ),
+      pane: (
+        <GrillReview
+          total={questions.length}
+          open={questions.length - answered}
+          sending={sending}
+          failure={failure}
+          onSend={() => void submit()}
+          onNextOpen={() => move("nextOpen")}
+        />
+      ),
+    },
+  ];
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex min-h-full max-w-[680px] flex-col px-8 pt-6 pb-10">
-        <RoundProgress answered={answered} total={questions.length} />
-
-        {settled.length > 0 && (
-          <div className="mt-6">
-            <p className="mb-1 px-2.5 font-mono text-[10px] tracking-wide text-faint uppercase">
-              Decisions
-            </p>
-            {settled.map(({ q, at, answer }) => (
-              <DecisionRow
-                key={q.id}
-                number={at + 1}
-                question={q.title}
-                answer={answerLabel(answer)}
-                ownWords={answer.kind === "text"}
-                onOpen={() => goTo(at)}
-              />
-            ))}
-          </div>
-        )}
-
-        <div className="my-auto pt-10 pb-6" key={index}>
-          {question && picked ? (
-            <GrillQuestion
-              question={question}
-              number={index + 1}
-              total={questions.length}
-              picked={picked}
-              freeTextRef={freeText}
-              onPick={pick}
-              onAccept={accept}
-            />
-          ) : (
-            <GrillReview
-              total={questions.length}
-              sending={sending}
-              failure={failure}
-              onSend={() => void submit()}
-            />
-          )}
-        </div>
-
-        {question && picked && (
-          <div className="flex items-center gap-4">
-            <button
-              type="button"
-              disabled={!isComplete(picked)}
-              onClick={accept}
-              className="flex h-10 items-center gap-2.5 rounded-xl bg-ink px-4 text-[14px] font-medium text-canvas transition-[opacity,transform] hover:opacity-90 active:scale-[0.98] disabled:opacity-40"
-            >
-              {index + 1 === questions.length ? "Done" : "OK"}
-              <span className="font-mono text-[11px] opacity-60">↵</span>
-            </button>
-            {index > 0 && (
-              <button
-                type="button"
-                onClick={() => goTo(index - 1)}
-                className="flex items-center gap-1.5 text-[13px] text-muted transition-colors hover:text-ink"
-              >
-                <KeyHint>←</KeyHint> Back
-              </button>
-            )}
-            <span className="ml-auto text-[12px] text-faint">
-              Press{" "}
-              <span className="font-mono text-ink/60">
-                1–{question.options.length + 1}
-              </span>{" "}
-              to pick
-            </span>
-          </div>
-        )}
-      </div>
-    </div>
+    <ReviewLayout
+      label="Grill Round"
+      header={<RoundProgress answered={answered} total={questions.length} />}
+      items={items}
+      at={index}
+      active={active}
+      onSelect={goTo}
+      onKeyDown={onKey}
+    />
   );
 }
