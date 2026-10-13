@@ -5,6 +5,7 @@ import { HttpApiBuilder } from "effect/http-api";
 import { NodeServices } from "@effect/platform-node";
 import type { ChildProcessSpawner } from "effect/process";
 import { Autonomy } from "./autonomy/Autonomy";
+import { CodeHost } from "./codehost/CodeHost";
 import { Commands } from "./commands/Commands";
 import { Flows } from "./flow/Flows";
 import { IssueTracker } from "./issue/IssueTracker";
@@ -14,6 +15,9 @@ import { Terminals } from "./terminal/Terminals";
 import { SubagentFiles } from "./subagent/SubagentFiles";
 import { Subagents } from "./subagent/Subagents";
 import { LiveHandlersNoDeps } from "./live";
+import { ProjectSettings } from "./project/ProjectSettings";
+import { StackEligibility } from "./stack/StackEligibility";
+import { Stacks } from "./stack/Stacks";
 import { Rounds } from "./round/Rounds";
 import { Tools } from "./tools/Tools";
 import { FernTools } from "./turn/FernTools";
@@ -84,8 +88,11 @@ export const ProjectsHandlers = HttpApiBuilder.group(
   "projects",
   Effect.fn(function* (handlers) {
     const commands = yield* Commands;
+    const settings = yield* ProjectSettings;
     return handlers.handleAll({
       commands: ({ query }) => commands.list(query.root),
+      settings: ({ query }) => settings.get(query.root),
+      saveSettings: ({ payload }) => settings.save(payload),
     });
   }),
 );
@@ -184,7 +191,8 @@ export const HandlersNoDeps = Layer.mergeAll(
 
 // FernApi's handlers and the live streams', on one set of the real services, with a Walkthrough
 // writer of the caller's choosing. Everything but the database and the worktrees' folder, which
-// the app keeps with its data. The issue tracker is GitHub's unless the caller gives another.
+// the app keeps with its data. The issue tracker and the code host are GitHub's unless the caller
+// gives others.
 export const handlersWith = (
   writer: Layer.Layer<WalkthroughWriter>,
   issues: Layer.Layer<
@@ -192,6 +200,11 @@ export const handlersWith = (
     never,
     ChildProcessSpawner.ChildProcessSpawner
   > = IssueTracker.layer,
+  codeHost: Layer.Layer<
+    CodeHost,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner
+  > = CodeHost.layer,
 ) =>
   Layer.mergeAll(HandlersNoDeps, LiveHandlersNoDeps).pipe(
     Layer.provide([
@@ -205,7 +218,9 @@ export const handlersWith = (
     Layer.provideMerge(Subagents.layer),
     // The merge sweep waits for a Session's Flow to be over.
     Layer.provideMerge(Flows.layer),
-    // Flows writes the Walkthrough the end of Implement waits on.
+    // Each ticket that lands opens a PR on the Session's Stack.
+    Layer.provideMerge(Stacks.layer),
+    // Flows writes the Walkthrough the end of Implement waits on, and Stacks each PR's.
     Layer.provideMerge(Walkthroughs.layer),
     Layer.provide([
       Turns.layer,
@@ -215,6 +230,8 @@ export const handlersWith = (
       SubagentFiles.layer,
       // Archiving a Session ends its terminal's shell.
       Terminals.layer,
+      // Whether a Session lands as a Stack follows its Project's settings.
+      StackEligibility.layer.pipe(Layer.provideMerge(ProjectSettings.layer)),
     ]),
     Layer.provide([
       Snapshots.layer,
@@ -223,6 +240,7 @@ export const handlersWith = (
       Worktrees.layer,
       writer,
       issues,
+      codeHost,
     ]),
     Layer.provide(NodeServices.layer),
   );

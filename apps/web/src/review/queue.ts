@@ -31,31 +31,39 @@ export type ReviewQueueItem =
       readonly walkthrough: Walkthrough;
     };
 
-// Everything the Review tab lists, in the order the developer reviews it: the Walkthroughs oldest
-// first, each one's Sections in order, then its Unexplained changes. One being written, or that
-// failed, holds a single place.
+// Where a Walkthrough sits in the Review tab: under its PR, the Stack's bottom PR first, and after
+// the Stack when it explains no PR; oldest first within each.
+const reviewOrder = (a: Walkthrough, b: Walkthrough) =>
+  (a.pr?.position ?? Infinity) - (b.pr?.position ?? Infinity) ||
+  a.number - b.number;
+
+// Everything the Review tab lists, in the order the developer reviews it: the Walkthroughs in
+// review order, each one's Sections in order, then its Unexplained changes. One being written, or
+// that failed, holds a single place.
 export const reviewQueue = (
   walkthroughs: ReadonlyArray<Walkthrough>,
 ): ReadonlyArray<ReviewQueueItem> =>
-  walkthroughs.flatMap((walkthrough): ReadonlyArray<ReviewQueueItem> => {
-    if (walkthrough.status !== "ready")
-      return [{ kind: walkthrough.status, key: walkthrough.id, walkthrough }];
-    return [
-      ...walkthrough.sections.map((section, index): ReviewQueueItem => ({
-        kind: "section",
-        key: `${walkthrough.id}:${section.id}`,
-        walkthrough,
-        section,
-        index,
-      })),
-      ...walkthrough.unexplained.map((change): ReviewQueueItem => ({
-        kind: "unexplained",
-        key: `${walkthrough.id}:${change.hunk.id}`,
-        walkthrough,
-        change,
-      })),
-    ];
-  });
+  walkthroughs
+    .toSorted(reviewOrder)
+    .flatMap((walkthrough): ReadonlyArray<ReviewQueueItem> => {
+      if (walkthrough.status !== "ready")
+        return [{ kind: walkthrough.status, key: walkthrough.id, walkthrough }];
+      return [
+        ...walkthrough.sections.map((section, index): ReviewQueueItem => ({
+          kind: "section",
+          key: `${walkthrough.id}:${section.id}`,
+          walkthrough,
+          section,
+          index,
+        })),
+        ...walkthrough.unexplained.map((change): ReviewQueueItem => ({
+          kind: "unexplained",
+          key: `${walkthrough.id}:${change.hunk.id}`,
+          walkthrough,
+          change,
+        })),
+      ];
+    });
 
 // The developer's verdict on an item, once they've given one.
 export const verdictOf = (item: ReviewQueueItem): Verdict | undefined =>

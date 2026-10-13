@@ -188,7 +188,7 @@ A Session's own login shell, running in the Session's folder, shown in a panel u
 _Avoid_: Console, shell panel
 
 **Tool check**:
-Fern's check, shown in Settings, that the tools it runs on are ready: `claude`, `gh` and `git` installed, and `gh` signed in.
+Fern's check, shown in Settings, that the tools it runs on are ready: `claude`, `gh` and `git` installed, `gh` signed in, and the `gh-stack` extension installed. Only `gh-stack` is optional: without it, work lands without a Stack.
 _Avoid_: Prerequisite, doctor, health check
 
 **Checkpoint**:

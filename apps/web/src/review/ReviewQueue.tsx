@@ -7,7 +7,7 @@ import { VerdictBar } from "@repo/ui/VerdictBar";
 import { Exit } from "effect";
 import { type KeyboardEvent, useLayoutEffect, useRef, useState } from "react";
 import { verdictAtom } from "../walkthrough/atoms";
-import { rowStatus, sinceLabel } from "../walkthrough/review";
+import { prStatus, rowStatus, sinceLabel } from "../walkthrough/review";
 import { ReviewOutcome } from "../walkthrough/ReviewOutcome";
 import { WriteWalkthroughButton } from "../walkthrough/WriteWalkthroughButton";
 import { reviewAtAtom } from "./atoms";
@@ -50,7 +50,8 @@ const entryDetail = (item: ReviewQueueItem) => {
 };
 
 // The Session's Walkthroughs in the review layout: each one's Sections, then its Unexplained
-// changes, listed on the left under the Walkthrough, and one item at a time on the right. `a`
+// changes, listed on the left under the Walkthrough, itself under its PR when the Session's work
+// lands as a Stack, bottom PR first, and one item at a time on the right. `a`
 // approves, `r` opens the note a Rejection needs, `j`/`k` move. After a verdict the view snaps to
 // the next item still waiting. `active` is false while the Session is out of sight.
 export function ReviewQueue({
@@ -140,14 +141,31 @@ export function ReviewQueue({
     const verdict = verdictOf(entry);
     const previous = queue[at - 1];
     const starts = previous?.walkthrough.id !== entry.walkthrough.id;
+    const pr = entry.walkthrough.pr;
+    const startsPr =
+      pr !== undefined && previous?.walkthrough.pr?.number !== pr.number;
     const status = rowStatus(entry.walkthrough);
+    const prState =
+      pr && prStatus(walkthroughs.filter((w) => w.pr?.number === pr.number));
     const heading = starts ? (
-      <ReviewHeading
-        title={`Walkthrough ${entry.walkthrough.number}`}
-        status={status.status}
-        tone={status.tone}
-        hint={sinceLabel[entry.walkthrough.since]}
-      />
+      <>
+        {startsPr && prState && (
+          <ReviewHeading
+            title={`PR #${pr.number} · ${pr.title}`}
+            status={prState.status}
+            tone={prState.tone}
+            hint={pr.ticket === undefined ? undefined : `Ticket #${pr.ticket}`}
+            link={{ href: pr.url, label: `Open PR #${pr.number} on GitHub` }}
+          />
+        )}
+        <ReviewHeading
+          title={`Walkthrough ${entry.walkthrough.number}`}
+          status={status.status}
+          tone={status.tone}
+          hint={sinceLabel[entry.walkthrough.since]}
+          minor={pr !== undefined}
+        />
+      </>
     ) : entry.kind === "unexplained" && previous?.kind === "section" ? (
       <ReviewHeading title="Unexplained changes" minor />
     ) : undefined;

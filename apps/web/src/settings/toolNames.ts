@@ -5,4 +5,5 @@ export const TOOL_NAMES: Record<DeveloperTool, string> = {
   claude: "Claude Code",
   gh: "GitHub CLI",
   git: "Git",
+  "gh-stack": "GitHub Stacks",
 };

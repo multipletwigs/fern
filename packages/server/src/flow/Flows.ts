@@ -44,6 +44,7 @@ import { z } from "zod";
 import {
   IssueTracker,
   IssueTrackerError,
+  IssueTrackerTimeout,
   type TrackedIssue,
 } from "../issue/IssueTracker";
 import { Autonomy } from "../autonomy/Autonomy";
@@ -53,11 +54,7 @@ import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { Walkthroughs } from "../walkthrough/Walkthroughs";
 
-// How long Fern waits on the issue tracker when it checks a Phase's exit criteria.
-export const IssueTrackerTimeout = Context.Reference<Duration.Input>(
-  "@repo/server/flow/IssueTrackerTimeout",
-  { defaultValue: () => "15 seconds" },
-);
+export { IssueTrackerTimeout };
 
 const TITLES: Record<Phase, string> = {
   grill: "Grill",

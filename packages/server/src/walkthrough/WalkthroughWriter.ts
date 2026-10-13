@@ -108,6 +108,7 @@ const SINCE: Record<WalkthroughSince, string> = {
   previous: "since your previous Walkthrough",
   start: "since this Session started",
   head: "since the last commit (Fern didn't see this Session start)",
+  pr: "in one PR of this Session's Stack: one ticket's work, as it merged into this Session's branch",
 };
 
 const renderHunk = ({ id, path, header, lines }: DraftHunk) => {

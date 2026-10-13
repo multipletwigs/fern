@@ -57,12 +57,39 @@ export class SessionChanges extends Schema.Class<SessionChanges>(
   files: Schema.Array(ChangedFile),
 }) {}
 
+// How Fern treats one Project, as the developer set it in Settings.
+export class ProjectSettings extends Schema.Class<ProjectSettings>(
+  "ProjectSettings",
+)({
+  root: Schema.String,
+  // Whether Hosted Sessions land as a GitHub Stack, one draft PR per ticket, when the Project's
+  // `origin` is on GitHub and `gh` is ready. On unless the developer opted out; off, work lands as
+  // it did before Stacks.
+  stacks: Schema.Boolean,
+}) {}
+
 export class ProjectsApi extends HttpApiGroup.make("projects")
   .add(
     // The slash commands Claude Code offers in the folder.
     HttpApiEndpoint.get("commands", "/commands", {
       query: { root: Schema.NonEmptyString },
       success: Schema.Array(SlashCommand),
+      error: [ProjectNotFound, WorkspaceError],
+    }),
+  )
+  .add(
+    // The Project's settings; the defaults until the developer changes one.
+    HttpApiEndpoint.get("settings", "/settings", {
+      query: { root: Schema.NonEmptyString },
+      success: ProjectSettings,
+      error: [ProjectNotFound, WorkspaceError],
+    }),
+  )
+  .add(
+    // Changes the Project's settings, for Sessions started or reported from then on.
+    HttpApiEndpoint.put("saveSettings", "/settings", {
+      payload: Schema.Struct(ProjectSettings.fields),
+      success: ProjectSettings,
       error: [ProjectNotFound, WorkspaceError],
     }),
   )

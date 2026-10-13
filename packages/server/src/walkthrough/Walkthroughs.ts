@@ -3,6 +3,7 @@ import {
   CitedDecision,
   Hunk,
   NothingToReview,
+  PullRequest,
   ReviewClosed,
   ReviewItemNotFound,
   RiskLevel,
@@ -45,7 +46,9 @@ import {
 import { sdk } from "../agentSdk";
 import { Autonomy } from "../autonomy/Autonomy";
 import type { GitError } from "../git/Git";
+import type { PatchHunk } from "../snapshot/patch";
 import { Snapshots, walkthroughRef } from "../snapshot/Snapshots";
+import { StackEligibility } from "../stack/StackEligibility";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { settle, unclaimedHunks } from "./coverage";
@@ -66,6 +69,7 @@ const WalkthroughRow = Schema.Struct({
   status: WalkthroughStatus,
   error: Schema.NullOr(Schema.String),
   since: WalkthroughSince,
+  prId: Schema.NullOr(Schema.String),
   headTree: Schema.String,
   overlapping: Schema.fromJsonString(Schema.Array(Schema.String)),
   createdAt: Schema.Finite,
@@ -138,13 +142,33 @@ const HunkRow = Schema.Struct({
 });
 type HunkRow = typeof HunkRow.Type;
 
+const PrRow = Schema.Struct({
+  id: Schema.String,
+  number: Schema.Int,
+  url: Schema.String,
+  title: Schema.String,
+  position: Schema.Int,
+  ticket: Schema.NullOr(Schema.Int),
+});
+type PrRow = typeof PrRow.Type;
+
 interface SessionRows {
   readonly walkthroughs: ReadonlyArray<WalkthroughRow>;
   readonly sections: ReadonlyArray<SectionRow>;
   readonly hunks: ReadonlyArray<HunkRow>;
+  readonly prs: ReadonlyArray<PrRow>;
   // The Decisions the Sections cite.
   readonly decisions: ReadonlyArray<DecisionRow>;
 }
+
+const toPullRequest = (row: PrRow) =>
+  PullRequest.make({
+    number: row.number,
+    url: row.url,
+    title: row.title,
+    position: row.position,
+    ticket: row.ticket ?? undefined,
+  });
 
 const key = (walkthroughId: string, id: string) => `${walkthroughId}/${id}`;
 
@@ -188,6 +212,7 @@ const itemTitles = ({ sections, hunks }: SessionRows) =>
 const assemble = (rows: SessionRows): ReadonlyArray<Walkthrough> => {
   const titles = itemTitles(rows);
   const numbers = new Map(rows.walkthroughs.map((w) => [w.id, w.number]));
+  const prs = new Map(rows.prs.map((pr) => [pr.id, toPullRequest(pr)]));
   const decisions = new Map(
     rows.decisions.map((d) => [d.id, toCitedDecision(d)]),
   );
@@ -201,6 +226,7 @@ const assemble = (rows: SessionRows): ReadonlyArray<Walkthrough> => {
       status: w.status,
       error: w.error ?? undefined,
       since: w.since,
+      pr: w.prId === null ? undefined : prs.get(w.prId),
       createdAt: DateTime.makeUnsafe(w.createdAt),
       overlapping: w.overlapping,
       sections: rows.sections
@@ -317,6 +343,44 @@ export const redirectMessage = (
     : `I reviewed Walkthrough ${number} and rejected part of it:\n\n${lines.join("\n")}\n\nPlease address these.`;
 };
 
+// What the Fork is asked to explain, numbered, the Rejections it may say it fixes, and the
+// Project's Decisions it may cite.
+const requestOf = (
+  sessionId: string,
+  cwd: string,
+  since: WalkthroughSince,
+  patch: ReadonlyArray<PatchHunk>,
+  rows: SessionRows,
+  decisions: ReadonlyArray<DecisionRow>,
+) => {
+  const hunks = patch.map((hunk, index) => ({
+    ...hunk,
+    id: `h${index + 1}`,
+  }));
+  const rejections = openRejections(rows);
+  return {
+    hunks,
+    rejections,
+    request: {
+      sessionId,
+      cwd,
+      since,
+      hunks,
+      rejections: rejections.map((r) => ({
+        id: r.id,
+        title: r.title,
+        note: r.note,
+      })),
+      decisions: decisions.map((d, index): DraftDecision => ({
+        id: `d${index + 1}`,
+        decisionId: d.id,
+        question: d.question,
+        answer: answerOf(d),
+      })),
+    },
+  };
+};
+
 const gitFailed = (error: GitError) =>
   new WalkthroughError({ message: error.message });
 
@@ -355,6 +419,18 @@ export class Walkthroughs extends Context.Service<
       | WalkthroughInProgress
       | WalkthroughError
     >;
+    // Starts writing the Walkthrough of one PR of the Session's Stack: the change from the commit
+    // `from` to the commit `to`. Fern writes a Session's Walkthroughs one at a time, so it waits its
+    // turn behind any being written; until then it shows as being written.
+    writePr(
+      sessionId: string,
+      pr: {
+        readonly id: string;
+        readonly cwd: string;
+        readonly from: string;
+        readonly to: string;
+      },
+    ): Effect.Effect<void, NothingToReview | WalkthroughError>;
     verdict(
       walkthroughId: string,
       item: string,
@@ -385,14 +461,36 @@ export class Walkthroughs extends Context.Service<
       const turns = yield* Turns;
       const writer = yield* WalkthroughWriter;
       const autonomy = yield* Autonomy;
+      const stacks = yield* StackEligibility;
       const hosted = yield* HostedSessions;
       // Bumped after every write, so open lists reload.
       const version = yield* SubscriptionRef.make(0);
       const bump = SubscriptionRef.update(version, (n) => n + 1);
       const record = (update: SqlStatement.Statement<unknown>) =>
         update.pipe(Effect.orDie, Effect.andThen(bump));
-      // Sessions with a Walkthrough being written.
-      const writing = new Set<string>();
+      // How many Walkthroughs of each Session are being written or waiting to be.
+      const writing = new Map<string, number>();
+      const started = (sessionId: string) =>
+        Effect.sync(() =>
+          writing.set(sessionId, (writing.get(sessionId) ?? 0) + 1),
+        );
+      const done = (sessionId: string) =>
+        Effect.sync(() => {
+          const left = (writing.get(sessionId) ?? 1) - 1;
+          if (left > 0) writing.set(sessionId, left);
+          else writing.delete(sessionId);
+        });
+      // Each Session's Forks write one at a time, so a PR's Walkthrough waits for the one below.
+      const queues = new Map<string, Semaphore.Semaphore>();
+      const queueOf = (sessionId: string) =>
+        Effect.gen(function* () {
+          const found = queues.get(sessionId);
+          if (found) return found;
+          const made = yield* Semaphore.make(1);
+          queues.set(sessionId, made);
+          return made;
+        });
+      // Keyed by Walkthrough, so starting one never interrupts another.
       const forks = yield* FiberMap.make<string>();
       // Verdicts one at a time, so the last one sends the Redirect exactly once.
       const reviewing = yield* Semaphore.make(1);
@@ -421,6 +519,13 @@ export class Walkthroughs extends Context.Service<
           WHERE w.session_id = ${sessionId}
           ORDER BY h.position`,
       });
+      const prsOf = SqlSchema.findAll({
+        Request: Schema.String,
+        Result: PrRow,
+        execute: (sessionId) => sql`
+          SELECT id, number, url, title, position, ticket FROM stack_prs
+          WHERE session_id = ${sessionId} ORDER BY position`,
+      });
       const sessionOf = SqlSchema.findOneOption({
         Request: Schema.String,
         Result: Schema.Struct({ sessionId: Schema.String }),
@@ -446,6 +551,16 @@ export class Walkthroughs extends Context.Service<
           WHERE d.project = ${project}
           ORDER BY d.decided_at, r.posted_at, d.rowid`,
       });
+      // Decisions belong to the Project, so Sections can cite ones from earlier Sessions. A Session
+      // Fern didn't start belongs to its repository's Project.
+      const citable = (sessionId: string, repo: string) =>
+        hosted
+          .projectOf(sessionId)
+          .pipe(
+            Effect.flatMap((project) =>
+              decisionsOfProject(project ?? repo).pipe(Effect.orDie),
+            ),
+          );
 
       const load = (sessionId: string) =>
         Effect.gen(function* () {
@@ -453,6 +568,7 @@ export class Walkthroughs extends Context.Service<
             walkthroughs: walkthroughsOf(sessionId),
             sections: sectionsOf(sessionId),
             hunks: hunksOf(sessionId),
+            prs: prsOf(sessionId),
           });
           const cited = [
             ...new Set(rows.sections.flatMap((s) => s.decisions ?? [])),
@@ -525,7 +641,7 @@ export class Walkthroughs extends Context.Service<
         >,
       ) => {
         const ids = request.hunks.map((hunk) => hunk.id);
-        return Effect.gen(function* () {
+        const write = Effect.gen(function* () {
           const fork = yield* writer.write(request);
           let draft = fork.draft;
           const unclaimed = unclaimedHunks(draft, ids);
@@ -551,13 +667,58 @@ export class Walkthroughs extends Context.Service<
               ),
           }),
           Effect.catch((error) => fail(walkthroughId, error.message)),
-          Effect.ensuring(
-            Effect.sync(() => writing.delete(request.sessionId)).pipe(
-              Effect.andThen(bump),
-            ),
-          ),
+        );
+        return queueOf(request.sessionId).pipe(
+          Effect.flatMap((queue) => queue.withPermits(1)(write)),
+          Effect.ensuring(done(request.sessionId).pipe(Effect.andThen(bump))),
         );
       };
+
+      // Stores the Walkthrough's row and its hunks, being written.
+      const insert = (
+        walkthrough: {
+          readonly id: string;
+          readonly sessionId: string;
+          readonly repo: string;
+          readonly since: WalkthroughSince;
+          readonly prId: string | null;
+          readonly baseTree: string;
+          readonly headCommit: string;
+          readonly headTree: string;
+          readonly overlapping: ReadonlyArray<string>;
+        },
+        hunks: ReadonlyArray<PatchHunk & { readonly id: string }>,
+      ) =>
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                const [last] = yield* sql<{ number: number }>`
+                  SELECT MAX(number) AS number FROM walkthroughs
+                  WHERE session_id = ${walkthrough.sessionId}`;
+                yield* sql`INSERT INTO walkthroughs ${sql.insert({
+                  ...walkthrough,
+                  number: (last?.number ?? 0) + 1,
+                  status: "writing",
+                  overlapping: JSON.stringify(walkthrough.overlapping),
+                  createdAt: now,
+                })}`;
+                for (const [position, hunk] of hunks.entries())
+                  yield* sql`INSERT INTO walkthrough_hunks ${sql.insert({
+                    walkthroughId: walkthrough.id,
+                    id: hunk.id,
+                    position,
+                    path: hunk.path,
+                    header: hunk.header,
+                    lines: JSON.stringify(hunk.lines),
+                    added: hunk.added,
+                    removed: hunk.removed,
+                  })}`;
+              }),
+            )
+            .pipe(Effect.orDie);
+        });
 
       const prepare = Effect.fn("Walkthroughs.prepare")(function* (
         sessionId: string,
@@ -629,86 +790,127 @@ export class Walkthroughs extends Context.Service<
           base.at === undefined
             ? []
             : yield* turns.overlapping(repo, base.at, sessionId);
-        const now = yield* Clock.currentTimeMillis;
-        const hunks = patch.map((hunk, index) => ({
-          ...hunk,
-          id: `h${index + 1}`,
-        }));
-
-        yield* sql
-          .withTransaction(
-            Effect.gen(function* () {
-              yield* sql`INSERT INTO walkthroughs ${sql.insert({
-                id,
-                sessionId,
-                repo,
-                number: (rows.walkthroughs.at(-1)?.number ?? 0) + 1,
-                status: "writing",
-                since: base.since,
-                baseTree: base.tree,
-                headCommit: head.commit,
-                headTree: head.tree,
-                overlapping: JSON.stringify(overlapping),
-                createdAt: now,
-              })}`;
-              for (const [position, hunk] of hunks.entries())
-                yield* sql`INSERT INTO walkthrough_hunks ${sql.insert({
-                  walkthroughId: id,
-                  id: hunk.id,
-                  position,
-                  path: hunk.path,
-                  header: hunk.header,
-                  lines: JSON.stringify(hunk.lines),
-                  added: hunk.added,
-                  removed: hunk.removed,
-                })}`;
-            }),
-          )
-          .pipe(Effect.orDie);
-
-        const rejections = openRejections(rows);
-        // Decisions belong to the Project, so Sections can cite ones from earlier Sessions. A
-        // Session Fern didn't start belongs to its repository's Project.
-        const project = (yield* hosted.projectOf(sessionId)) ?? repo;
-        const decisions = yield* decisionsOfProject(project).pipe(Effect.orDie);
-        return {
-          id,
-          rejections,
-          request: {
+        const prepared = requestOf(
+          sessionId,
+          cwd,
+          base.since,
+          patch,
+          rows,
+          yield* citable(sessionId, repo),
+        );
+        yield* insert(
+          {
+            id,
             sessionId,
-            cwd,
+            repo,
             since: base.since,
-            hunks,
-            rejections: rejections.map((r) => ({
-              id: r.id,
-              title: r.title,
-              note: r.note,
-            })),
-            decisions: decisions.map((d, index) => ({
-              id: `d${index + 1}`,
-              decisionId: d.id,
-              question: d.question,
-              answer: answerOf(d),
-            })),
+            prId: null,
+            baseTree: base.tree,
+            headCommit: head.commit,
+            headTree: head.tree,
+            overlapping,
           },
-        };
+          prepared.hunks,
+        );
+        return { id, ...prepared };
       });
+
+      // Starts the Fork on what `prepare` stored, behind any of the Session's being written.
+      const start = (prepared: {
+        readonly id: string;
+        readonly request: Parameters<typeof writer.write>[0];
+        readonly rejections: ReturnType<typeof openRejections>;
+      }) =>
+        bump.pipe(
+          Effect.andThen(
+            FiberMap.run(
+              forks,
+              prepared.id,
+              compose(prepared.id, prepared.request, prepared.rejections),
+            ),
+          ),
+          Effect.asVoid,
+        );
 
       const write = Effect.fn("Walkthroughs.write")(function* (
         sessionId: string,
       ) {
         if (writing.has(sessionId))
           return yield* new WalkthroughInProgress({ sessionId });
-        writing.add(sessionId);
+        yield* started(sessionId);
         const prepared = yield* prepare(sessionId).pipe(
-          Effect.onError(() => Effect.sync(() => writing.delete(sessionId))),
+          Effect.onError(() => done(sessionId)),
         );
-        yield* bump;
-        return yield* FiberMap.run(
-          forks,
+        return yield* start(prepared);
+      });
+
+      // A PR's change is between two commits Fern already has, so there's no snapshot to take and
+      // nothing from other Sessions to tell apart.
+      const preparePr = Effect.fn("Walkthroughs.preparePr")(function* (
+        sessionId: string,
+        pr: {
+          readonly id: string;
+          readonly cwd: string;
+          readonly from: string;
+          readonly to: string;
+        },
+      ) {
+        const repo = yield* snapshots
+          .repo(pr.cwd)
+          .pipe(Effect.mapError(gitFailed));
+        const [baseTree, headTree] = yield* Effect.all([
+          snapshots.treeOf(repo, pr.from),
+          snapshots.treeOf(repo, pr.to),
+        ]).pipe(Effect.mapError(gitFailed));
+        const patch = yield* snapshots
+          .diff(repo, pr.from, pr.to)
+          .pipe(Effect.mapError(gitFailed));
+        if (patch.length === 0)
+          return yield* new NothingToReview({ sessionId });
+        const id = crypto.randomUUID();
+        yield* snapshots
+          .pin(repo, walkthroughRef(id), pr.to)
+          .pipe(Effect.mapError(gitFailed));
+        const rows = yield* load(sessionId);
+        const prepared = requestOf(
           sessionId,
-          compose(prepared.id, prepared.request, prepared.rejections),
-        ).pipe(Effect.asVoid);
+          pr.cwd,
+          "pr",
+          patch,
+          rows,
+          yield* citable(sessionId, repo),
+        );
+        yield* insert(
+          {
+            id,
+            sessionId,
+            repo,
+            since: "pr",
+            prId: pr.id,
+            baseTree,
+            headCommit: pr.to,
+            headTree,
+            overlapping: [],
+          },
+          prepared.hunks,
+        );
+        return { id, ...prepared };
+      });
+
+      const writePr = Effect.fn("Walkthroughs.writePr")(function* (
+        sessionId: string,
+        pr: {
+          readonly id: string;
+          readonly cwd: string;
+          readonly from: string;
+          readonly to: string;
+        },
+      ) {
+        yield* started(sessionId);
+        const prepared = yield* preparePr(sessionId, pr).pipe(
+          Effect.onError(() => done(sessionId)),
+        );
+        yield* start(prepared);
       });
 
       // Sends the Walkthrough's Rejection notes to the Session and records how that went.
@@ -833,10 +1035,14 @@ export class Walkthroughs extends Context.Service<
         return yield* sendRedirect(walkthroughId, sessionId);
       });
 
-      // Fern writes a Walkthrough whenever a turn it ran finishes on its own.
+      // Fern writes a Walkthrough whenever a turn it ran finishes on its own, except where the
+      // Session's work lands as a Stack: there each PR gets its own, as its ticket lands.
       yield* turns.finished.pipe(
         Stream.runForEach(({ id }) =>
-          write(id).pipe(
+          Effect.when(
+            write(id),
+            stacks.applies(id).pipe(Effect.map((applies) => !applies)),
+          ).pipe(
             Effect.catchTags({
               NothingToReview: () => Effect.void,
               WalkthroughInProgress: () => Effect.void,
@@ -852,7 +1058,7 @@ export class Walkthroughs extends Context.Service<
         Effect.forkScoped,
       );
 
-      return Walkthroughs.of({ list, write, verdict, redirect });
+      return Walkthroughs.of({ list, write, writePr, verdict, redirect });
     }),
   );
 }

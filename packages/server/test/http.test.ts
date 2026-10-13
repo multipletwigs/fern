@@ -7,6 +7,7 @@ import { HandlersNoDeps } from "../src/http";
 import { Turns } from "../src/turn/Turns";
 import {
   UnusedCommands,
+  UnusedProjectSettings,
   UnusedAutonomy,
   UnusedFlows,
   UnusedRounds,
@@ -29,6 +30,7 @@ const Unused = Layer.mergeAll(
   UnusedFlows,
   Layer.succeed(Turns, unusedTurns),
   UnusedCommands,
+  UnusedProjectSettings,
   UnusedWorkspace,
   UnusedWalkthroughs,
   UnusedWorktreeCleanup,

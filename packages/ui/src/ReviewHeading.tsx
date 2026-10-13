@@ -1,19 +1,23 @@
+import { ArrowUpRightIcon } from "@phosphor-icons/react";
 import { clsx } from "clsx";
 import type { WalkthroughTone } from "./WalkthroughRow";
 
 // A heading over the entries of a review layout's list that belong together, such as a
-// Walkthrough's, with where they stand and, on hover, a `hint`. A `minor` one splits a group, as before a Walkthrough's
+// Walkthrough's or a PR's, with where they stand, on hover, a `hint`, and a `link` out, such as to
+// the PR on GitHub. A `minor` one splits a group, as before a Walkthrough's
 // Unexplained changes. In a narrow layout it folds to a rule between the marks.
 export function ReviewHeading({
   title,
   status,
   tone = "muted",
   hint,
+  link,
   minor = false,
 }: {
   title: string;
   status?: string;
   hint?: string;
+  link?: { readonly href: string; readonly label: string };
   tone?: WalkthroughTone;
   minor?: boolean;
 }) {
@@ -41,6 +45,18 @@ export function ReviewHeading({
         >
           {title}
         </span>
+        {link && (
+          <a
+            href={link.href}
+            target="_blank"
+            rel="noreferrer"
+            title={link.label}
+            aria-label={link.label}
+            className="shrink-0 self-center text-muted transition-colors hover:text-ice"
+          >
+            <ArrowUpRightIcon className="size-3" />
+          </a>
+        )}
         {status && (
           <span
             className={clsx(

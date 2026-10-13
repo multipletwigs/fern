@@ -241,9 +241,38 @@ const migrations = {
       )
     `;
   }),
+  // A Hosted Session's Stack (ADR 0009): the draft PR Fern opened for each ticket that landed on
+  // the Session's branch, bottom first, and the Walkthrough of each. Plus each Project's settings,
+  // such as opting out of Stacks; a Project with no row has the defaults.
+  "0014_stacks": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE stack_prs (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        ticket INTEGER,
+        title TEXT NOT NULL,
+        merge_commit TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        base TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        url TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE (session_id, position)
+      )
+    `;
+    yield* sql`ALTER TABLE walkthroughs ADD COLUMN pr_id TEXT REFERENCES stack_prs (id)`;
+    yield* sql`
+      CREATE TABLE project_settings (
+        project TEXT PRIMARY KEY,
+        stacks INTEGER NOT NULL
+      )
+    `;
+  }),
   // The Decisions each Section cites, as a JSON array of their ids, and its Risk. Both are NULL on
   // a Section written before Sections had them.
-  "0014_section_citations_and_risk": Effect.gen(function* () {
+  "0015_section_citations_and_risk": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE walkthrough_sections ADD COLUMN decisions TEXT`;
     yield* sql`ALTER TABLE walkthrough_sections ADD COLUMN risk TEXT`;

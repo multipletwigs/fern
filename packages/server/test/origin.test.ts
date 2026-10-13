@@ -10,6 +10,7 @@ import { Turns } from "../src/turn/Turns";
 import {
   UnusedAutonomy,
   UnusedCommands,
+  UnusedProjectSettings,
   UnusedFlows,
   UnusedRounds,
   UnusedSubagents,
@@ -33,6 +34,7 @@ const Unused = Layer.mergeAll(
   UnusedFlows,
   Layer.succeed(Turns, unusedTurns),
   UnusedCommands,
+  UnusedProjectSettings,
   UnusedWorkspace,
   UnusedWalkthroughs,
   UnusedWorktreeCleanup,

@@ -3,7 +3,9 @@ import { Autonomy } from "../src/autonomy/Autonomy";
 import { Commands } from "../src/commands/Commands";
 import { Flows } from "../src/flow/Flows";
 import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
+import { ProjectSettings } from "../src/project/ProjectSettings";
 import { Rounds } from "../src/round/Rounds";
+import { StackEligibility } from "../src/stack/StackEligibility";
 import { Subagents } from "../src/subagent/Subagents";
 import { Terminals } from "../src/terminal/Terminals";
 import { Tools } from "../src/tools/Tools";
@@ -63,6 +65,15 @@ export const UnusedCommands = Layer.succeed(
   Commands.of({ list: () => Effect.die("unused") }),
 );
 
+export const UnusedProjectSettings = Layer.succeed(
+  ProjectSettings,
+  ProjectSettings.of({
+    of: () => Effect.die("unused"),
+    get: () => Effect.die("unused"),
+    save: () => Effect.die("unused"),
+  }),
+);
+
 export const UnusedWorkspace = Layer.succeed(
   Workspace,
   Workspace.of({
@@ -77,9 +88,16 @@ export const UnusedWalkthroughs = Layer.succeed(
   Walkthroughs.of({
     list: () => Stream.die("unused"),
     write: () => Effect.die("unused"),
+    writePr: () => Effect.die("unused"),
     verdict: () => Effect.die("unused"),
     redirect: () => Effect.die("unused"),
   }),
+);
+
+// No Session's work lands as a Stack.
+export const NoStacks = Layer.succeed(
+  StackEligibility,
+  StackEligibility.of({ applies: () => Effect.succeed(false) }),
 );
 
 // Somewhere no worktree can be made.

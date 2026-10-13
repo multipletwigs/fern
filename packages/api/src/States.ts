@@ -143,8 +143,14 @@ export type GhIssueState = typeof GhIssueState.Type;
 // The developer's tools
 
 // The tools Fern runs on that the developer installs and signs in to themselves: Claude Code, the
-// GitHub CLI and git, in the order Settings lists them.
-export const DeveloperTool = Schema.Literals(["claude", "gh", "git"]);
+// GitHub CLI, git, and the GitHub CLI's gh-stack extension, which puts a Hosted Session's work up
+// as a Stack, in the order Settings lists them.
+export const DeveloperTool = Schema.Literals([
+  "claude",
+  "gh",
+  "git",
+  "gh-stack",
+]);
 export type DeveloperTool = typeof DeveloperTool.Type;
 
 // Where one of those tools stands: installed and usable; installed but not usable yet, as `gh`
