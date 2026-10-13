@@ -1,6 +1,6 @@
-import { assert, layer } from "@effect/vitest";
-import { FernApi, LiveRpcs, type Walkthrough } from "@repo/api";
-import { Deferred, Effect, Layer, Schedule, Stream } from "effect";
+import { assert, it as test, layer } from "@effect/vitest";
+import { FernApi, type Flow, LiveRpcs, type Walkthrough } from "@repo/api";
+import { Deferred, Effect, Layer, Option, Schedule, Stream } from "effect";
 import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { RpcTest } from "effect/rpc";
@@ -12,12 +12,12 @@ import { vi } from "vitest";
 import { CodeHost } from "../src/codehost/CodeHost";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
+import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
 import {
   WalkthroughWriter,
   type WriteRequest,
 } from "../src/walkthrough/WalkthroughWriter";
 import { WorktreesDir } from "../src/worktree/Worktrees";
-import { FakeIssues } from "./stubs";
 
 const git = (cwd: string, ...args: Array<string>) =>
   execFileSync(
@@ -88,6 +88,37 @@ const land = (cwd: string, ticket: number, files: Record<string, string>) => {
   return git(cwd, "rev-parse", "HEAD");
 };
 
+// The issue tracker, faked: the Brief #2 and its tickets #3 and #4, all still open, as they stay
+// until the Stack lands.
+const issue = (number: number, title: string): TrackedIssue => ({
+  number,
+  title,
+  url: `https://github.com/acme/app/issues/${number}`,
+  state: "open",
+});
+const ISSUES = new Map([
+  [2, issue(2, "Dark mode")],
+  [3, issue(3, "Add the theme setting")],
+  [4, issue(4, "Toggle in the settings page")],
+]);
+const Issues = Layer.succeed(
+  IssueTracker,
+  IssueTracker.of({
+    issue: (_cwd, number) =>
+      Effect.succeed(Option.fromNullishOr(ISSUES.get(number))),
+  }),
+);
+
+// What the agent commits on the Session's branch itself, outside any ticket: a fix, or the Setup
+// change from accepted Findings. The commit's hash.
+const commit = (cwd: string, files: Record<string, string>) => {
+  for (const [path, content] of Object.entries(files))
+    writeFileSync(join(cwd, path), content);
+  git(cwd, "add", "-A");
+  git(cwd, "commit", "-q", "-m", "On the Session's branch");
+  return git(cwd, "rev-parse", "HEAD");
+};
+
 // The code host, faked: what Fern asked it, in order, by the folder it asked from. While
 // `signedOut`, `gh` isn't ready.
 interface Asked {
@@ -125,8 +156,8 @@ const FakeCodeHost = Layer.succeed(
   }),
 );
 
-// The Walkthrough writer, faked: it claims every hunk but those in `stray.ts`, in one Section, once
-// `gate` (if a test set one) opens.
+// The Walkthrough writer, faked: it claims every hunk but those in `stray.ts`, in one Section that
+// says it fixes the first open Rejection, if any, once `gate` (if a test set one) opens.
 const requests: Array<WriteRequest> = [];
 let gate: Deferred.Deferred<void> | undefined;
 const Writer = Layer.succeed(
@@ -144,6 +175,7 @@ const Writer = Layer.succeed(
               hunks: request.hunks
                 .filter((h) => h.path !== "stray.ts")
                 .map((h) => h.id),
+              fixes: request.rejections[0]?.id,
             },
           ],
           notFromSession: [],
@@ -175,6 +207,7 @@ interface TurnOptions {
 // Each turn Claude Code is asked to run, and how to end it.
 interface StartedTurn {
   readonly sessionId: string | undefined;
+  readonly text: string;
   readonly options: TurnOptions;
   readonly finish: () => void;
 }
@@ -190,24 +223,40 @@ vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => {
       const { promise: ended, resolve: finish } = Promise.withResolvers<void>();
       if (first && options.sessionId)
         transcript(options.cwd, options.sessionId, text, "sdk-ts");
-      started.push({ sessionId, options, finish });
+      started.push({ sessionId, text, options, finish });
       return ended;
     }),
   };
 });
 
-const makeClient = HttpApiTest.groups(FernApi, ["sessions", "projects"]);
+const makeClient = HttpApiTest.groups(FernApi, [
+  "sessions",
+  "projects",
+  "flows",
+  "walkthroughs",
+]);
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
-const fern = Layer.mergeAll(
-  handlersWith(Writer, FakeIssues, FakeCodeHost).pipe(
-    Layer.provide([
-      DatabaseLive(join(dataDir, "fern.db")),
-      Layer.succeed(WorktreesDir, { dir: dataDir }),
-    ]),
-  ),
-  HttpServer.layerServices,
-);
+// Fern's API on a database file, as the app runs it.
+const fernOn = (database: string) =>
+  Layer.mergeAll(
+    handlersWith(Writer, Issues, FakeCodeHost).pipe(
+      Layer.provide([
+        DatabaseLive(database),
+        Layer.succeed(WorktreesDir, { dir: dataDir }),
+      ]),
+    ),
+    HttpServer.layerServices,
+  );
+const fern = fernOn(join(dataDir, "fern.db"));
+// Runs the effect against its own Fern on the database, shut down after: one run of Fern.
+const runOn =
+  (database: string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const context = yield* Layer.build(fernOn(database));
+      return yield* effect.pipe(Effect.provideContext(context));
+    }).pipe(Effect.scoped);
 
 // A new Session in the Project, and its first turn once it starts.
 const startIn = (root: string) =>
@@ -239,6 +288,8 @@ const callTool = (turn: StartedTurn, name: string, args: unknown) =>
   });
 const textOf = (result: ToolResult) =>
   result.content.map((c) => c.text).join("");
+// The steering the turn ran with.
+const told = (turn: StartedTurn) => turn.options.systemPrompt?.append ?? "";
 
 // The Session's Walkthroughs once they satisfy the condition.
 const walkthroughsWhen = (
@@ -263,6 +314,72 @@ const paths = (w: Walkthrough | undefined) => ({
   sections: w?.sections.flatMap((s) => s.hunks.map((h) => h.path)),
   unexplained: w?.unexplained.map((u) => u.hunk.path),
 });
+
+// The Session's turn on the first message Fern sent it that satisfies the predicate.
+const turnWhere = (id: string, predicate: (text: string) => boolean) =>
+  Effect.suspend(() =>
+    Effect.fromNullishOr(
+      started.find((t) => t.sessionId === id && predicate(t.text)),
+    ),
+  ).pipe(
+    Effect.retry({ schedule: Schedule.spaced("5 millis"), times: 400 }),
+    Effect.orDie,
+  );
+
+// The Session's Flow once it satisfies the condition.
+const flowWhen = (id: string, condition: (flow: Flow | null) => boolean) =>
+  Effect.gen(function* () {
+    const live = yield* makeLive;
+    const [flow] = yield* live
+      .Flow({ session: id })
+      .pipe(
+        Stream.filter(condition),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.timeout("5 seconds"),
+        Effect.orDie,
+      );
+    return flow;
+  });
+
+// The agent reports the Phase done in the turn, then ends the turn; the developer approves the
+// Checkpoint Fern raises.
+const doneAndApproved = (
+  id: string,
+  turn: StartedTurn,
+  phase: string,
+  extra: Record<string, unknown> = {},
+) =>
+  Effect.gen(function* () {
+    yield* callTool(turn, "phase_done", {
+      phase,
+      summary: `${phase} done.`,
+      ...extra,
+    });
+    turn.finish();
+    const flow = yield* flowWhen(id, (f) => f?.checkpoint?.phase === phase);
+    const client = yield* makeClient;
+    yield* client.flows.approve({ params: { id: flow?.checkpoint?.id ?? "" } });
+  });
+
+// A new Session in a GitHub Project, taken through Grill and Spec (the Brief #2, its tickets #3
+// and #4), and its turn on `/implement-spec`.
+const implementing = (root = project()) =>
+  Effect.gen(function* () {
+    const { id, turn, cwd } = yield* startIn(root);
+    yield* doneAndApproved(id, turn, "grill");
+    (yield* turnWhere(id, (text) => text === "/to-spec")).finish();
+    yield* doneAndApproved(
+      id,
+      yield* turnWhere(id, (text) => text === "/to-tickets"),
+      "spec",
+      { spec: { brief: 2, tickets: [3, 4] } },
+    );
+    const implement = yield* turnWhere(id, (text) =>
+      text.startsWith("/implement-spec"),
+    );
+    return { id, turn: implement, cwd };
+  });
 
 layer(fern, { excludeTestServices: true })("Stacks", (it) => {
   it.effect(
@@ -548,4 +665,285 @@ layer(fern, { excludeTestServices: true })("Stacks", (it) => {
       assert.strictEqual(error._tag, "ProjectNotFound");
     }),
   );
+
+  it.effect(
+    "Implement is done once every ticket has its PR, open on the tracker or not: until then the agent hears which ones have none",
+    () =>
+      Effect.gen(function* () {
+        const { id, turn, cwd } = yield* implementing();
+        yield* callTool(turn, "ticket_landed", {
+          ticket: 3,
+          commit: land(cwd, 3, { "theme.ts": "export const theme = 1;\n" }),
+        });
+        const early = yield* callTool(turn, "phase_done", {
+          phase: "implement",
+          summary: "Built it.",
+        });
+        const before = yield* flowWhen(id, () => true);
+
+        yield* callTool(turn, "ticket_landed", {
+          ticket: 4,
+          commit: land(cwd, 4, { "toggle.ts": "export const toggle = 1;\n" }),
+        });
+        // Work in progress no ticket landed is in no PR, and gets no Walkthrough of its own.
+        writeFileSync(join(cwd, "draft.ts"), "export {};\n");
+        const done = yield* callTool(turn, "phase_done", {
+          phase: "implement",
+          summary: "Built it.",
+        });
+        turn.finish();
+
+        assert.isTrue(early.isError);
+        assert.include(textOf(early), "#4 Toggle in the settings page");
+        assert.notInclude(textOf(early), "#3");
+        assert.isUndefined(before?.checkpoint);
+        assert.isNotTrue(done.isError, textOf(done));
+        const flow = yield* flowWhen(
+          id,
+          (f) => f?.checkpoint?.phase === "implement",
+        );
+        const all = yield* walkthroughsWhen(id, (ws) =>
+          ws.every((w) => w.status === "ready"),
+        );
+        assert.deepStrictEqual(
+          all.map((w) => [w.since, w.pr?.ticket]),
+          [
+            ["pr", 3],
+            ["pr", 4],
+          ],
+        );
+        assert.deepStrictEqual(flow?.checkpoint?.walkthrough, {
+          id: all[1]?.id ?? "",
+          number: 2,
+        });
+      }),
+  );
+
+  it.effect(
+    "a Stack Session is told Implement ends once every ticket has its PR, and a Session off GitHub that it ends once every ticket is closed",
+    () =>
+      Effect.gen(function* () {
+        const stacked = yield* startIn(project());
+        const plain = yield* startIn(project({ offGitHub: true }));
+        stacked.turn.finish();
+        plain.turn.finish();
+
+        assert.include(
+          told(stacked.turn),
+          "Implement is done once every one of those tickets has its PR in the Stack",
+        );
+        assert.notInclude(told(stacked.turn), "tickets is closed");
+        assert.include(
+          told(plain.turn),
+          "Implement is done only once every one of those tickets is closed",
+        );
+      }),
+  );
+
+  it.effect(
+    "a fix for a Rejection goes up as a new PR on top of the Stack, its Sections linked to the Rejection, and the Walkthrough below keeps its verdicts",
+    () =>
+      Effect.gen(function* () {
+        const { id, turn, cwd } = yield* startIn(project());
+        const branch = git(cwd, "branch", "--show-current");
+        yield* callTool(turn, "ticket_landed", {
+          ticket: 3,
+          commit: land(cwd, 3, { "theme.ts": "export const theme = 1;\n" }),
+        });
+        turn.finish();
+        const [reviewing] = yield* walkthroughsWhen(
+          id,
+          (ws) => ws[0]?.status === "ready",
+        );
+        const client = yield* makeClient;
+        yield* client.walkthroughs.verdict({
+          params: { id: reviewing?.id ?? "", item: "s1" },
+          payload: { kind: "rejected", note: "Follow the system theme too." },
+        });
+
+        const redirect = yield* turnWhere(id, (text) =>
+          text.includes("Follow the system theme too."),
+        );
+        const fix = commit(cwd, { "theme.ts": "export const theme = 2;\n" });
+        const answer = yield* callTool(redirect, "fix_landed", {
+          commit: fix,
+          title: "Follow the system theme",
+        });
+        redirect.finish();
+
+        assert.include(redirect.text, "fix_landed");
+        assert.isNotTrue(answer.isError, textOf(answer));
+        const calls = askedFrom(cwd);
+        const opened = calls.filter((a) => a.call === "openDraft");
+        assert.deepStrictEqual(
+          calls.filter((a) => a.call === "push").at(-1)?.args,
+          { commit: fix, branch: `fern/${branch}/fix1` },
+        );
+        assert.deepStrictEqual(
+          { ...opened.at(-1)?.args, body: "" },
+          {
+            head: `fern/${branch}/fix1`,
+            base: `fern/${branch}/t3`,
+            title: "Follow the system theme",
+            body: "",
+          },
+        );
+        assert.notInclude(String(opened.at(-1)?.args.body), "Closes");
+        assert.strictEqual(calls.at(-1)?.call, "link");
+
+        const all = yield* walkthroughsWhen(
+          id,
+          (ws) => ws.length === 2 && ws.every((w) => w.status === "ready"),
+        );
+        assert.deepStrictEqual(
+          all.map((w) => [w.pr?.position, w.pr?.ticket, w.pr?.title]),
+          [
+            [1, 3, "Add the theme setting"],
+            [2, undefined, "Follow the system theme"],
+          ],
+        );
+        assert.deepStrictEqual(paths(all[1]), {
+          sections: ["theme.ts"],
+          unexplained: [],
+        });
+        assert.deepStrictEqual(
+          all[1]?.sections.map((s) => s.fixes),
+          [{ walkthrough: 1, title: "The change" }],
+        );
+        assert.strictEqual(all[0]?.sections[0]?.verdict?.kind, "rejected");
+        assert.isDefined(all[0]?.reviewedAt);
+      }),
+  );
+
+  it.effect(
+    "once Retro ends, the commit with the accepted Findings goes up as the top PR of the Stack, with its own Walkthrough",
+    () =>
+      Effect.gen(function* () {
+        const { id, turn, cwd } = yield* implementing();
+        const branch = git(cwd, "branch", "--show-current");
+        yield* callTool(turn, "ticket_landed", {
+          ticket: 3,
+          commit: land(cwd, 3, { "theme.ts": "export const theme = 1;\n" }),
+        });
+        yield* callTool(turn, "ticket_landed", {
+          ticket: 4,
+          commit: land(cwd, 4, { "toggle.ts": "export const toggle = 1;\n" }),
+        });
+        yield* doneAndApproved(id, turn, "implement");
+
+        const retro = yield* turnWhere(id, (text) => text === "/retro");
+        const setup = commit(cwd, { "AGENTS.md": "Run the tests first.\n" });
+        const early = yield* callTool(retro, "findings_landed", {
+          commit: setup,
+        });
+        yield* callTool(retro, "phase_done", {
+          phase: "retro",
+          summary: "One Finding.",
+          findings: [
+            {
+              title: "Run the tests first",
+              change: "Say so in AGENTS.md",
+              reasoning: "The agent forgot twice.",
+            },
+          ],
+        });
+        retro.finish();
+        const flow = yield* flowWhen(
+          id,
+          (f) => f?.checkpoint?.phase === "retro",
+        );
+        const client = yield* makeClient;
+        yield* client.flows.findingVerdict({
+          params: { id: flow?.checkpoint?.findings?.[0]?.id ?? "" },
+          payload: { kind: "accepted" },
+        });
+
+        const accepted = yield* turnWhere(id, (text) =>
+          text.includes("accepted this Finding"),
+        );
+        const answer = yield* callTool(accepted, "findings_landed", {
+          commit: setup,
+        });
+        accepted.finish();
+
+        assert.isTrue(early.isError);
+        assert.include(textOf(early), "Retro");
+        assert.include(accepted.text, "findings_landed");
+        assert.isNotTrue(answer.isError, textOf(answer));
+        const opened = askedFrom(cwd).filter((a) => a.call === "openDraft");
+        assert.deepStrictEqual(
+          { ...opened.at(-1)?.args, body: "" },
+          {
+            head: `fern/${branch}/findings`,
+            base: `fern/${branch}/t4`,
+            title: "Setup changes from the Retro",
+            body: "",
+          },
+        );
+        const all = yield* walkthroughsWhen(
+          id,
+          (ws) => ws.length === 3 && ws.every((w) => w.status === "ready"),
+        );
+        assert.deepStrictEqual(
+          all.map((w) => [w.pr?.position, w.pr?.ticket]),
+          [
+            [1, 3],
+            [2, 4],
+            [3, undefined],
+          ],
+        );
+        assert.deepStrictEqual(paths(all[2]), {
+          sections: ["AGENTS.md"],
+          unexplained: [],
+        });
+      }),
+  );
 });
+
+test.live(
+  "a PR's Walkthrough Fern was writing when it stopped is written once it starts again, and the held Implement Checkpoint then links to it",
+  () =>
+    Effect.gen(function* () {
+      const database = join(mkdtempSync(join(tmpdir(), "fern-db-")), "fern.db");
+      // Fern stops while the Fork is still writing the top PR's Walkthrough.
+      gate = yield* Deferred.make<void>();
+      const id = yield* Effect.gen(function* () {
+        const { id: session, turn, cwd } = yield* implementing();
+        yield* callTool(turn, "ticket_landed", {
+          ticket: 3,
+          commit: land(cwd, 3, { "theme.ts": "export const theme = 1;\n" }),
+        });
+        yield* callTool(turn, "ticket_landed", {
+          ticket: 4,
+          commit: land(cwd, 4, { "toggle.ts": "export const toggle = 1;\n" }),
+        });
+        const held = yield* callTool(turn, "phase_done", {
+          phase: "implement",
+          summary: "Built it.",
+        });
+        turn.finish();
+        assert.include(textOf(held), "Walkthrough");
+        return session;
+      }).pipe(
+        runOn(database),
+        Effect.ensuring(Effect.sync(() => (gate = undefined))),
+      );
+
+      const { flow, all } = yield* Effect.all({
+        flow: flowWhen(id, (f) => f?.checkpoint?.phase === "implement"),
+        all: walkthroughsWhen(id, () => true),
+      }).pipe(runOn(database));
+      assert.deepStrictEqual(
+        all.map((w) => [w.pr?.ticket, w.status]),
+        [
+          [3, "ready"],
+          [4, "ready"],
+        ],
+      );
+      assert.deepStrictEqual(flow?.checkpoint?.walkthrough, {
+        id: all[1]?.id ?? "",
+        number: 2,
+      });
+    }),
+  20_000,
+);

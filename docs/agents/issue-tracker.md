@@ -16,10 +16,13 @@ Infer the repo from `git remote -v`; `gh` does this automatically when run insid
 
 ## Landing work
 
-Work lands on `main` without PRs:
+Work lands through Fern, as a Stack of draft PRs (ADR 0009):
 
-- After each ticket merges into the integration branch, push it to `main` as a fast-forward: `git push origin <branch>:main` (`origin` pushes over SSH). If the push is rejected, merge `origin/main` and push again. Never force-push.
-- Then close the ticket with a comment naming its commits: `gh issue close <n> --comment "..."`.
+- After each ticket merges into the integration branch, report the landed ticket to Fern with its `ticket_landed` tool: the ticket's number and the merge commit's full hash. Fern pushes the branch and opens the ticket's PR on top of the Stack. Never push to `main` or open PRs yourself.
+- Report a fix for the developer's Rejections with `fix_landed`, and the commit with the accepted Retro Findings with `findings_landed`. Each goes up as a new PR on top of the Stack.
+- Don't close tickets. Each PR closes its ticket when Fern lands the Stack.
+
+Outside a Hosted Session that lands as a Stack, where Fern gives no `ticket_landed` tool, fall back to landing on `main` without PRs: push each merged ticket to `main` as a fast-forward with `git push origin <branch>:main` (`origin` pushes over SSH), merging `origin/main` and pushing again if the push is rejected, and never force-pushing. Then close the ticket with a comment naming its commits: `gh issue close <n> --comment "..."`.
 
 ## Pull requests as a triage surface
 
