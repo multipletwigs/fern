@@ -61,6 +61,12 @@ export class WorktreeCleanup extends Context.Service<
           ),
         );
 
+      // A Session whose terminal was never opened has no shell to end.
+      const endShell = (id: string) =>
+        terminals
+          .kill(id)
+          .pipe(Effect.catchTag("TerminalError", () => Effect.void));
+
       const archive = Effect.fn("WorktreeCleanup.archive")(function* (
         id: string,
         { force }: { readonly force: boolean },
@@ -70,7 +76,7 @@ export class WorktreeCleanup extends Context.Service<
         if (!force && (yield* worktrees.isDirty(session.worktree)))
           return yield* new UncommittedChanges({ id });
         yield* turns.close(id);
-        yield* terminals.kill(id);
+        yield* endShell(id);
         yield* worktrees.remove(session.projectRoot, session.worktree, {
           force,
         });
@@ -100,7 +106,7 @@ export class WorktreeCleanup extends Context.Service<
               // Looked at last, right before the worktree goes: a turn may have started meanwhile.
               if ((yield* turns.running).includes(session.id)) return;
               yield* turns.close(session.id);
-              yield* terminals.kill(session.id);
+              yield* endShell(session.id);
               yield* worktrees.remove(session.projectRoot, session.worktree, {
                 force: false,
               });

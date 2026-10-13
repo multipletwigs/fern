@@ -8,6 +8,8 @@ import {
   TerminalExitScrollback,
   TerminalScrollback,
   TerminalShell,
+  TerminalViewerBacklog,
+  TerminalViewers,
   Terminals,
 } from "../src/terminal/Terminals";
 
@@ -224,6 +226,40 @@ layer(TestTerminals, { excludeTestServices: true })(
     );
 
     test.effect(
+      "refuses to type into, resize or end a shell a Session doesn't have",
+      () =>
+        Effect.gen(function* () {
+          const terminals = yield* Terminals;
+          const typed = yield* terminals
+            .write("session-none", "echo hi\r")
+            .pipe(Effect.flip);
+          const resized = yield* terminals
+            .resize("session-none", SIZE)
+            .pipe(Effect.flip);
+          const killed = yield* terminals
+            .kill("session-none")
+            .pipe(Effect.flip);
+          assert.deepStrictEqual(
+            [typed._tag, resized._tag, killed._tag],
+            ["TerminalError", "TerminalError", "TerminalError"],
+          );
+        }),
+    );
+
+    test.effect("refuses to type into a shell that has exited", () =>
+      Effect.gen(function* () {
+        const terminals = yield* Terminals;
+        const viewer = yield* watch(terminals, "session-over", folder());
+        yield* terminals.write("session-over", "exit 0\r");
+        yield* exitOf(viewer);
+        const typed = yield* terminals
+          .write("session-over", "echo hi\r")
+          .pipe(Effect.flip);
+        assert.strictEqual(typed._tag, "TerminalError");
+      }),
+    );
+
+    test.effect(
       "killing an exited shell lets the next viewer start a fresh one",
       () =>
         Effect.gen(function* () {
@@ -286,6 +322,74 @@ layer(
       assert.notInclude(replay, "line-1\r");
       assert.isAtMost(replay.length, 1000);
     }),
+  );
+});
+
+layer(
+  Terminals.layer.pipe(
+    Layer.provide([
+      Shell,
+      Layer.succeed(TerminalViewers, 2),
+      Layer.succeed(TerminalViewerBacklog, 3),
+    ]),
+  ),
+  { excludeTestServices: true },
+)("A Session's terminal with few viewers allowed", (test) => {
+  test.effect("turns away a viewer past the limit until one leaves", () =>
+    Effect.gen(function* () {
+      const terminals = yield* Terminals;
+      const root = folder();
+      const leaving = yield* Scope.make();
+      yield* watch(terminals, "session-crowd", root).pipe(
+        Scope.provide(leaving),
+      );
+      yield* watch(terminals, "session-crowd", root);
+
+      const turnedAway = yield* terminals
+        .open("session-crowd", root, SIZE)
+        .pipe(Stream.runDrain, Effect.flip);
+      assert.strictEqual(turnedAway._tag, "TerminalError");
+
+      yield* Scope.close(leaving, Exit.void);
+      const viewer = yield* watch(terminals, "session-crowd", root);
+      yield* terminals.write("session-crowd", "echo let-in\r");
+      yield* viewer.until("let-in\r");
+    }),
+  );
+
+  test.effect(
+    "sends a viewer that falls behind what the shell printed, in one replay, instead of all it missed",
+    () =>
+      Effect.gen(function* () {
+        const terminals = yield* Terminals;
+        const root = folder();
+        const watching = yield* watch(terminals, "session-stalled", root);
+        // A viewer that reads what it was sent at first, then stops reading.
+        const stalled = yield* Stream.toPull(
+          terminals.open("session-stalled", root, SIZE),
+        );
+        yield* stalled;
+
+        yield* terminals.write(
+          "session-stalled",
+          "for i in 1 2 3 4 5 6 7 8 9 10; do echo line-$i; sleep 0.02; done; echo all-done\r",
+        );
+        yield* watching.until("all-done\r");
+        yield* Effect.sleep("50 millis");
+
+        const waiting = yield* stalled;
+        assert.isAtMost(waiting.length, 3);
+        const resync = waiting.findLastIndex(
+          (e) => e._tag === "TerminalReplay",
+        );
+        assert.isAtLeast(resync, 0);
+        const shown = waiting
+          .slice(resync)
+          .flatMap((e) => (e._tag === "TerminalExit" ? [] : [e.data]))
+          .join("");
+        assert.include(shown, "line-1\r");
+        assert.include(shown, "all-done\r");
+      }),
   );
 });
 

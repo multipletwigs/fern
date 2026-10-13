@@ -46,6 +46,19 @@ export const TerminalExitScrollback = Context.Reference<number>(
   { defaultValue: () => 16_000 },
 );
 
+// How many viewers one Session's shell may have at once.
+export const TerminalViewers = Context.Reference<number>(
+  "@repo/server/terminal/TerminalViewers",
+  { defaultValue: () => 8 },
+);
+
+// How many pieces of output a viewer may have waiting before it's taken to have fallen behind, and
+// is sent what the shell printed lately, as one replay, in place of everything it's missed.
+export const TerminalViewerBacklog = Context.Reference<number>(
+  "@repo/server/terminal/TerminalViewerBacklog",
+  { defaultValue: () => 1000 },
+);
+
 // How long a shell gets to exit on its hangup before it's killed outright.
 const HANGUP_GRACE = "1 second";
 
@@ -87,15 +100,19 @@ export class Terminals extends Context.Service<
       root: string,
       size: TerminalSize,
     ) => Stream.Stream<TerminalEvent, TerminalError>;
-    // Types into the Session's shell. Dropped when none is running.
-    readonly write: (sessionId: string, data: string) => Effect.Effect<void>;
+    // Types into the Session's shell. Fails when none is running.
+    readonly write: (
+      sessionId: string,
+      data: string,
+    ) => Effect.Effect<void, TerminalError>;
+    // Fails when none is running.
     readonly resize: (
       sessionId: string,
       size: TerminalSize,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<void, TerminalError>;
     // Ends the Session's shell, if it's still running, and forgets it, so the next `open` starts a
-    // fresh one. Viewers see it exit.
-    readonly kill: (sessionId: string) => Effect.Effect<void>;
+    // fresh one. Viewers see it exit. Fails when the Session has none, running or exited.
+    readonly kill: (sessionId: string) => Effect.Effect<void, TerminalError>;
   }
 >()("@repo/server/terminal/Terminals") {
   static readonly layer = Layer.effect(
@@ -104,6 +121,8 @@ export class Terminals extends Context.Service<
       const shell = yield* TerminalShell;
       const limit = yield* TerminalScrollback;
       const exitLimit = yield* TerminalExitScrollback;
+      const maxViewers = yield* TerminalViewers;
+      const backlog = yield* TerminalViewerBacklog;
       const scope = yield* Effect.scope;
       const shells = new Map<string, SessionShell>();
       // Two viewers opening the same Session at once start one shell, and a kill isn't undone by
@@ -152,8 +171,19 @@ export class Terminals extends Context.Service<
               };
               const printing = term.onData((data) => {
                 entry.printed.append(data);
-                for (const viewer of entry.viewers)
-                  Queue.offerUnsafe(viewer, { _tag: "TerminalOutput", data });
+                for (const viewer of entry.viewers) {
+                  if (Queue.sizeUnsafe(viewer) < backlog) {
+                    Queue.offerUnsafe(viewer, { _tag: "TerminalOutput", data });
+                    continue;
+                  }
+                  // Fallen behind: what it's missed goes, and what's kept, this included, takes
+                  // its place.
+                  while (Queue.sizeUnsafe(viewer) > 0) Queue.takeUnsafe(viewer);
+                  Queue.offerUnsafe(viewer, {
+                    _tag: "TerminalReplay",
+                    data: entry.printed.text(),
+                  });
+                }
               });
               const exiting = term.onExit(({ exitCode }) => {
                 entry.code = exitCode;
@@ -199,48 +229,77 @@ export class Terminals extends Context.Service<
           yield* Scope.close(entry.scope, Exit.void);
         });
 
-      const attach = (sessionId: string, root: string, size: TerminalSize) =>
+      // Starts the Session's shell, or attaches to the one it has unless that one has all the
+      // viewers it may, and sends the viewer what it has printed so far.
+      const attach = (
+        sessionId: string,
+        root: string,
+        size: TerminalSize,
+        viewer: Viewer,
+      ) =>
         Effect.gen(function* () {
-          const current = shells.get(sessionId);
-          if (current?.root === root) {
-            current.term?.resize(size.cols, size.rows);
-            return current;
+          let entry = shells.get(sessionId);
+          if (entry?.root === root) {
+            if (entry.viewers.size >= maxViewers)
+              return yield* new TerminalError({
+                message: `This Session's terminal is open in ${maxViewers} places already`,
+              });
+            entry.term?.resize(size.cols, size.rows);
+          } else {
+            yield* end(sessionId);
+            entry = yield* start(sessionId, root, size);
           }
-          yield* end(sessionId);
-          return yield* start(sessionId, root, size);
+          Queue.offerUnsafe(viewer, {
+            _tag: "TerminalReplay",
+            data: entry.printed.text(),
+          });
+          if (entry.code === undefined) entry.viewers.add(viewer);
+          else {
+            Queue.offerUnsafe(viewer, exitEvent(entry.code));
+            Queue.endUnsafe(viewer);
+          }
+          return entry;
         }).pipe(lock.withPermits(1));
 
       const open = (sessionId: string, root: string, size: TerminalSize) =>
-        Stream.callback<TerminalEvent, TerminalError>((viewer) =>
-          Effect.gen(function* () {
-            const entry = yield* attach(sessionId, root, size);
-            yield* Effect.acquireRelease(
-              Effect.sync(() => {
-                Queue.offerUnsafe(viewer, {
-                  _tag: "TerminalReplay",
-                  data: entry.printed.text(),
-                });
-                if (entry.code === undefined) entry.viewers.add(viewer);
-                else {
-                  Queue.offerUnsafe(viewer, exitEvent(entry.code));
-                  Queue.endUnsafe(viewer);
-                }
-              }),
-              () => Effect.sync(() => entry.viewers.delete(viewer)),
-            );
-          }),
+        Stream.callback<TerminalEvent, TerminalError>(
+          (viewer) =>
+            Effect.acquireRelease(
+              attach(sessionId, root, size, viewer),
+              (entry) => Effect.sync(() => entry.viewers.delete(viewer)),
+            ),
+          // Its backlog, then the shell's exit; never more.
+          { bufferSize: backlog + 1, strategy: "sliding" },
         );
 
+      // The Session's shell, if it's still running.
+      const running = (
+        sessionId: string,
+      ): Effect.Effect<pty.IPty, TerminalError> => {
+        const term = shells.get(sessionId)?.term;
+        return term === undefined
+          ? Effect.fail(
+              new TerminalError({
+                message: "This Session's shell isn't running",
+              }),
+            )
+          : Effect.succeed(term);
+      };
+
       const write = (sessionId: string, data: string) =>
-        Effect.sync(() => shells.get(sessionId)?.term?.write(data));
+        running(sessionId).pipe(Effect.map((term) => term.write(data)));
 
       const resize = (sessionId: string, size: TerminalSize) =>
-        Effect.sync(() =>
-          shells.get(sessionId)?.term?.resize(size.cols, size.rows),
+        running(sessionId).pipe(
+          Effect.map((term) => term.resize(size.cols, size.rows)),
         );
 
       const kill = Effect.fn("Terminals.kill")(function* (sessionId: string) {
-        yield* end(sessionId);
+        if (!shells.has(sessionId))
+          return yield* new TerminalError({
+            message: "This Session has no shell",
+          });
+        return yield* end(sessionId);
       }, lock.withPermits(1));
 
       return Terminals.of({ open, write, resize, kill });

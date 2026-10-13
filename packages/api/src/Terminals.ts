@@ -1,11 +1,16 @@
 import { Schema } from "effect";
 
-// A terminal's size in character cells.
-export const TerminalSize = Schema.Struct({
-  cols: Schema.Int.check(Schema.isGreaterThan(0)),
-  rows: Schema.Int.check(Schema.isGreaterThan(0)),
-});
+// A terminal's size in character cells, no screen showing more than a thousand either way.
+const Cells = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1000 }));
+export const TerminalSize = Schema.Struct({ cols: Cells, rows: Cells });
 export type TerminalSize = typeof TerminalSize.Type;
+
+// The most typed into a terminal at once, in UTF-16 code units. A bigger paste goes in pieces.
+export const TERMINAL_INPUT_MAX = 65_536;
+
+export const TerminalInputData = Schema.String.check(
+  Schema.isMaxLength(TERMINAL_INPUT_MAX),
+);
 
 // What the shell printed before the viewer came, as much as is kept: the first event of every
 // terminal stream. It stands for everything the shell has printed so far, so a terminal shows it in

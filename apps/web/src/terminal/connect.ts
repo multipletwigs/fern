@@ -1,21 +1,10 @@
 import type { Terminal } from "@xterm/xterm";
 import { Effect, Predicate, Queue, Schedule, Stream } from "effect";
 import { LiveClient } from "../LiveClient";
+import { type Outgoing, outgoing } from "./outgoing";
 
-// What the page tells a Session's shell, in the order it happened.
-type Outgoing =
-  | { readonly _tag: "Input"; readonly data: string }
-  | { readonly _tag: "Resize"; readonly cols: number; readonly rows: number };
-
-// Keystrokes typed back to back go as one write; the order of everything else stays.
-const coalesce = (messages: ReadonlyArray<Outgoing>) =>
-  messages.reduce<Array<Outgoing>>((sent, message) => {
-    const last = sent.at(-1);
-    if (last?._tag === "Input" && message._tag === "Input")
-      sent[sent.length - 1] = { _tag: "Input", data: last.data + message.data };
-    else sent.push(message);
-    return sent;
-  }, []);
+// A terminal's width or height as the server takes it.
+const cells = (n: number) => Math.min(Math.max(Math.round(n), 1), 1000);
 
 // Attach again after a dropped connection, but not when the shell couldn't be started.
 const reattach = Schedule.spaced("1 second").pipe(
@@ -54,12 +43,12 @@ export const runTerminal = (
         ? client("TerminalInput", { sessionId, data: message.data })
         : client("TerminalResize", {
             sessionId,
-            cols: message.cols,
-            rows: message.rows,
+            cols: cells(message.cols),
+            rows: cells(message.rows),
           })
       ).pipe(Effect.ignore);
     yield* Queue.takeAll(outbox).pipe(
-      Effect.flatMap((messages) => Effect.forEach(coalesce(messages), send)),
+      Effect.flatMap((messages) => Effect.forEach(outgoing(messages), send)),
       Effect.forever,
       Effect.forkScoped,
     );
@@ -68,7 +57,11 @@ export const runTerminal = (
     // attachment starts with everything the shell printed so far, which takes the place of what
     // the terminal shows, so nothing shows twice.
     yield* Stream.suspend(() =>
-      client("Terminal", { sessionId, cols: term.cols, rows: term.rows }),
+      client("Terminal", {
+        sessionId,
+        cols: cells(term.cols),
+        rows: cells(term.rows),
+      }),
     ).pipe(
       Stream.retry(reattach),
       Stream.runForEach((event) =>
