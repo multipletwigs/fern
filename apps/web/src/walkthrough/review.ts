@@ -38,6 +38,7 @@ export const sinceLabel: Record<WalkthroughSince, string> = {
   previous: "Since the previous Walkthrough",
   start: "Since the Session started",
   head: "Since the last commit · Fern didn't see this Session start",
+  pr: "One PR of the Session's Stack",
 };
 
 // A Section's hunks by file, in the order the files first appear.

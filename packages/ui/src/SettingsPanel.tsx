@@ -3,20 +3,25 @@ import type { ReactNode } from "react";
 import { GhostButton } from "./GhostButton";
 import { Loader } from "./Loader";
 import { PanelBar } from "./PanelBar";
+import { SettingsSection } from "./SettingsSection";
 
-// Fern's Settings, in the content card: a way back to the Session, and the Tools section with its
-// Re-check button. While `checking`, the button says so and the rows shown are the last ones read.
+// Fern's Settings, in the content card: a way back to the Session, the Tools section with its
+// Re-check button, and the Projects section. While `checking`, the button says so and the rows
+// shown are the last ones read.
 export function SettingsPanel({
   onBack,
   onRecheck,
   checking,
   children,
+  projects,
 }: {
   onBack: () => void;
   onRecheck: () => void;
   checking: boolean;
   // The Tools section's rows, or what stands in for them.
   children: ReactNode;
+  // The Projects section's rows, one per Project.
+  projects: ReactNode;
 }) {
   return (
     <div className="flex h-full flex-col">
@@ -35,14 +40,10 @@ export function SettingsPanel({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-2xl px-8 py-10">
           <h1 className="text-xl text-ink">Settings</h1>
-          <section aria-label="Tools" className="mt-8">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-[15px] text-ink">Tools</h2>
-                <p className="mt-0.5 text-[13px] text-muted">
-                  What Fern runs on, as its own processes find it on the PATH.
-                </p>
-              </div>
+          <SettingsSection
+            title="Tools"
+            description="What Fern runs on, as its own processes find it on the PATH."
+            action={
               <GhostButton disabled={checking} onClick={onRecheck}>
                 {checking ? (
                   <span className="flex items-center gap-2">
@@ -53,11 +54,16 @@ export function SettingsPanel({
                   "Re-check"
                 )}
               </GhostButton>
-            </div>
-            <ul className="mt-4 divide-y divide-hairline border-t border-hairline">
-              {children}
-            </ul>
-          </section>
+            }
+          >
+            {children}
+          </SettingsSection>
+          <SettingsSection
+            title="Projects"
+            description="In a Project on GitHub, each ticket a Hosted Session lands goes up as a draft PR on the Session's Stack. Turn it off to land work as before."
+          >
+            {projects}
+          </SettingsSection>
         </div>
       </div>
     </div>

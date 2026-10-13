@@ -32,7 +32,7 @@ export class SystemApi extends HttpApiGroup.make("system", {
     }),
   )
   .add(
-    // `claude`, `gh` and `git`, in that order, each checked again. A tool that's missing is a
+    // `claude`, `gh`, `git` and `gh-stack`, in that order, each checked again. A tool that's missing is a
     // status like any other, never a failure.
     HttpApiEndpoint.get("tools", "/tools", {
       success: Schema.Array(ToolStatus),

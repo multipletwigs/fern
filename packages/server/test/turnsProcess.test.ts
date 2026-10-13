@@ -19,6 +19,7 @@ import stop from "./fixtures/stop.json";
 import {
   NoEscapes,
   UnusedCommands,
+  UnusedProjectSettings,
   UnusedFlows,
   UnusedRounds,
   UnusedTranscripts,
@@ -410,6 +411,7 @@ const SessionsApi = Layer.mergeAll(
   NoEscapes,
   UnusedFlows,
   UnusedCommands,
+  UnusedProjectSettings,
   UnusedWorkspace,
   UnusedWalkthroughs,
   UnusedWorktreeCleanup,

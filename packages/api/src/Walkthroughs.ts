@@ -4,7 +4,8 @@ import { SessionBusy, SessionInUse, SessionNotFound } from "./Sessions";
 import { VerdictKind, WalkthroughStatus } from "./States";
 
 // A Walkthrough explains what a Session changed since its previous Walkthrough, or since it
-// started, in Sections the developer approves or rejects one by one. Fern takes the change from
+// started, or what one PR of its Stack changes, in Sections the developer approves or rejects one
+// by one. Fern takes the change from
 // git snapshots, so every changed line is either claimed by a Section or shown as an Unexplained
 // change.
 
@@ -55,9 +56,27 @@ export class UnexplainedChange extends Schema.Class<UnexplainedChange>(
 }) {}
 
 // Where a Walkthrough's change starts: the previous Walkthrough, the snapshot Fern took when the
-// Session started, or, for a Session Fern never ran, the last commit.
-export const WalkthroughSince = Schema.Literals(["previous", "start", "head"]);
+// Session started, for a Session Fern never ran, the last commit, or, for a PR of the Session's
+// Stack, the PR below it (where the bottom one leaves `main`).
+export const WalkthroughSince = Schema.Literals([
+  "previous",
+  "start",
+  "head",
+  "pr",
+]);
 export type WalkthroughSince = typeof WalkthroughSince.Type;
+
+// A draft PR on a Hosted Session's Stack, opened by Fern when a ticket landed on the Session's
+// branch (ADR 0009).
+export class PullRequest extends Schema.Class<PullRequest>("PullRequest")({
+  number: Schema.Int,
+  url: Schema.String,
+  title: Schema.String,
+  // 1 for the bottom of the Stack, the PR based on `main`.
+  position: Schema.Int,
+  // The ticket whose work it carries.
+  ticket: Schema.optional(Schema.Int),
+}) {}
 
 export class Walkthrough extends Schema.Class<Walkthrough>("Walkthrough")({
   id: Schema.String,
@@ -68,6 +87,8 @@ export class Walkthrough extends Schema.Class<Walkthrough>("Walkthrough")({
   // Why writing failed, when it did.
   error: Schema.optional(Schema.String),
   since: WalkthroughSince,
+  // The PR of the Session's Stack it explains, when it explains one.
+  pr: Schema.optional(PullRequest),
   createdAt: Schema.DateTimeUtcFromMillis,
   // Other Sessions Fern ran in the same repository while this change was made. Their edits can't
   // be told apart from this Session's.

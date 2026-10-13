@@ -34,7 +34,9 @@ import {
 } from "../src/walkthrough/WalkthroughWriter";
 import {
   NoEscapes,
+  NoStacks,
   UnusedCommands,
+  UnusedProjectSettings,
   UnusedFlows,
   UnusedRounds,
   UnusedTranscripts,
@@ -164,11 +166,18 @@ const Services = Layer.mergeAll(
   NoEscapes,
   UnusedFlows,
   UnusedCommands,
+  UnusedProjectSettings,
   UnusedWorkspace,
   UnusedWorktreeCleanup,
   FakeTurns,
   Walkthroughs.layer.pipe(
-    Layer.provide([FakeTurns, Writer, NoEscapes, DatabaseLive(":memory:")]),
+    Layer.provide([
+      FakeTurns,
+      Writer,
+      NoEscapes,
+      NoStacks,
+      DatabaseLive(":memory:"),
+    ]),
   ),
 ).pipe(Layer.provideMerge(Snapshots.layer), Layer.provide(NodeServices.layer));
 

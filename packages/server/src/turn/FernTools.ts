@@ -26,6 +26,8 @@ export interface Contribution {
   // oxlint-disable-next-line typescript/no-explicit-any
   readonly tools: (id: string) => ReadonlyArray<SdkMcpToolDefinition<any>>;
   readonly steering: string;
+  // Whether the Session gets this at all; every Hosted Session does when left out.
+  readonly when?: (id: string) => Effect.Effect<boolean>;
 }
 
 // Supplies the extra options for each Hosted Session, so Turns gets Fern's tools and steering
@@ -49,6 +51,9 @@ export class FernTools extends Context.Service<
           Ref.update(contributions, (all) => [...all, contribution]),
         options: (id) =>
           Ref.get(contributions).pipe(
+            Effect.flatMap((all) =>
+              Effect.filter(all, (c) => c.when?.(id) ?? Effect.succeed(true)),
+            ),
             Effect.map((all): HostedOptions => {
               const tools = all.flatMap((c) => c.tools(id));
               const appendSystemPrompt = [
