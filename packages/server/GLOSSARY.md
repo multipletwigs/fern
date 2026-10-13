@@ -171,6 +171,14 @@ _Avoid_: Dev server, browser tab, sandbox
 An isolated Fern an agent starts from its worktree with `pnpm verify:up`, to check its change to Fern in the running app: its own ports, data and Claude config, recorded in a manifest so every Fern lists it as running. Unlike a Preview, it runs Fern itself, and exists only for work on Fern.
 _Avoid_: Sandbox, instance
 
+**Terminal**:
+A Session's own login shell, running in the Session's folder, shown in a panel under its screen. It outlives its viewers: switching away or reloading the page detaches, and coming back replays what it printed. It ends when the developer restarts it, the Session is archived, or Fern quits.
+_Avoid_: Console, shell panel
+
+**Tool check**:
+Fern's check, shown in Settings, that the tools it runs on are ready: `claude`, `gh` and `git` installed, and `gh` signed in.
+_Avoid_: Prerequisite, doctor, health check
+
 **Checkpoint**:
 A point where a Session is waiting on the developer's decision. Checkpoints from all Sessions share one queue.
 _Avoid_: Prompt, approval, interrupt, blocker

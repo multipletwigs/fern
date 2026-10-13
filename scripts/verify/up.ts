@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -88,13 +89,52 @@ const start = (name: string, cwd: string, args: Array<string>) => {
   return child.pid;
 };
 
+const tail = (name: string) =>
+  readFileSync(join(slot.logs, `${name}.log`), "utf8")
+    .split("\n")
+    .slice(-20)
+    .join("\n");
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const fail = (message: string, name: string, running: Array<number>) => {
+  console.error(`${message}; the end of ${slot.logs}/${name}.log:\n${tail(name)}`);
+  for (const pid of running)
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {}
+  process.exit(1);
+};
+
+// Electron opens its window on the page as soon as it starts, and quits if the page isn't there
+// yet, so Vite has to be answering first.
+const vite = start("vite", join(root, "apps/web"), [
+  "vite",
+  "--port",
+  String(slot.webPort),
+  "--strictPort",
+]);
+const serving = async () => {
+  try {
+    return (await fetch(`http://localhost:${slot.webPort}`)).ok;
+  } catch {
+    return false;
+  }
+};
+const viteDeadline = Date.now() + 30_000;
+while (!(await serving())) {
+  if (!alive(vite)) fail("Vite exited", "vite", []);
+  if (Date.now() > viteDeadline) fail("Vite didn't answer", "vite", [vite]);
+  await sleep(250);
+}
+
 const pids = {
-  vite: start("vite", join(root, "apps/web"), [
-    "vite",
-    "--port",
-    String(slot.webPort),
-    "--strictPort",
-  ]),
+  vite,
   electron: start("electron", desktop, [
     "electron",
     ".",
@@ -124,14 +164,18 @@ const healthy = async () => {
     return false;
   }
 };
+// Up means the API answers, the window has loaded the page (the main process logs it), and
+// Electron is still running: a server that answered before the window failed isn't a slot.
+const loaded = () => tail("electron").includes("Fern window loaded");
 const deadline = Date.now() + 30_000;
-while (!(await healthy())) {
-  if (Date.now() > deadline) {
-    console.error(`Fern didn't come up; see ${slot.logs}/electron.log`);
-    process.exit(1);
-  }
+while (!(loaded() && (await healthy()))) {
+  if (!alive(pids.electron))
+    fail("Electron exited", "electron", [pids.vite]);
+  if (Date.now() > deadline)
+    fail("Fern didn't come up", "electron", Object.values(pids));
   await sleep(500);
 }
+if (!alive(pids.electron)) fail("Electron exited", "electron", [pids.vite]);
 
 console.log(`Isolated Fern, slot ${slot.n}:
   page     ${manifest.pageUrl}

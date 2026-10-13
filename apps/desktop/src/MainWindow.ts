@@ -49,6 +49,8 @@ const openWindow = Effect.fn("MainWindow.open")(function* (url: string) {
   );
 
   yield* Effect.promise(() => win.loadURL(url));
+  // `pnpm verify:up` waits for this line to count a slot as up.
+  yield* Effect.logInfo(`Fern window loaded ${url}`);
 });
 
 // macOS re-opens a window when the dock icon is clicked and none are open.
