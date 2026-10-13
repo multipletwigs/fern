@@ -1,13 +1,17 @@
 import { useAtom } from "@effect/atom-react";
 import { TerminalPanel } from "@repo/ui/TerminalPanel";
 import { useEffect, useState } from "react";
-import { isTerminalToggle, terminalOpenAtom } from "./atoms";
+import {
+  clampTerminalHeight,
+  isTerminalToggle,
+  terminalHeightAtom,
+  terminalOpenAtom,
+} from "./atoms";
 import { SessionTerminal } from "./SessionTerminal";
 
-const HEIGHT = 280;
-
 // The terminal along the bottom of a Session's screen, shown and hidden with Ctrl+` or the button
-// in its top bar. Once opened it stays mounted while hidden, so its shell's output keeps arriving.
+// in its top bar, and dragged taller or shorter by its top edge. Once opened it stays mounted while
+// hidden, so its shell's output keeps arriving.
 export function SessionTerminalPanel({
   sessionId,
   root,
@@ -16,7 +20,10 @@ export function SessionTerminalPanel({
   root: string;
 }) {
   const [open, setOpen] = useAtom(terminalOpenAtom(sessionId));
+  const [height, setHeight] = useAtom(terminalHeightAtom(sessionId));
   const [opened, setOpened] = useState<string>();
+  // How many times its shell has been restarted: each restart mounts a fresh xterm.
+  const [restarts, setRestarts] = useState(0);
   if (open && opened !== sessionId) setOpened(sessionId);
 
   useEffect(() => {
@@ -31,12 +38,19 @@ export function SessionTerminalPanel({
 
   if (opened !== sessionId) return null;
   return (
-    <TerminalPanel hidden={!open} height={HEIGHT}>
+    <TerminalPanel
+      hidden={!open}
+      height={clampTerminalHeight(height, window.innerHeight)}
+      onHeightChange={(next) =>
+        setHeight(clampTerminalHeight(next, window.innerHeight))
+      }
+    >
       <SessionTerminal
-        key={`${sessionId}\0${root}`}
+        key={`${sessionId}\0${root}\0${restarts}`}
         sessionId={sessionId}
         root={root}
         visible={open}
+        onRestarted={() => setRestarts((n) => n + 1)}
       />
     </TerminalPanel>
   );

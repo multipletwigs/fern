@@ -25,10 +25,16 @@ const reattach = Schedule.spaced("1 second").pipe(
 const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 
-// Connects an xterm to its Session's shell: what the shell prints is written to it, and what's
-// typed or pasted into it, and its size, go to the shell. Runs until interrupted, which detaches
-// from the shell without ending it, or until the shell exits.
-export const runTerminal = (term: Terminal, sessionId: string, root: string) =>
+// Connects an xterm to its Session's shell: what the shell has printed, and goes on to print, is
+// written to it, and what's typed or pasted into it, and its size, go to the shell. Runs until
+// interrupted, which detaches from the shell without ending it, or until the shell exits, which it
+// tells `onExit`.
+export const runTerminal = (
+  term: Terminal,
+  sessionId: string,
+  root: string,
+  onExit: (code: number) => void,
+) =>
   Effect.gen(function* () {
     const client = yield* LiveClient;
     const outbox = yield* Queue.unbounded<Outgoing>();
@@ -68,9 +74,7 @@ export const runTerminal = (term: Terminal, sessionId: string, root: string) =>
         Effect.sync(() =>
           event._tag === "TerminalOutput"
             ? term.write(event.data)
-            : term.write(
-                `\r\n${DIM}[The shell exited with code ${event.code}.]${RESET}\r\n`,
-              ),
+            : onExit(event.code),
         ),
       ),
       Effect.catch((error) =>
@@ -82,3 +86,10 @@ export const runTerminal = (term: Terminal, sessionId: string, root: string) =>
       ),
     );
   }).pipe(Effect.scoped);
+
+// Ends a Session's shell, if it's still running, so the next `runTerminal` starts a fresh one.
+export const restartTerminal = (sessionId: string) =>
+  Effect.gen(function* () {
+    const client = yield* LiveClient;
+    yield* client("TerminalRestart", { sessionId });
+  });
