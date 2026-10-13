@@ -178,6 +178,7 @@ export function ReviewQueue({
           title={entryTitle(entry)}
           detail={entryDetail(entry)}
           settled={verdict !== undefined}
+          risk={entry.kind === "section" ? entry.section.risk : undefined}
           mark={
             entry.kind === "writing" || entry.kind === "failed"
               ? entry.kind
