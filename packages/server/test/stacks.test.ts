@@ -175,6 +175,8 @@ const Writer = Layer.succeed(
               hunks: request.hunks
                 .filter((h) => h.path !== "stray.ts")
                 .map((h) => h.id),
+              decisions: [],
+              risk: { level: "low" as const, reason: "Small." },
               fixes: request.rejections[0]?.id,
             },
           ],

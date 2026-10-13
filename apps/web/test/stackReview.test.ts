@@ -23,7 +23,15 @@ const pr = (position: number) =>
   });
 
 const section = (id: string, verdict?: Verdict) =>
-  new Section({ id, title: id, explanation: "", hunks: [], verdict });
+  new Section({
+    id,
+    title: id,
+    explanation: "",
+    decisions: [],
+    unplanned: false,
+    hunks: [],
+    verdict,
+  });
 
 // The Walkthrough numbered `number`, of the PR at `position` when it has one.
 const walkthrough = (

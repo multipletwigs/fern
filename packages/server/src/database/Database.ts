@@ -270,6 +270,14 @@ const migrations = {
       )
     `;
   }),
+  // The Decisions each Section cites, as a JSON array of their ids, and its Risk. Both are NULL on
+  // a Section written before Sections had them.
+  "0015_section_citations_and_risk": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE walkthrough_sections ADD COLUMN decisions TEXT`;
+    yield* sql`ALTER TABLE walkthrough_sections ADD COLUMN risk TEXT`;
+    yield* sql`ALTER TABLE walkthrough_sections ADD COLUMN risk_reason TEXT`;
+  }),
   // What each PR on a Stack carries: a ticket's work, as every PR before this did, a fix for
   // Rejections, or the accepted Findings.
   "0016_stack_pr_kinds": Effect.gen(function* () {
