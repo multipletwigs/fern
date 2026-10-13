@@ -4,7 +4,9 @@ import {
   WarningIcon,
   XIcon,
 } from "@phosphor-icons/react";
+import type { Risk } from "@repo/api";
 import { clsx } from "clsx";
+import { RiskBadge } from "./RiskBadge";
 
 // How an entry was settled, or why it can't be yet, when a check or an empty ring says too little:
 // approved or rejected, or a Walkthrough still being written or that failed.
@@ -13,8 +15,8 @@ export type ReviewMark = "approved" | "rejected" | "writing" | "failed";
 // One item in a review layout's list: a check once it's settled, else an empty ring, then its
 // number and what it is, with how it was settled beneath. A `step`, such as sending a Round's
 // answers, is something to do rather than settle, and is marked with a paper plane, lit once it's
-// `settled`, meaning ready. A `mark` takes the place of the check or ring. In a narrow layout only
-// the mark shows.
+// `settled`, meaning ready. A `mark` takes the place of the check or ring. A Section's `risk` shows
+// beside its title. In a narrow layout only the mark shows.
 export function ReviewEntry({
   number,
   title,
@@ -22,6 +24,7 @@ export function ReviewEntry({
   settled,
   step = false,
   mark,
+  risk,
 }: {
   number?: number;
   title: string;
@@ -29,6 +32,7 @@ export function ReviewEntry({
   settled: boolean;
   step?: boolean;
   mark?: ReviewMark;
+  risk?: Risk;
 }) {
   return (
     <span className="flex w-full min-w-0 items-start gap-2.5 @max-3xl:justify-center">
@@ -69,7 +73,12 @@ export function ReviewEntry({
               {number}
             </span>
           )}
-          <span className="line-clamp-2 min-w-0">{title}</span>
+          <span className="line-clamp-2 min-w-0 flex-1">{title}</span>
+          {risk && (
+            <span className="mt-px shrink-0">
+              <RiskBadge level={risk.level} reason={risk.reason} compact />
+            </span>
+          )}
         </span>
         {detail && (
           <span

@@ -1,10 +1,13 @@
 import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import {
+  CitedDecision,
   Hunk,
   NothingToReview,
   PullRequest,
   ReviewClosed,
   ReviewItemNotFound,
+  RiskLevel,
+  RoundQuestion,
   Section,
   type SessionBusy,
   type SessionInUse,
@@ -46,9 +49,14 @@ import type { GitError } from "../git/Git";
 import type { PatchHunk } from "../snapshot/patch";
 import { Snapshots, walkthroughRef } from "../snapshot/Snapshots";
 import { StackEligibility } from "../stack/StackEligibility";
+import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { settle, unclaimedHunks } from "./coverage";
-import { type OpenRejection, WalkthroughWriter } from "./WalkthroughWriter";
+import {
+  type DraftDecision,
+  type OpenRejection,
+  WalkthroughWriter,
+} from "./WalkthroughWriter";
 
 // Lines sent per hunk; the rest are counted in `omitted`.
 const MAX_HUNK_LINES = 400;
@@ -85,9 +93,40 @@ const SectionRow = Schema.Struct({
   dropped: Schema.NullOr(Schema.String),
   fixesWalkthroughId: Schema.NullOr(Schema.String),
   fixesItemId: Schema.NullOr(Schema.String),
+  // NULL on a Section written before Sections cited Decisions and carried a Risk.
+  decisions: Schema.NullOr(Schema.fromJsonString(Schema.Array(Schema.String))),
+  risk: Schema.NullOr(RiskLevel),
+  riskReason: Schema.NullOr(Schema.String),
   ...VerdictColumns,
 });
 type SectionRow = typeof SectionRow.Type;
+
+// A Decision with the Round question that settled it, for what the agent recommended.
+const DecisionRow = Schema.Struct({
+  id: Schema.String,
+  sessionId: Schema.String,
+  questionId: Schema.String,
+  question: Schema.String,
+  choice: Schema.NullOr(Schema.String),
+  freeText: Schema.NullOr(Schema.String),
+  questions: Schema.fromJsonString(Schema.Array(RoundQuestion)),
+});
+type DecisionRow = typeof DecisionRow.Type;
+
+const toCitedDecision = (row: DecisionRow) =>
+  CitedDecision.make({
+    id: row.id,
+    sessionId: row.sessionId,
+    question: row.question,
+    recommendation:
+      row.questions.find((q) => q.id === row.questionId)?.recommended ?? "",
+    choice: row.choice ?? undefined,
+    freeText: row.freeText ?? undefined,
+  });
+
+// The developer's answer as the Fork reads it: the option they chose, their own words, or both.
+const answerOf = (row: DecisionRow) =>
+  [row.choice, row.freeText].filter(Predicate.isNotNull).join(". ");
 
 const HunkRow = Schema.Struct({
   walkthroughId: Schema.String,
@@ -118,6 +157,8 @@ interface SessionRows {
   readonly sections: ReadonlyArray<SectionRow>;
   readonly hunks: ReadonlyArray<HunkRow>;
   readonly prs: ReadonlyArray<PrRow>;
+  // The Decisions the Sections cite.
+  readonly decisions: ReadonlyArray<DecisionRow>;
 }
 
 const toPullRequest = (row: PrRow) =>
@@ -172,6 +213,9 @@ const assemble = (rows: SessionRows): ReadonlyArray<Walkthrough> => {
   const titles = itemTitles(rows);
   const numbers = new Map(rows.walkthroughs.map((w) => [w.id, w.number]));
   const prs = new Map(rows.prs.map((pr) => [pr.id, toPullRequest(pr)]));
+  const decisions = new Map(
+    rows.decisions.map((d) => [d.id, toCitedDecision(d)]),
+  );
   return rows.walkthroughs.map((w) => {
     const hunks = rows.hunks.filter((h) => h.walkthroughId === w.id);
     const ready = w.status === "ready";
@@ -204,6 +248,14 @@ const assemble = (rows: SessionRows): ReadonlyArray<Walkthrough> => {
                     title: titles.get(fixed) ?? "",
                   }
                 : undefined,
+            decisions: (s.decisions ?? []).flatMap(
+              (id) => decisions.get(id) ?? [],
+            ),
+            unplanned: s.decisions !== null && s.decisions.length === 0,
+            risk:
+              s.risk === null
+                ? undefined
+                : { level: s.risk, reason: s.riskReason ?? "" },
             hunks: hunks.filter((h) => h.sectionId === s.id).map(toHunk),
             verdict: verdictOf(s),
           });
@@ -291,13 +343,15 @@ export const redirectMessage = (
     : `I reviewed Walkthrough ${number} and rejected part of it:\n\n${lines.join("\n")}\n\nPlease address these.`;
 };
 
-// What the Fork is asked to explain, numbered, and the Rejections it may say it fixes.
+// What the Fork is asked to explain, numbered, the Rejections it may say it fixes, and the
+// Project's Decisions it may cite.
 const requestOf = (
   sessionId: string,
   cwd: string,
   since: WalkthroughSince,
   patch: ReadonlyArray<PatchHunk>,
   rows: SessionRows,
+  decisions: ReadonlyArray<DecisionRow>,
 ) => {
   const hunks = patch.map((hunk, index) => ({
     ...hunk,
@@ -316,6 +370,12 @@ const requestOf = (
         id: r.id,
         title: r.title,
         note: r.note,
+      })),
+      decisions: decisions.map((d, index): DraftDecision => ({
+        id: `d${index + 1}`,
+        decisionId: d.id,
+        question: d.question,
+        answer: answerOf(d),
       })),
     },
   };
@@ -402,6 +462,7 @@ export class Walkthroughs extends Context.Service<
       const writer = yield* WalkthroughWriter;
       const autonomy = yield* Autonomy;
       const stacks = yield* StackEligibility;
+      const hosted = yield* HostedSessions;
       // Bumped after every write, so open lists reload.
       const version = yield* SubscriptionRef.make(0);
       const bump = SubscriptionRef.update(version, (n) => n + 1);
@@ -472,12 +533,49 @@ export class Walkthroughs extends Context.Service<
           sql`SELECT session_id FROM walkthroughs WHERE id = ${id}`,
       });
 
+      const decisionsById = SqlSchema.findAll({
+        Request: Schema.Array(Schema.String),
+        Result: DecisionRow,
+        execute: (ids) => sql`
+          SELECT d.id, d.session_id, d.question_id, d.question, d.choice, d.free_text, r.questions
+          FROM decisions d JOIN rounds r ON r.id = d.round_id
+          WHERE d.id IN ${sql.in(ids)}`,
+      });
+      // Oldest first, as the developer settled them.
+      const decisionsOfProject = SqlSchema.findAll({
+        Request: Schema.String,
+        Result: DecisionRow,
+        execute: (project) => sql`
+          SELECT d.id, d.session_id, d.question_id, d.question, d.choice, d.free_text, r.questions
+          FROM decisions d JOIN rounds r ON r.id = d.round_id
+          WHERE d.project = ${project}
+          ORDER BY d.decided_at, r.posted_at, d.rowid`,
+      });
+      // Decisions belong to the Project, so Sections can cite ones from earlier Sessions. A Session
+      // Fern didn't start belongs to its repository's Project.
+      const citable = (sessionId: string, repo: string) =>
+        hosted
+          .projectOf(sessionId)
+          .pipe(
+            Effect.flatMap((project) =>
+              decisionsOfProject(project ?? repo).pipe(Effect.orDie),
+            ),
+          );
+
       const load = (sessionId: string) =>
-        Effect.all({
-          walkthroughs: walkthroughsOf(sessionId),
-          sections: sectionsOf(sessionId),
-          hunks: hunksOf(sessionId),
-          prs: prsOf(sessionId),
+        Effect.gen(function* () {
+          const rows = yield* Effect.all({
+            walkthroughs: walkthroughsOf(sessionId),
+            sections: sectionsOf(sessionId),
+            hunks: hunksOf(sessionId),
+            prs: prsOf(sessionId),
+          });
+          const cited = [
+            ...new Set(rows.sections.flatMap((s) => s.decisions ?? [])),
+          ];
+          const decisions =
+            cited.length === 0 ? [] : yield* decisionsById(cited);
+          return { ...rows, decisions };
         }).pipe(Effect.orDie);
 
       const list = (sessionId: string) =>
@@ -494,8 +592,9 @@ export class Walkthroughs extends Context.Service<
         rejections: ReadonlyArray<
           OpenRejection & { walkthroughId: string; itemId: string }
         >,
+        decisions: ReadonlyArray<DraftDecision>,
       ) {
-        const { sections, notFromSession } = settle(draft, hunkIds);
+        const { sections, notFromSession } = settle(draft, hunkIds, decisions);
         const byRejection = new Map(rejections.map((r) => [r.id, r]));
         yield* sql.withTransaction(
           Effect.gen(function* () {
@@ -513,6 +612,9 @@ export class Walkthroughs extends Context.Service<
                 dropped: section.dropped ?? null,
                 fixesWalkthroughId: fixes?.walkthroughId ?? null,
                 fixesItemId: fixes?.itemId ?? null,
+                decisions: JSON.stringify(section.decisions),
+                risk: section.risk.level,
+                riskReason: section.risk.reason,
               })}`;
               for (const hunk of section.hunks)
                 yield* sql`UPDATE walkthrough_hunks SET section_id = ${id}
@@ -548,7 +650,13 @@ export class Walkthroughs extends Context.Service<
               // A failed retry still leaves the first draft; what it missed shows as unexplained.
               Effect.orElseSucceed(() => draft),
             );
-          yield* finish(walkthroughId, ids, draft, rejections);
+          yield* finish(
+            walkthroughId,
+            ids,
+            draft,
+            rejections,
+            request.decisions,
+          );
         }).pipe(
           Effect.scoped,
           Effect.timeoutOrElse({
@@ -682,7 +790,14 @@ export class Walkthroughs extends Context.Service<
           base.at === undefined
             ? []
             : yield* turns.overlapping(repo, base.at, sessionId);
-        const prepared = requestOf(sessionId, cwd, base.since, patch, rows);
+        const prepared = requestOf(
+          sessionId,
+          cwd,
+          base.since,
+          patch,
+          rows,
+          yield* citable(sessionId, repo),
+        );
         yield* insert(
           {
             id,
@@ -757,7 +872,14 @@ export class Walkthroughs extends Context.Service<
           .pin(repo, walkthroughRef(id), pr.to)
           .pipe(Effect.mapError(gitFailed));
         const rows = yield* load(sessionId);
-        const prepared = requestOf(sessionId, pr.cwd, "pr", patch, rows);
+        const prepared = requestOf(
+          sessionId,
+          pr.cwd,
+          "pr",
+          patch,
+          rows,
+          yield* citable(sessionId, repo),
+        );
         yield* insert(
           {
             id,

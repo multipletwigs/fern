@@ -1,4 +1,5 @@
-import type { Draft } from "./WalkthroughWriter";
+import type { Risk } from "@repo/api";
+import type { Draft, DraftDecision } from "./WalkthroughWriter";
 
 // Hunks the draft neither claims in a Section nor marks as not from this Session.
 export const unclaimedHunks = (draft: Draft, ids: ReadonlyArray<string>) => {
@@ -15,12 +16,20 @@ export interface SettledSection {
   readonly dropped: string | undefined;
   readonly hunks: ReadonlyArray<string>;
   readonly fixes: string | undefined;
+  // The Decisions' own ids, in the order the Fork cited them.
+  readonly decisions: ReadonlyArray<string>;
+  readonly risk: Risk;
 }
 
 // The draft with what the Fork made up taken out: unknown hunk ids, a hunk claimed twice (the first
-// Section keeps it), and Sections left claiming nothing.
-export const settle = (draft: Draft, ids: ReadonlyArray<string>) => {
+// Section keeps it), Sections left claiming nothing, and citations of Decisions it wasn't offered.
+export const settle = (
+  draft: Draft,
+  ids: ReadonlyArray<string>,
+  decisions: ReadonlyArray<DraftDecision> = [],
+) => {
   const known = new Set(ids);
+  const decisionIds = new Map(decisions.map((d) => [d.id, d.decisionId]));
   const claimed = new Set<string>();
   const sections: Array<SettledSection> = [];
   for (const section of draft.sections) {
@@ -36,6 +45,12 @@ export const settle = (draft: Draft, ids: ReadonlyArray<string>) => {
       dropped: section.dropped?.trim() || undefined,
       hunks,
       fixes: section.fixes,
+      decisions: [
+        ...new Set(
+          section.decisions.flatMap((id) => decisionIds.get(id) ?? []),
+        ),
+      ],
+      risk: { level: section.risk.level, reason: section.risk.reason.trim() },
     });
   }
   const notFromSession = new Set(

@@ -206,6 +206,8 @@ const Writer = Layer.succeed(
                 title: "Add the dark theme",
                 explanation: "The theme the toggle switches to.",
                 hunks: request.hunks.map((h) => h.id),
+                decisions: [],
+                risk: { level: "low" as const, reason: "Small." },
               },
             ],
             notFromSession: [],

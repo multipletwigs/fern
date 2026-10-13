@@ -4,7 +4,7 @@ import {
   type SDKResultMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { WalkthroughError, type WalkthroughSince } from "@repo/api";
+import { RiskLevel, WalkthroughError, type WalkthroughSince } from "@repo/api";
 import { Context, Effect, Layer, Schema, type Scope } from "effect";
 
 // What the Fork returns: Sections claiming hunks by id, and the hunks it didn't make.
@@ -28,6 +28,19 @@ export const Draft = Schema.Struct({
       fixes: Schema.optional(Schema.String).annotate({
         description:
           "Id of the open Rejection this change addresses, e.g. r1. Omit when it addresses none.",
+      }),
+      decisions: Schema.Array(Schema.String).annotate({
+        description:
+          "Ids of the Decisions this change implements, e.g. d2. Empty when it implements none.",
+      }),
+      risk: Schema.Struct({
+        level: RiskLevel,
+        reason: Schema.String.annotate({
+          description:
+            "One line on why the developer should read it this closely.",
+        }),
+      }).annotate({
+        description: "How closely the developer should read this change.",
       }),
     }),
   ),
@@ -58,12 +71,24 @@ export interface OpenRejection {
   readonly note: string;
 }
 
+// A Decision of the Project that a Section can cite, settled in this Session or an earlier one.
+export interface DraftDecision {
+  // What the Fork cites it by, e.g. d1.
+  readonly id: string;
+  // The Decision's own id.
+  readonly decisionId: string;
+  readonly question: string;
+  // The developer's answer: the option they chose, their own words, or both.
+  readonly answer: string;
+}
+
 export interface WriteRequest {
   readonly sessionId: string;
   readonly cwd: string;
   readonly since: WalkthroughSince;
   readonly hunks: ReadonlyArray<DraftHunk>;
   readonly rejections: ReadonlyArray<OpenRejection>;
+  readonly decisions: ReadonlyArray<DraftDecision>;
 }
 
 // A Fork that has written its draft, still open for one revision.
@@ -97,7 +122,12 @@ const renderHunk = ({ id, path, header, lines }: DraftHunk) => {
   ].join("\n");
 };
 
-export const writePrompt = ({ since, hunks, rejections }: WriteRequest) => {
+export const writePrompt = ({
+  since,
+  hunks,
+  rejections,
+  decisions,
+}: WriteRequest) => {
   let budget = MAX_PROMPT_CHARS;
   const rendered = hunks.map((hunk) => {
     const full = renderHunk(hunk);
@@ -109,7 +139,16 @@ export const writePrompt = ({ since, hunks, rejections }: WriteRequest) => {
   });
   return `Fern, the app hosting this Session, needs a Walkthrough of the net change in the repository ${SINCE[since]}. The developer reviews your Walkthrough instead of the raw diff, so it has to account for every changed line.
 
-Group the hunks below into Sections. Each Section is one semantic change, explained for the developer in one to three sentences: why it changed, citing the intent and any decisions from this conversation, and anything they should look at closely. The developer reads the hunks right under your explanation, so don't restate what the code does, and skip headings, lists and recaps. Order Sections so they read well, most important first. Claim every hunk you made in exactly one Section. List hunks that none of your own tool calls made in notFromSession instead of claiming them; another agent or the developer may have made them. Note in one line any approach you tried and dropped on the way.
+Group the hunks below into Sections. Each Section is one semantic change, explained for the developer in one to three sentences: why it changed, and anything they should look at closely. The developer reads the hunks right under your explanation, so don't restate what the code does, and skip headings, lists and recaps. Order Sections by dependency, so each one builds only on Sections the developer has already read: contracts and schemas first, then services, then the API, then the UI. Claim every hunk you made in exactly one Section. List hunks that none of your own tool calls made in notFromSession instead of claiming them; another agent or the developer may have made them. Note in one line any approach you tried and dropped on the way.
+
+Give each Section a risk of low, medium or high, with a one-line reason, for how closely the developer should read it. High is for changes that are easy to get subtly wrong or hard to undo, such as migrations, security checks and concurrency; low is for mechanical or cosmetic ones.
+
+${
+  decisions.length > 0
+    ? `These are the Decisions the developer has settled in this Project, in this Session or an earlier one. Set each Section's decisions to the ids of the ones it implements, and leave them empty when it implements none. Fern marks a Section citing none as Unplanned, something the developer never agreed to, so cite only Decisions the change really follows:
+${decisions.map((d) => `- ${d.id}: "${d.question}" Answered: ${d.answer}`).join("\n")}`
+    : "The developer has settled no Decisions in this Project yet, so leave every Section's decisions empty."
+}
 ${
   rejections.length > 0
     ? `

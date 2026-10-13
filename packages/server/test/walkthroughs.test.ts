@@ -25,6 +25,7 @@ import { DatabaseLive } from "../src/database/Database";
 import { HandlersNoDeps } from "../src/http";
 import { LiveHandlersNoDeps } from "../src/live";
 import { Snapshots } from "../src/snapshot/Snapshots";
+import { HostedSessions } from "../src/turn/HostedSessions";
 import { type FinishedTurn, Turns } from "../src/turn/Turns";
 import { Walkthroughs } from "../src/walkthrough/Walkthroughs";
 import {
@@ -171,6 +172,7 @@ const Services = Layer.mergeAll(
   UnusedWorktreeCleanup,
   FakeTurns,
   Walkthroughs.layer.pipe(
+    Layer.provide(HostedSessions.layer),
     Layer.provide([
       FakeTurns,
       Writer,
@@ -223,6 +225,8 @@ layer(
           title: "Bump b",
           explanation: "b is now 3.",
           hunks: [a ?? ""],
+          decisions: [],
+          risk: { level: "low" as const, reason: "Small." },
         };
         return [
           { sections: [bump], notFromSession: [] },
@@ -234,6 +238,8 @@ layer(
                 explanation: "A place for notes.",
                 dropped: "Tried a README section first.",
                 hunks: [notes ?? ""],
+                decisions: [],
+                risk: { level: "low" as const, reason: "Small." },
               },
             ],
             notFromSession: [other ?? ""],
@@ -342,6 +348,8 @@ layer(
               title: "Move notes to the README",
               explanation: "As asked.",
               hunks: [hunkIn(request, "README.md")],
+              decisions: [],
+              risk: { level: "low" as const, reason: "Small." },
               fixes: request.rejections.find((r) => r.title === "Add notes")
                 ?.id,
             },

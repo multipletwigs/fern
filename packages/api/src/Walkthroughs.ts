@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { SessionBusy, SessionInUse, SessionNotFound } from "./Sessions";
-import { VerdictKind, WalkthroughStatus } from "./States";
+import { RiskLevel, VerdictKind, WalkthroughStatus } from "./States";
 
 // A Walkthrough explains what a Session changed since its previous Walkthrough, or since it
 // started, or what one PR of its Stack changes, in Sections the developer approves or rejects one
@@ -33,6 +33,29 @@ export class Hunk extends Schema.Class<Hunk>("Hunk")({
   notFromSession: Schema.Boolean,
 }) {}
 
+// How closely the developer should read a Section, and why, in one line. The Fork sets it; it
+// guides attention and never blocks a verdict.
+export const Risk = Schema.Struct({
+  level: RiskLevel,
+  reason: Schema.String,
+});
+export type Risk = typeof Risk.Type;
+
+// A Decision of the Project that a Section cites, from this Session's Grill or an earlier one: what
+// was asked, what the agent recommended, and what the developer answered.
+export class CitedDecision extends Schema.Class<CitedDecision>("CitedDecision")(
+  {
+    id: Schema.String,
+    sessionId: Schema.String,
+    question: Schema.String,
+    // The option the agent recommended.
+    recommendation: Schema.String,
+    // The option the developer chose, their own words, or both.
+    choice: Schema.optional(Schema.String),
+    freeText: Schema.optional(Schema.String),
+  },
+) {}
+
 export class Section extends Schema.Class<Section>("Section")({
   id: Schema.String,
   title: Schema.String,
@@ -44,6 +67,13 @@ export class Section extends Schema.Class<Section>("Section")({
   fixes: Schema.optional(
     Schema.Struct({ walkthrough: Schema.Int, title: Schema.String }),
   ),
+  // The Decisions behind this change, in the order the Fork cited them.
+  decisions: Schema.Array(CitedDecision),
+  // Cites no Decision: the agent changed something the developer never agreed to. False for a
+  // Section written before Sections cited Decisions.
+  unplanned: Schema.Boolean,
+  // Unset for a Section written before Sections carried one.
+  risk: Schema.optional(Risk),
   hunks: Schema.Array(Hunk),
   verdict: Schema.optional(Verdict),
 }) {}
