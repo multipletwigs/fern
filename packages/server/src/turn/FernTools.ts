@@ -25,7 +25,8 @@ export const SERVER = "fern";
 export interface Contribution {
   // oxlint-disable-next-line typescript/no-explicit-any
   readonly tools: (id: string) => ReadonlyArray<SdkMcpToolDefinition<any>>;
-  readonly steering: string;
+  // What the agent is told about them, if anything more than each tool's own description.
+  readonly steering?: string;
   // Whether the Session gets this at all; every Hosted Session does when left out.
   readonly when?: (id: string) => Effect.Effect<boolean>;
 }
@@ -58,7 +59,7 @@ export class FernTools extends Context.Service<
               const tools = all.flatMap((c) => c.tools(id));
               const appendSystemPrompt = [
                 FLOW_STEERING,
-                ...all.map((c) => c.steering),
+                ...all.flatMap((c) => (c.steering ? [c.steering] : [])),
               ].join("\n\n");
               if (tools.length === 0)
                 return { mcpServers: {}, allowedTools: [], appendSystemPrompt };

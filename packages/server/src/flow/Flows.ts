@@ -49,6 +49,7 @@ import {
 } from "../issue/IssueTracker";
 import { Autonomy } from "../autonomy/Autonomy";
 import { Snapshots } from "../snapshot/Snapshots";
+import { commitArg, Stacks } from "../stack/Stacks";
 import { FernTools } from "../turn/FernTools";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
@@ -71,7 +72,10 @@ const COMMANDS: Record<Exclude<Phase, "grill">, ReadonlyArray<string>> = {
   retro: ["/retro"],
 };
 
-export const STEERING = `Report the end of each Phase through Fern's \`phase_done\` tool, with the Phase and a short summary of what it settled or produced, then end your turn. Fern raises a Checkpoint, and the developer approves it or declines it with a note. Never start the next Phase's skill yourself (/to-spec, /to-tickets, /implement-spec, /retro): once the developer approves, Fern sends the next Phase's command as your next message. A message that isn't the next Phase's command means the Phase isn't done yet, so keep working on it. Spec is done only once both the Brief and its tickets exist on the issue tracker: report it with the Brief's issue number and its tickets' issue numbers. Implement is done only once every one of those tickets is closed.`;
+export const STEERING = `Report the end of each Phase through Fern's \`phase_done\` tool, with the Phase and a short summary of what it settled or produced, then end your turn. Fern raises a Checkpoint, and the developer approves it or declines it with a note. Never start the next Phase's skill yourself (/to-spec, /to-tickets, /implement-spec, /retro): once the developer approves, Fern sends the next Phase's command as your next message. A message that isn't the next Phase's command means the Phase isn't done yet, so keep working on it. Spec is done only once both the Brief and its tickets exist on the issue tracker: report it with the Brief's issue number and its tickets' issue numbers.`;
+
+// When Implement is done where the work doesn't land as a Stack, which has its own rule.
+const CLOSED_STEERING = `Implement is done only once every one of those tickets is closed.`;
 
 // What Fern answers while it writes the Walkthrough the Implement Checkpoint waits on.
 const HOLDING: Answer = {
@@ -232,8 +236,9 @@ const linkOf = (
   return linked && { id: linked.id, number: linked.number };
 };
 
-// What Fern sends the Session once Retro's Findings all have a verdict: the accepted ones to commit.
-const acceptedMessage = (accepted: ReadonlyArray<FindingRow>) =>
+// What Fern sends the Session once Retro's Findings all have a verdict: the accepted ones to commit,
+// and, where the work lands as a Stack, to report.
+const acceptedMessage = (accepted: ReadonlyArray<FindingRow>, stack: boolean) =>
   [
     `The developer accepted ${accepted.length === 1 ? "this Finding" : "these Findings"} from your Retro. Make ${accepted.length === 1 ? "its change" : "their changes"} to the Setup, then commit on this Session's branch in a commit of its own, separate from the feature code:`,
     ...accepted.map((f, i) =>
@@ -244,7 +249,14 @@ const acceptedMessage = (accepted: ReadonlyArray<FindingRow>) =>
         ...(f.note ? [`   Developer's note: ${f.note}`] : []),
       ].join("\n"),
     ),
+    ...(stack
+      ? [
+          "Then report that commit with Fern's `findings_landed` tool: Fern puts it up as the top PR of the Stack, with its own Walkthrough.",
+        ]
+      : []),
   ].join("\n\n");
+
+const FINDINGS_LANDED = `Report the commit with the Setup changes from the Findings the developer accepted in the Retro, once Fern has sent them. Fern pushes a branch at the commit and opens its draft PR on top of the Session's Stack, then writes its Walkthrough in the background.`;
 
 // What a Fern tool answers the agent.
 interface Answer {
@@ -348,6 +360,7 @@ export class Flows extends Context.Service<
       const tools = yield* FernTools;
       const issues = yield* IssueTracker;
       const autonomy = yield* Autonomy;
+      const stacks = yield* Stacks;
       const patience = Duration.fromInputUnsafe(yield* IssueTrackerTimeout);
       // An issue on the tracker, unless it keeps Fern waiting too long.
       const lookUp = (cwd: string, number: number) =>
@@ -609,6 +622,28 @@ export class Flows extends Context.Service<
           ),
         );
 
+      // Implement's exit criteria where the work lands as a Stack: every ticket from Spec has its PR
+      // on the Stack, whether or not it's closed yet, as it closes once the Stack lands. What to
+      // tell the agent when one hasn't, if any.
+      const prsExit = (sessionId: string) =>
+        Effect.gen(function* () {
+          const spec = yield* specOf(sessionId).pipe(Effect.orDie);
+          if (Option.isNone(spec)) return undefined;
+          const up = new Set(
+            (yield* stacks.prs(sessionId)).flatMap((pr) =>
+              pr.ticket === null ? [] : [pr.ticket],
+            ),
+          );
+          const missing = spec.value.spec.tickets.filter(
+            (ticket) => !up.has(ticket.number),
+          );
+          if (missing.length === 0) return undefined;
+          return {
+            text: `Implement isn't done: ${missing.length === 1 ? "this ticket has" : "these tickets have"} no PR on the Stack yet:\n${missing.map((t) => `- #${t.number} ${t.title}`).join("\n")}\nOnce ${missing.length === 1 ? "it merges" : "each merges"} into this Session's branch, report ${missing.length === 1 ? "it" : "each"} with \`ticket_landed\`, then report Implement done again.`,
+            isError: true,
+          } satisfies Answer;
+        });
+
       // The Session's Walkthroughs as they are now, oldest first.
       const walkthroughsNow = (sessionId: string) =>
         walkthroughs
@@ -636,6 +671,17 @@ export class Flows extends Context.Service<
           }),
         );
 
+      // Where the work lands as a Stack, each PR has its own Walkthrough, so there's nothing more to
+      // write: the Checkpoint links to the top one written, once none is still being written.
+      const stackWritten = (sessionId: string) =>
+        walkthroughs.list(sessionId).pipe(
+          Stream.filter((ws) => ws.every((w) => w.status !== "writing")),
+          Stream.runHead,
+          Effect.map((found) => ({
+            link: linkOf(Option.getOrElse(found, () => [])),
+          })),
+        );
+
       // Implement's other exit criterion: a written Walkthrough that covers the working tree as it
       // is now. Fern writes one of whatever changed since the last: "writing" while it does. Else
       // what the Checkpoint links to, or what to tell the agent instead.
@@ -647,6 +693,12 @@ export class Flows extends Context.Service<
       // A Session in place outside git has nothing Fern can review, so there's nothing to link.
       const walkthroughExit = (sessionId: string) =>
         Effect.gen(function* () {
+          if (yield* stacks.landsAsStack(sessionId)) {
+            const all = yield* walkthroughsNow(sessionId);
+            return all.some((w) => w.status === "writing")
+              ? ("writing" as const)
+              : { link: linkOf(all) };
+          }
           const session = yield* hosted.session(sessionId);
           if (session?.worktree === null && !(yield* inGit(session.cwd)))
             return { link: undefined };
@@ -796,20 +848,22 @@ export class Flows extends Context.Service<
           const row = yield* checkpointRow(id).pipe(Effect.orDie);
           if (Option.isNone(row)) return;
           const { sessionId } = row.value;
-          const outcome = yield* walkthroughs.write(sessionId).pipe(
-            Effect.retry({
-              while: (error) => error._tag === "WalkthroughInProgress",
-              schedule: Schedule.spaced("250 millis"),
-            }),
-            Effect.andThen(written(sessionId)),
-            Effect.catchTags({
-              NothingToReview: () => covering(sessionId),
-              WalkthroughInProgress: Effect.die,
-            }),
-            Effect.catch((error) =>
-              Effect.succeed(unwritten(whyUnwritten(error))),
-            ),
-          );
+          const outcome = (yield* stacks.landsAsStack(sessionId))
+            ? yield* stackWritten(sessionId)
+            : yield* walkthroughs.write(sessionId).pipe(
+                Effect.retry({
+                  while: (error) => error._tag === "WalkthroughInProgress",
+                  schedule: Schedule.spaced("250 millis"),
+                }),
+                Effect.andThen(written(sessionId)),
+                Effect.catchTags({
+                  NothingToReview: () => covering(sessionId),
+                  WalkthroughInProgress: Effect.die,
+                }),
+                Effect.catch((error) =>
+                  Effect.succeed(unwritten(whyUnwritten(error))),
+                ),
+              );
           const told = yield* Effect.gen(function* () {
             const flow = yield* load(sessionId);
             const still = yield* checkpointRow(id).pipe(Effect.orDie);
@@ -907,7 +961,9 @@ export class Flows extends Context.Service<
           // the work as it is. While Fern writes one, the Checkpoint is held.
           let walkthrough: CheckpointWalkthrough | "writing" | undefined;
           if (now === "implement") {
-            const open = yield* ticketsExit(sessionId);
+            const open = (yield* stacks.landsAsStack(sessionId))
+              ? yield* prsExit(sessionId)
+              : yield* ticketsExit(sessionId);
             if (open) return open;
             const exit = yield* walkthroughExit(sessionId);
             if (exit !== "writing" && "isError" in exit) return exit;
@@ -1049,7 +1105,10 @@ export class Flows extends Context.Service<
           // Sent before anything is recorded, so a send that fails leaves the verdict to retry.
           if (accepted.length > 0)
             yield* turns.send(checkpoint.sessionId, {
-              text: acceptedMessage(accepted),
+              text: acceptedMessage(
+                accepted,
+                yield* stacks.landsAsStack(checkpoint.sessionId),
+              ),
             });
           const phases = yield* phasesOf(checkpoint.sessionId);
           yield* sql
@@ -1100,6 +1159,36 @@ export class Flows extends Context.Service<
           : finishRetro(checkpoint, findings, record, decidedAt);
         yield* bump;
       }, deciding.withPermits(1));
+
+      // How many Findings the developer accepted in the Session's Retro.
+      const acceptedOf = SqlSchema.findOne({
+        Request: Schema.String,
+        Result: Schema.Struct({ accepted: Schema.Int }),
+        execute: (sessionId) => sql`
+          SELECT COUNT(*) AS accepted FROM findings
+          JOIN checkpoints ON checkpoints.id = findings.checkpoint_id
+          WHERE checkpoints.session_id = ${sessionId} AND checkpoints.phase = 'retro'
+            AND findings.verdict = 'accepted'`,
+      });
+
+      // The agent reports the commit with the accepted Findings: once Retro is over, it goes up as
+      // the top PR of the Stack.
+      const findingsLanded = (sessionId: string, commit: string) =>
+        Effect.gen(function* () {
+          const phases = yield* phasesOf(sessionId);
+          if (phases.find((p) => p.phase === "retro")?.status !== "done")
+            return {
+              text: "Retro isn't over yet. Report its Findings with `phase_done`; once the developer accepts any, Fern sends them for you to commit, and then you report that commit.",
+              isError: true,
+            } satisfies Answer;
+          const { accepted } = yield* acceptedOf(sessionId).pipe(Effect.orDie);
+          if (accepted === 0)
+            return {
+              text: "The developer accepted no Findings in this Session's Retro, so there's no Setup change to put up.",
+              isError: true,
+            } satisfies Answer;
+          return yield* stacks.landed(sessionId, { kind: "findings", commit });
+        });
 
       const phases = Effect.gen(function* () {
         const [sessions, rows] = yield* Effect.all([
@@ -1167,6 +1256,24 @@ export class Flows extends Context.Service<
             (args) => run(phaseDone(sessionId, args).pipe(Effect.map(reply))),
           ),
         ],
+      });
+      yield* tools.register({
+        when: (sessionId) => stacks.landsAsStack(sessionId),
+        tools: (sessionId) => [
+          tool(
+            "findings_landed",
+            FINDINGS_LANDED,
+            { commit: commitArg("the commit with the accepted Findings") },
+            ({ commit }) =>
+              run(findingsLanded(sessionId, commit).pipe(Effect.map(reply))),
+          ),
+        ],
+      });
+      yield* tools.register({
+        steering: CLOSED_STEERING,
+        when: (sessionId) =>
+          stacks.landsAsStack(sessionId).pipe(Effect.map((stack) => !stack)),
+        tools: () => [],
       });
 
       // Held Checkpoints carry on after a restart.
