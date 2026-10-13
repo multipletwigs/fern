@@ -5,6 +5,9 @@ directories:
 files:
   - dist/**
   - package.json
+# node-pty's native addon and the spawn-helper it execs have to sit on disk, outside the asar.
+asarUnpack:
+  - "**/node_modules/node-pty/**"
 # The built web app, served by the main process from Resources/web.
 extraResources:
   - from: ../web/dist
