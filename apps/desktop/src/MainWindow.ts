@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell } from "electron";
 import { Effect, Queue, Stream } from "effect";
 import { AppServer } from "./AppServer";
+import { linkAction } from "./links";
 
 const openWindow = Effect.fn("MainWindow.open")(function* (url: string) {
   const win = yield* Effect.acquireRelease(
@@ -23,15 +24,29 @@ const openWindow = Effect.fn("MainWindow.open")(function* (url: string) {
       ),
   );
 
-  // Keep external links in the user's browser instead of inside the app.
+  // A link to anything but Fern's own page goes to the developer's browser, if it's a web or mail
+  // link, rather than taking over the window; any other kind goes nowhere. Dropping a file anywhere
+  // but the composer would otherwise replace the app with that file.
+  const follow = (target: string) => {
+    const action = linkAction(target, url);
+    if (action === "external") void shell.openExternal(target);
+    return action === "app";
+  };
   win.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (!target.startsWith(url)) void shell.openExternal(target);
+    follow(target);
     return { action: "deny" };
   });
-  // Dropping a file anywhere but the composer would otherwise replace the app with that file.
   win.webContents.on("will-navigate", (event, target) => {
-    if (!target.startsWith(url)) event.preventDefault();
+    if (!follow(target)) event.preventDefault();
   });
+  // Nor may Fern's page be sent somewhere else on its way.
+  win.webContents.on("will-redirect", (event, target) => {
+    if (linkAction(target, url) !== "app") event.preventDefault();
+  });
+  // Fern asks for no camera, microphone, location or the like, so no page in its window gets them.
+  win.webContents.session.setPermissionRequestHandler(
+    (_contents, _permission, decide) => decide(false),
+  );
 
   yield* Effect.promise(() => win.loadURL(url));
 });

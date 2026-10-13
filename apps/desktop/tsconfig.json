@@ -8,5 +8,5 @@
     "moduleResolution": "Bundler",
     "noEmit": true
   },
-  "include": ["src", "scripts", "tsdown.config.ts"]
+  "include": ["src", "scripts", "test", "tsdown.config.ts"]
 }
