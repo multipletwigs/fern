@@ -1,0 +1,138 @@
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useEffectEvent,
+  useRef,
+} from "react";
+
+export interface ReviewItem {
+  readonly key: string;
+  // Its row in the list on the left, such as a `ReviewEntry`.
+  readonly entry: ReactNode;
+  // What fills the right while it's the open item.
+  readonly pane: ReactNode;
+}
+
+// Keys typed into a field are the field's.
+const isEditable = (target: EventTarget | null) =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT");
+
+const reducedMotion = () =>
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Anything the developer works through item by item: every item listed on the left, the open one
+// filling the right. The panes sit side by side and snap, so a new `at` slides sideways to it, and
+// swiping to another pane opens it. In a narrow layout the list folds to a rail of the items'
+// marks. Keys reach `onKeyDown` only while focus is inside the layout and not in a field, so typing
+// in the composer never moves it. It takes focus when it appears, or when `active` turns on, unless
+// the developer is typing somewhere.
+export function ReviewLayout({
+  label,
+  header,
+  items,
+  at,
+  active,
+  onSelect,
+  onKeyDown,
+}: {
+  label: string;
+  // Above the list, such as how far through the developer is.
+  header?: ReactNode;
+  items: ReadonlyArray<ReviewItem>;
+  at: number;
+  active: boolean;
+  onSelect: (index: number) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const placed = useRef(false);
+
+  useEffect(() => {
+    if (!active || isEditable(document.activeElement)) return;
+    root.current?.focus({ preventScroll: true });
+  }, [active]);
+
+  // Slide to the open pane: at once the first time, smoothly after. A pane that slides away goes
+  // inert, so focus inside it comes back to the layout to keep the keys working.
+  useEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const left = at * element.clientWidth;
+    if (Math.abs(element.scrollLeft - left) >= 1)
+      element.scrollTo({
+        left,
+        behavior: placed.current && !reducedMotion() ? "smooth" : "instant",
+      });
+    placed.current = true;
+    const focused = document.activeElement;
+    if (focused === document.body || focused?.closest("[inert]"))
+      root.current?.focus({ preventScroll: true });
+  }, [at]);
+
+  // The developer swiped: open the pane it settled on.
+  const onScrollEnd = useEffectEvent(() => {
+    const element = scroller.current;
+    if (!element || element.clientWidth === 0) return;
+    const landed = Math.round(element.scrollLeft / element.clientWidth);
+    if (landed !== at && landed >= 0 && landed < items.length) onSelect(landed);
+  });
+
+  return (
+    <div
+      ref={root}
+      tabIndex={-1}
+      aria-label={label}
+      onKeyDown={(event) => {
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        if (isEditable(event.target)) return;
+        onKeyDown(event);
+      }}
+      className="@container flex h-full min-h-0 outline-none"
+    >
+      <nav className="flex w-12 shrink-0 flex-col border-r border-hairline bg-side-panel @3xl:w-[272px]">
+        {header && (
+          <div className="hidden shrink-0 px-4 pt-5 pb-3 @3xl:block">
+            {header}
+          </div>
+        )}
+        <ol className="flex-1 space-y-0.5 overflow-y-auto px-1.5 pt-3 pb-6 @3xl:px-2 @3xl:pt-0">
+          {items.map((item, index) => (
+            <li key={item.key}>
+              <button
+                type="button"
+                tabIndex={-1}
+                data-active={index === at || undefined}
+                aria-current={index === at ? "step" : undefined}
+                onClick={() => onSelect(index)}
+                className="side-row h-auto justify-center py-2 text-left @3xl:px-2.5"
+              >
+                {item.entry}
+              </button>
+            </li>
+          ))}
+        </ol>
+      </nav>
+      <div
+        ref={scroller}
+        onScrollEnd={() => onScrollEnd()}
+        className="flex min-w-0 flex-1 snap-x snap-mandatory overflow-x-auto overflow-y-hidden [scrollbar-width:none]"
+      >
+        {items.map((item, index) => (
+          <section
+            key={item.key}
+            inert={index !== at}
+            className="h-full w-full shrink-0 snap-start snap-always overflow-y-auto"
+          >
+            {item.pane}
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
