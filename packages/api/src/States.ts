@@ -136,8 +136,14 @@ export const VerdictMode = Schema.Literals(["idle", "noting", "changing"]);
 export type VerdictMode = typeof VerdictMode.Type;
 
 // What a PR on a Session's Stack carries: a ticket's work, a fix for Rejections of the PRs below,
-// or the Setup change from the Retro's accepted Findings.
-export const StackPrKind = Schema.Literals(["ticket", "fix", "findings"]);
+// the Setup change from the Retro's accepted Findings, or, for a Session without tickets, all of
+// its work, as the one PR of its Stack.
+export const StackPrKind = Schema.Literals([
+  "ticket",
+  "fix",
+  "findings",
+  "session",
+]);
 export type StackPrKind = typeof StackPrKind.Type;
 
 // The issue tracker

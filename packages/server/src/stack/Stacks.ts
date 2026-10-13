@@ -1,5 +1,12 @@
-import { tool } from "@anthropic-ai/claude-agent-sdk";
-import { StackPrKind } from "@repo/api";
+import { getSessionInfo, tool } from "@anthropic-ai/claude-agent-sdk";
+import {
+  FlowPhase,
+  NothingToReview,
+  SessionNotFound,
+  StackPrKind,
+  WalkthroughError,
+  type WalkthroughInProgress,
+} from "@repo/api";
 import {
   Clock,
   Context,
@@ -9,15 +16,19 @@ import {
   Option,
   Schema,
   Semaphore,
+  Stream,
 } from "effect";
 import { SqlClient, SqlSchema } from "effect/sql";
 import { z } from "zod";
+import { sdk } from "../agentSdk";
 import { CodeHost, MergeRefused } from "../codehost/CodeHost";
 import { Git, type GitError } from "../git/Git";
 import { IssueTracker, IssueTrackerTimeout } from "../issue/IssueTracker";
 import { FernTools } from "../turn/FernTools";
 import { HostedSessions } from "../turn/HostedSessions";
+import { Turns } from "../turn/Turns";
 import { Walkthroughs } from "../walkthrough/Walkthroughs";
+import { Worktrees } from "../worktree/Worktrees";
 import { StackEligibility } from "./StackEligibility";
 
 // One draft PR on a Session's Stack, as Fern records it.
@@ -77,6 +88,9 @@ export const commitArg = (what: string) =>
 
 export const STEERING = `This Session's work lands as a GitHub Stack: one draft PR per ticket, in the order the tickets merge into this Session's branch, each based on the one below. Each time a ticket merges into this Session's branch, call Fern's \`ticket_landed\` tool with the ticket's issue number and the merge commit's full hash on this Session's branch. Fern pushes a branch at that commit, opens the ticket's draft PR on top of the Stack, and writes its Walkthrough while you carry on with the next ticket. This replaces pushing to \`main\`: never push to \`main\` or open PRs yourself, whatever the repo's docs say. Implement is done once every one of those tickets has its PR in the Stack: tickets close when the Stack lands, so don't wait for them to. When the developer's Rejections of a PR's Walkthrough reach you, commit the fix on this Session's branch, then call \`fix_landed\` with that commit and a title for the fix: it goes up as a new PR on top of the Stack, so never change the PRs below.`;
 
+// Where a Session without tickets lands as a Stack of one PR, which Fern keeps up to date itself.
+export const ONE_PR_STEERING = `When this Session has no tickets, because the developer skipped Spec, its work lands as one draft PR on GitHub instead, which Fern keeps up to date itself: don't report anything with \`ticket_landed\` or \`fix_landed\`. Commit your work on this Session's branch as you go: after each of your turns, Fern pushes the branch to the PR and writes a Walkthrough of what was committed since the previous one. Changes you leave uncommitted are in neither, so Implement isn't done, and the PR can't land, while there are any. Never push to \`main\` or open PRs yourself, whatever the repo's docs say. When the developer's Rejections reach you, commit the fix on this Session's branch: Fern's next Walkthrough shows it.`;
+
 const TICKET_LANDED = `Report that a ticket merged into this Session's branch. Fern pushes a branch at the merge commit and opens the ticket's draft PR on top of the Session's Stack, then writes its Walkthrough in the background. Report tickets in the order they merged.`;
 
 const FIX_LANDED = `Report a fix for the developer's Rejections, committed on this Session's branch. Fern pushes a branch at the commit and opens its draft PR on top of the Session's Stack, then writes its Walkthrough in the background, linked to the Rejections it fixes.`;
@@ -92,6 +106,20 @@ const openingBody = (report: Landed) =>
     "Fern is writing this PR's Walkthrough.",
     ...(report.kind === "ticket" ? [`Closes #${report.ticket}`] : []),
   ].join("\n\n");
+
+// What a Session's one PR is called: the Session's title, as the sidebar shows it, without the
+// skill its first message starts (`/grill-with-docs`).
+const sessionTitle = (sessionId: string, branch: string) =>
+  sdk("getSessionInfo", () => getSessionInfo(sessionId)).pipe(
+    Effect.map(
+      (info) =>
+        (info?.customTitle ?? info?.summary ?? "")
+          .trim()
+          .replace(/^\/\S+\s+/u, "") || `Session on ${branch}`,
+    ),
+    Effect.orElseSucceed(() => `Session on ${branch}`),
+    Effect.map((title) => title.slice(0, MAX_TITLE)),
+  );
 
 // What the report is, as the agent hears it.
 const named = (report: Landed) =>
@@ -116,6 +144,26 @@ export class Stacks extends Context.Service<
     // Whether the Session's work lands as a Stack: it has PRs up already, or would put them up.
     // A Stack that's started stays one, even once its Project opts out or gh signs out.
     landsAsStack(sessionId: string): Effect.Effect<boolean>;
+    // Whether the Session's Stack is one PR carrying all its work, as for a Session whose Spec was
+    // skipped: it has that PR up already, or would put it up. Never for a Session whose Spec wrote
+    // tickets, nor for one still before Spec.
+    landsAsOnePr(sessionId: string): Effect.Effect<boolean>;
+    // Writes a Walkthrough of what changed since the Session's last one. On a Session's one PR, it's
+    // what was committed on the Session's branch: Fern pushes the branch to the PR, opening the PR
+    // with its first Walkthrough. Elsewhere, a snapshot of the working tree.
+    write(
+      sessionId: string,
+    ): Effect.Effect<
+      void,
+      | SessionNotFound
+      | NothingToReview
+      | WalkthroughInProgress
+      | WalkthroughError
+    >;
+    // What the Session's one PR waits on before it can Land, besides its Walkthroughs: the agent
+    // working, uncommitted changes, or commits no Walkthrough covers yet. Nothing for any other
+    // Stack.
+    onePrWaits(sessionId: string): Effect.Effect<ReadonlyArray<string>>;
     // Puts what landed at the commit up as the top PR of the Session's Stack. What to answer the
     // agent, never a failure.
     landed(sessionId: string, report: Landed): Effect.Effect<Answer>;
@@ -138,6 +186,8 @@ export class Stacks extends Context.Service<
       const walkthroughs = yield* Walkthroughs;
       const git = yield* Git;
       const tools = yield* FernTools;
+      const turns = yield* Turns;
+      const worktrees = yield* Worktrees;
       const patience = Duration.fromInputUnsafe(yield* IssueTrackerTimeout);
       // One report at a time, so each PR's base is the one opened before it.
       const reporting = yield* Semaphore.make(1);
@@ -210,6 +260,185 @@ export class Stacks extends Context.Service<
             (report.kind === "findings" && pr.kind === "findings"),
         );
 
+      const worktreeOf = (sessionId: string) =>
+        hosted.worktrees.pipe(
+          Effect.map((all) => all.find((w) => w.id === sessionId)),
+        );
+
+      // Whether the Session has no tickets: Spec is behind it, skipped or done, and wrote none.
+      const phasesOf = SqlSchema.findOneOption({
+        Request: Schema.String,
+        Result: Schema.Struct({
+          phases: Schema.fromJsonString(Schema.Array(FlowPhase)),
+        }),
+        execute: (sessionId) =>
+          sql`SELECT phases FROM flows WHERE session_id = ${sessionId}`,
+      });
+      const specWithTickets = SqlSchema.findAll({
+        Request: Schema.String,
+        Result: Schema.Struct({ id: Schema.String }),
+        execute: (sessionId) => sql`
+          SELECT id FROM checkpoints
+          WHERE session_id = ${sessionId} AND phase = 'spec' AND status = 'approved'
+            AND spec IS NOT NULL
+          LIMIT 1`,
+      });
+      const ticketless = (sessionId: string) =>
+        Effect.gen(function* () {
+          const flow = yield* phasesOf(sessionId);
+          const spec = Option.getOrUndefined(flow)?.phases.find(
+            (p) => p.phase === "spec",
+          )?.status;
+          if (spec !== "done" && spec !== "skipped") return false;
+          return (yield* specWithTickets(sessionId)).length === 0;
+        }).pipe(Effect.orDie);
+
+      const landsAsOnePr = (sessionId: string) =>
+        prs(sessionId).pipe(
+          Effect.flatMap((up) =>
+            up.length > 0
+              ? Effect.succeed(up.some((pr) => pr.kind === "session"))
+              : ticketless(sessionId).pipe(
+                  Effect.flatMap((none) =>
+                    none
+                      ? eligibility.applies(sessionId)
+                      : Effect.succeed(false),
+                  ),
+                ),
+          ),
+        );
+
+      // Puts what was committed on the Session's branch since its one PR's last Walkthrough up in
+      // the PR, opening the PR the first time, and writes a Walkthrough of it. The Walkthrough is
+      // stored before the PR's head moves, so the PR never looks covered while it isn't.
+      const writeOne = Effect.fn("Stacks.writeOne")(
+        function* (sessionId: string) {
+          if (!(yield* eligibility.applies(sessionId)))
+            return yield* new WalkthroughError({
+              message:
+                "Fern can't update this Session's PR right now: its Project opted out of Stacks, or `gh` isn't ready.",
+            });
+          const session = yield* worktreeOf(sessionId);
+          if (!session) return yield* new SessionNotFound({ id: sessionId });
+          const repo = session.worktree;
+          const pr = (yield* prs(sessionId)).find((p) => p.kind === "session");
+          const tip = yield* commitOf(repo, `refs/heads/${session.branch}`);
+          const from =
+            pr?.mergeCommit ??
+            (yield* forkPoint(repo, tip, session.baseCommit));
+          const [fromTree, tipTree] = yield* Effect.all([
+            git.run(repo, ["rev-parse", `${from}^{tree}`]),
+            git.run(repo, ["rev-parse", `${tip}^{tree}`]),
+          ]);
+          if (fromTree.trim() === tipTree.trim())
+            return yield* new NothingToReview({ sessionId });
+          if (pr) {
+            yield* walkthroughs.writePr(sessionId, {
+              id: pr.id,
+              cwd: session.cwd,
+              from,
+              to: tip,
+              since: "previous",
+            });
+            yield* codeHost.push(session.cwd, {
+              commit: tip,
+              branch: pr.branch,
+              replacing: pr.mergeCommit,
+            });
+            return yield* sql`UPDATE stack_prs SET merge_commit = ${tip} WHERE id = ${pr.id}`.pipe(
+              Effect.orDie,
+            );
+          }
+          const branch = `fern/${session.branch}/session`;
+          const title = yield* sessionTitle(sessionId, session.branch);
+          yield* codeHost.push(session.cwd, { commit: tip, branch });
+          const opened = yield* codeHost.openDraft(session.cwd, {
+            head: branch,
+            base: TRUNK,
+            title,
+            body: "Fern is writing this PR's Walkthrough.",
+          });
+          const pr1: StackPr = {
+            id: crypto.randomUUID(),
+            sessionId,
+            position: 1,
+            kind: "session",
+            ticket: null,
+            title,
+            mergeCommit: tip,
+            branch,
+            base: TRUNK,
+            number: opened.number,
+            url: opened.url,
+            createdAt: yield* Clock.currentTimeMillis,
+          };
+          yield* sql`INSERT INTO stack_prs ${sql.insert(pr1)}`.pipe(
+            Effect.orDie,
+          );
+          return yield* walkthroughs.writePr(sessionId, {
+            id: pr1.id,
+            cwd: session.cwd,
+            from,
+            to: tip,
+            since: "start",
+          });
+        },
+        Effect.catchTags({
+          CodeHostError: (error) =>
+            Effect.fail(
+              new WalkthroughError({
+                message: `Fern couldn't push the Session's PR to GitHub (${error.message})`,
+              }),
+            ),
+          GitError: (error: GitError) =>
+            Effect.fail(new WalkthroughError({ message: error.message })),
+        }),
+      );
+
+      const write = (sessionId: string) =>
+        landsAsOnePr(sessionId).pipe(
+          Effect.flatMap((one) =>
+            one
+              ? reporting.withPermits(1)(writeOne(sessionId))
+              : walkthroughs.write(sessionId),
+          ),
+        );
+
+      const onePrWaits = Effect.fn("Stacks.onePrWaits")(
+        function* (sessionId: string) {
+          const pr = (yield* prs(sessionId)).find((p) => p.kind === "session");
+          const session = yield* worktreeOf(sessionId);
+          if (!pr || !session) return [];
+          const [running, dirty, tipTree, prTree] = yield* Effect.all([
+            turns.running.pipe(Effect.map((ids) => ids.includes(sessionId))),
+            worktrees.isDirty(session.worktree),
+            git.run(session.worktree, [
+              "rev-parse",
+              `refs/heads/${session.branch}^{tree}`,
+            ]),
+            git.run(session.worktree, ["rev-parse", `${pr.mergeCommit}^{tree}`]),
+          ]);
+          return [
+            ...(running ? ["The agent is still working on the Session."] : []),
+            ...(dirty
+              ? [
+                  "The Session's worktree has changes that aren't committed, and its PR carries only what's committed. Commit them on the Session's branch, or throw them away.",
+                ]
+              : []),
+            ...(tipTree.trim() === prTree.trim()
+              ? []
+              : [
+                  "What's been committed on the Session's branch since its last Walkthrough has no Walkthrough yet.",
+                ]),
+          ];
+        },
+        Effect.catch((error) =>
+          Effect.succeed([
+            `Fern couldn't read the Session's worktree (${error.message}).`,
+          ]),
+        ),
+      );
+
       const put = Effect.fn("Stacks.landed")(function* (
         sessionId: string,
         report: Landed,
@@ -220,6 +449,10 @@ export class Stacks extends Context.Service<
             stack.length > 0
               ? "Fern can't put anything on this Session's Stack right now: its Project opted out of Stacks, or `gh` isn't ready. Report it again once that's fixed."
               : "This Session's work doesn't land as a Stack: its Project is off GitHub, opted out of Stacks, or `gh` isn't ready. Land it as the repo's docs say.",
+          );
+        if (yield* landsAsOnePr(sessionId))
+          return refused(
+            "This Session has no tickets, so its work goes up as one PR, which Fern pushes after each of your turns: commit on this Session's branch, and there's nothing to report.",
           );
         const session = (yield* hosted.worktrees).find(
           (w) => w.id === sessionId,
@@ -336,11 +569,6 @@ export class Stacks extends Context.Service<
                 ),
             }),
           );
-
-      const worktreeOf = (sessionId: string) =>
-        hosted.worktrees.pipe(
-          Effect.map((all) => all.find((w) => w.id === sessionId)),
-        );
 
       const land = Effect.fn("Stacks.land")(
         function* (sessionId: string) {
@@ -477,8 +705,52 @@ export class Stacks extends Context.Service<
         );
 
       const run = Effect.runPromiseWith(yield* Effect.context());
+      // Each turn a Session without tickets finishes, its one PR catches up with its branch.
+      yield* turns.finished.pipe(
+        Stream.runForEach(({ id }) =>
+          Effect.when(write(id), landsAsOnePr(id)).pipe(
+            Effect.catchTags({
+              NothingToReview: () => Effect.void,
+              WalkthroughInProgress: () => Effect.void,
+            }),
+            Effect.catch((error) =>
+              Effect.logWarning(
+                "Couldn't write the Walkthrough of the Session's PR",
+                error._tag === "SessionNotFound" ? error._tag : error.message,
+              ),
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+
+      // A Stack of tickets: up already, or to come, but not a Session's one PR. A Session's steering
+      // is set as its Claude Code process opens, usually before Spec says whether it has tickets,
+      // so until then it's told about both.
+      const ticketed = (sessionId: string) =>
+        Effect.all([landsAsStack(sessionId), landsAsOnePr(sessionId)]).pipe(
+          Effect.map(([stack, one]) => stack && !one),
+        );
+      const mayBeOnePr = (sessionId: string) =>
+        Effect.gen(function* () {
+          if (!(yield* landsAsStack(sessionId))) return false;
+          const up = yield* prs(sessionId);
+          if (up.length > 0) return up.some((pr) => pr.kind === "session");
+          return (
+            (yield* specWithTickets(sessionId).pipe(Effect.orDie)).length === 0
+          );
+        });
+      yield* tools.register({
+        steering: ONE_PR_STEERING,
+        when: mayBeOnePr,
+        tools: () => [],
+      });
       yield* tools.register({
         steering: STEERING,
+        when: ticketed,
+        tools: () => [],
+      });
+      yield* tools.register({
         when: (sessionId) => landsAsStack(sessionId),
         tools: (sessionId) => [
           tool(
@@ -539,7 +811,16 @@ export class Stacks extends Context.Service<
         ],
       });
 
-      return Stacks.of({ prs, landsAsStack, landed, land, merged });
+      return Stacks.of({
+        prs,
+        landsAsStack,
+        landsAsOnePr,
+        write,
+        onePrWaits,
+        landed,
+        land,
+        merged,
+      });
     }),
   ).pipe(Layer.provide(Git.layer));
 }

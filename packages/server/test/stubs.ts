@@ -7,6 +7,7 @@ import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
 import { ProjectSettings } from "../src/project/ProjectSettings";
 import { Rounds } from "../src/round/Rounds";
 import { StackEligibility } from "../src/stack/StackEligibility";
+import { Stacks } from "../src/stack/Stacks";
 import { Subagents } from "../src/subagent/Subagents";
 import { Terminals } from "../src/terminal/Terminals";
 import { Tools } from "../src/tools/Tools";
@@ -94,6 +95,31 @@ export const UnusedWalkthroughs = Layer.succeed(
     redirect: () => Effect.die("unused"),
     rewrite: () => Effect.die("unused"),
     openRejections: () => Effect.die("unused"),
+  }),
+);
+
+const unusedStacks = Stacks.of({
+  prs: () => Effect.die("unused"),
+  landsAsStack: () => Effect.die("unused"),
+  landsAsOnePr: () => Effect.die("unused"),
+  write: () => Effect.die("unused"),
+  onePrWaits: () => Effect.die("unused"),
+  landed: () => Effect.die("unused"),
+  land: () => Effect.die("unused"),
+  merged: () => Effect.die("unused"),
+});
+
+export const UnusedStacks = Layer.succeed(Stacks, unusedStacks);
+
+// No Session's work lands as a Stack, so every Walkthrough asked for is a snapshot's.
+export const SnapshotsOnly = Layer.effect(
+  Stacks,
+  Effect.gen(function* () {
+    const walkthroughs = yield* Walkthroughs;
+    return Stacks.of({
+      ...unusedStacks,
+      write: (sessionId) => walkthroughs.write(sessionId),
+    });
   }),
 );
 

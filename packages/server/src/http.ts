@@ -102,8 +102,10 @@ export const WalkthroughsHandlers = HttpApiBuilder.group(
   "walkthroughs",
   Effect.fn(function* (handlers) {
     const walkthroughs = yield* Walkthroughs;
+    // On a Session's one PR, a Walkthrough the developer asks for goes to the PR too.
+    const stacks = yield* Stacks;
     return handlers.handleAll({
-      write: ({ payload }) => walkthroughs.write(payload.session),
+      write: ({ payload }) => stacks.write(payload.session),
       verdict: ({ params, payload }) =>
         walkthroughs.verdict(params.id, params.item, payload),
       redirect: ({ params }) => walkthroughs.redirect(params.id),
