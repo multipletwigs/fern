@@ -1,5 +1,10 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { type BoundaryAutonomy, type Phase, PHASES } from "@repo/api";
+import {
+  type Boundary,
+  type BoundaryAutonomy,
+  type Phase,
+  PHASES,
+} from "@repo/api";
 import { AutonomyWithdrawn } from "@repo/ui/AutonomyWithdrawn";
 import type { BoundaryState } from "@repo/ui/FlowBoundary";
 import { FlowChecklist } from "@repo/ui/FlowChecklist";
@@ -9,7 +14,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import { autonomyAtom } from "../autonomy/atoms";
 import { flowAtom, skipPhaseAtom } from "./atoms";
-import { PHASE_TITLES } from "./phases";
+import { BOUNDARY_TITLES, PHASE_TITLES } from "./phases";
 
 // Who passes the boundary at the end of a Phase: the developer, with the streak where Autonomy
 // can be earned, or Fern. Once an Escape withdraws Autonomy, the boundary says so with the streak
@@ -24,8 +29,10 @@ const boundaryState = (at: BoundaryAutonomy | undefined): BoundaryState => {
   return { kind: "needsYou", streak };
 };
 
-// "Spec → Implement" for the boundary at the end of Spec.
-const boundaryTitle = (phase: Phase) => {
+// "Spec → Implement" for the boundary at the end of Spec; "Land" for Land.
+const boundaryTitle = (boundary: Boundary) => {
+  if (boundary === "land") return BOUNDARY_TITLES.land;
+  const phase: Phase = boundary;
   const next = PHASES[PHASES.indexOf(phase) + 1];
   return next
     ? `${PHASE_TITLES[phase]} → ${PHASE_TITLES[next]}`

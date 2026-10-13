@@ -92,6 +92,8 @@ export const UnusedWalkthroughs = Layer.succeed(
     writePr: () => Effect.die("unused"),
     verdict: () => Effect.die("unused"),
     redirect: () => Effect.die("unused"),
+    rewrite: () => Effect.die("unused"),
+    openRejections: () => Effect.die("unused"),
   }),
 );
 
@@ -110,6 +112,9 @@ export const UnusedCodeHost = Layer.succeed(
     openDraft: () => Effect.die("unused"),
     link: () => Effect.die("unused"),
     setBody: () => Effect.die("unused"),
+    markReady: () => Effect.die("unused"),
+    merge: () => Effect.die("unused"),
+    state: () => Effect.die("unused"),
   }),
 );
 
@@ -163,6 +168,7 @@ export const UnusedFlows = Layer.succeed(
     isOver: () => Effect.die("unused"),
     approve: () => Effect.die("unused"),
     decline: () => Effect.die("unused"),
+    send: () => Effect.die("unused"),
     skip: () => Effect.die("unused"),
     findingVerdict: () => Effect.die("unused"),
   }),

@@ -22,3 +22,7 @@ export const walkthroughsAtom = Atom.family((sessionId: string) =>
 export const writeWalkthroughAtom = ApiClient.mutation("walkthroughs", "write");
 export const verdictAtom = ApiClient.mutation("walkthroughs", "verdict");
 export const redirectAtom = ApiClient.mutation("walkthroughs", "redirect");
+export const rewriteWalkthroughAtom = ApiClient.mutation(
+  "walkthroughs",
+  "rewrite",
+);

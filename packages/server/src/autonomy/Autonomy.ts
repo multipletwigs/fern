@@ -9,7 +9,6 @@ import {
   MilestoneNotFound,
   MilestoneStatus,
   type Phase,
-  PHASES,
   SessionAutonomy,
 } from "@repo/api";
 import {
@@ -59,27 +58,38 @@ const toMilestone = (row: MilestoneRow) =>
 
 const isBoundary = Schema.is(Boundary);
 
-// Autonomy each Project earns at the two earnable boundaries, the end of Spec and the end of
-// Implement. Flows reports every pass and declined Checkpoint there; AUTONOMY_THRESHOLD clean
+// Where a Checkpoint stops a Session: the end of a Phase, or Land.
+export type Stop = Phase | Boundary;
+
+// The Phase whose Checkpoint closes the window for an Escape at each boundary. Nothing comes after
+// Land, so a Redirect after Fern landed a Stack is an Escape until the Session is archived.
+const NEXT: Record<Boundary, Phase | undefined> = {
+  spec: "implement",
+  implement: "retro",
+  land: undefined,
+};
+
+// Autonomy each Project earns at the earnable boundaries: the end of Spec, the end of Implement,
+// and Land. Flows reports every pass and declined Checkpoint there; AUTONOMY_THRESHOLD clean
 // passes in a row offer a Milestone, and once the developer accepts it Flows asks `covers` and
 // approves that boundary itself. Ending a Grill and accepting Findings are never covered.
 export class Autonomy extends Context.Service<
   Autonomy,
   {
     // Whether Fern approves the end of the Phase itself, in the Session's Project.
-    covers(sessionId: string, phase: Phase): Effect.Effect<boolean>;
+    covers(sessionId: string, phase: Stop): Effect.Effect<boolean>;
     // The developer approved the end of the Phase: a clean pass if nothing was declined there in
     // the Session, which may offer a Milestone.
-    approved(sessionId: string, phase: Phase): Effect.Effect<void>;
+    approved(sessionId: string, phase: Stop): Effect.Effect<void>;
     // The developer declined a Checkpoint at the end of the Phase: its streak starts over.
-    declined(sessionId: string, phase: Phase): Effect.Effect<void>;
+    declined(sessionId: string, phase: Stop): Effect.Effect<void>;
     // Fern approved the end of the Phase in the Session under Autonomy.
-    approvedByFern(sessionId: string, phase: Phase): Effect.Effect<void>;
+    approvedByFern(sessionId: string, phase: Stop): Effect.Effect<void>;
     // Takes back the Project's Autonomy and any open offer at the boundary, with why (an Escape
     // slipped past it), and starts its streak over. Phases that aren't earnable are ignored.
     withdraw(
       project: string,
-      boundary: Phase,
+      boundary: Stop,
       reason: string,
     ): Effect.Effect<void>;
     // The developer redirected the Session: a message of their own, or a Walkthrough's Rejections.
@@ -203,7 +213,7 @@ export class Autonomy extends Context.Service<
         });
 
       // The Session's Project and the boundary the Phase ends, when it's earnable.
-      const where = (sessionId: string, phase: Phase) =>
+      const where = (sessionId: string, phase: Stop) =>
         Effect.gen(function* () {
           if (!isBoundary(phase)) return undefined;
           const project = yield* hosted.projectOf(sessionId);
@@ -225,7 +235,7 @@ export class Autonomy extends Context.Service<
 
       const covers = Effect.fn("Autonomy.covers")(function* (
         sessionId: string,
-        phase: Phase,
+        phase: Stop,
       ) {
         const at = yield* where(sessionId, phase);
         if (!at) return false;
@@ -233,7 +243,7 @@ export class Autonomy extends Context.Service<
       });
 
       const approved = Effect.fn("Autonomy.approved")(
-        function* (sessionId: string, phase: Phase) {
+        function* (sessionId: string, phase: Stop) {
           const at = yield* where(sessionId, phase);
           if (!at) return;
           const before = yield* sessionEvents({
@@ -261,7 +271,7 @@ export class Autonomy extends Context.Service<
 
       const declined = Effect.fn("Autonomy.declined")(function* (
         sessionId: string,
-        phase: Phase,
+        phase: Stop,
       ) {
         const at = yield* where(sessionId, phase);
         if (!at) return;
@@ -271,7 +281,7 @@ export class Autonomy extends Context.Service<
 
       const approvedByFern = Effect.fn("Autonomy.approvedByFern")(function* (
         sessionId: string,
-        phase: Phase,
+        phase: Stop,
       ) {
         const at = yield* where(sessionId, phase);
         if (!at) return;
@@ -295,7 +305,7 @@ export class Autonomy extends Context.Service<
         });
 
       const withdraw = Effect.fn("Autonomy.withdraw")(
-        function* (project: string, boundary: Phase, reason: string) {
+        function* (project: string, boundary: Stop, reason: string) {
           if (!isBoundary(boundary)) return;
           yield* withdrawAt(project, boundary, reason);
           yield* bump;
@@ -308,7 +318,7 @@ export class Autonomy extends Context.Service<
         function* (sessionId: string, redirect: Redirect) {
           let escaped = false;
           for (const boundary of BOUNDARIES) {
-            const next = PHASES[PHASES.indexOf(boundary) + 1] ?? "";
+            const next = NEXT[boundary] ?? "";
             const open = yield* escapable({ sessionId, boundary, next });
             if (Option.isNone(open)) continue;
             yield* withdrawAt(

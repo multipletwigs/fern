@@ -180,6 +180,13 @@ export class ReviewClosed extends Schema.TaggedError<ReviewClosed>()(
   { httpApiStatus: 409 },
 ) {}
 
+// Only a PR's Walkthrough that couldn't be written is written again.
+export class NotRewritable extends Schema.TaggedError<NotRewritable>()(
+  "NotRewritable",
+  { id: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
 export class WalkthroughError extends Schema.TaggedError<WalkthroughError>()(
   "WalkthroughError",
   { message: Schema.String },
@@ -228,6 +235,14 @@ export class WalkthroughsApi extends HttpApiGroup.make("walkthroughs")
         SessionInUse,
         WalkthroughError,
       ],
+    }),
+  )
+  .add(
+    // Writes a PR's Walkthrough that couldn't be written again, of the same change.
+    HttpApiEndpoint.post("rewrite", "/:id/rewrite", {
+      params: { id: Schema.NonEmptyString },
+      success: HttpApiSchema.NoContent,
+      error: [WalkthroughNotFound, NotRewritable],
     }),
   )
   .prefix("/walkthroughs") {}

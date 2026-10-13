@@ -354,8 +354,13 @@ const autonomyOf = (
 const at = (autonomy: SessionAutonomy, boundary: string) =>
   autonomy.boundaries.find((b) => b.boundary === boundary);
 
+// The boundaries at the end of a Phase. Land, the other, needs a Stack, which these Projects off
+// GitHub never have; test/land.test.ts covers it.
+const ofPhases = (autonomy: SessionAutonomy) =>
+  autonomy.boundaries.filter((b) => b.boundary !== "land");
+
 const streaks = (autonomy: SessionAutonomy) =>
-  autonomy.boundaries.map(
+  ofPhases(autonomy).map(
     (b: BoundaryAutonomy) => `${b.boundary}:${b.streak}/${b.threshold}`,
   );
 
@@ -520,16 +525,16 @@ layer(server, { excludeTestServices: true })("Autonomy", (it) => {
           yield* approveAt(last, "retro");
         }
         const offered = yield* autonomyOf(last, (a) =>
-          a.boundaries.every((b) => b.offer !== undefined),
+          ofPhases(a).every((b) => b.offer !== undefined),
         );
         // Only the end of Spec and the end of Implement are earnable.
         assert.deepStrictEqual(
-          offered.boundaries.map((b) => b.boundary),
+          ofPhases(offered).map((b) => b.boundary),
           ["spec", "implement"],
         );
-        for (const b of offered.boundaries)
+        for (const b of ofPhases(offered))
           yield* client.autonomy.accept({ params: { id: b.offer?.id ?? "" } });
-        yield* autonomyOf(last, (a) => a.boundaries.every((b) => b.granted));
+        yield* autonomyOf(last, (a) => ofPhases(a).every((b) => b.granted));
 
         // Fern approves the end of Implement only with a Walkthrough to link to.
         editing = true;
@@ -547,9 +552,9 @@ layer(server, { excludeTestServices: true })("Autonomy", (it) => {
         yield* turnWhere(id, (t) => t.text === "/retro");
         const retro = yield* checkpointAt(id, "retro");
         const mine = yield* autonomyOf(id, (a) =>
-          a.boundaries.every((b) => b.approvedByFern),
+          ofPhases(a).every((b) => b.approvedByFern),
         );
-        assert.isTrue(mine.boundaries.every((b) => b.granted));
+        assert.isTrue(ofPhases(mine).every((b) => b.granted));
         // Its Findings wait for a verdict each; approving the Checkpoint is refused.
         const live = yield* makeLive;
         const flow = yield* firstWhere(
@@ -699,7 +704,7 @@ const autonomousImplement = Effect.gen(function* () {
     yield* approveAt(last, "implement");
   }
   const offered = yield* autonomyOf(last, (a) =>
-    a.boundaries.every((b) => b.offer !== undefined),
+    ofPhases(a).every((b) => b.offer !== undefined),
   );
   const client = yield* makeClient;
   yield* client.autonomy.accept({

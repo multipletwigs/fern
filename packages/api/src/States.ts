@@ -66,6 +66,11 @@ export const CheckpointStatus = Schema.Literals([
 ]);
 export type CheckpointStatus = typeof CheckpointStatus.Type;
 
+// What a Checkpoint waits on the developer for: the end of a Phase, or landing the Session's Stack
+// on `main` once Retro is over.
+export const CheckpointKind = Schema.Literals(["phase", "land"]);
+export type CheckpointKind = typeof CheckpointKind.Type;
+
 // A Checkpoint as the server stores it: also `held`, not yet shown, at the end of Implement until
 // the Session's Walkthrough is written.
 export const StoredCheckpointStatus = Schema.Literals([

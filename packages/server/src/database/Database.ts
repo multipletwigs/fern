@@ -284,6 +284,15 @@ const migrations = {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE stack_prs ADD COLUMN kind TEXT NOT NULL DEFAULT 'ticket'`;
   }),
+  // What each Checkpoint waits on: the end of a Phase, as every Checkpoint before this did, or
+  // landing the Session's Stack, stored with phase 'retro', the Phase it follows. A Land Checkpoint
+  // keeps GitHub's reason for refusing its last merge, and when that went to the agent.
+  "0017_land_checkpoints": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE checkpoints ADD COLUMN kind TEXT NOT NULL DEFAULT 'phase'`;
+    yield* sql`ALTER TABLE checkpoints ADD COLUMN refusal TEXT`;
+    yield* sql`ALTER TABLE checkpoints ADD COLUMN refusal_sent_at INTEGER`;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

@@ -38,7 +38,9 @@ export function CheckpointQueue({
                 {titles.get(checkpoint.sessionId) ?? "Session"}
               </span>
               <span className="shrink-0 font-mono text-[10px] tracking-wide text-amber/80 uppercase">
-                End of {PHASE_TITLES[checkpoint.phase]}
+                {checkpoint.kind === "land"
+                  ? "Land"
+                  : `End of ${PHASE_TITLES[checkpoint.phase]}`}
               </span>
             </button>
           </li>

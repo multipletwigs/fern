@@ -154,6 +154,9 @@ const FakeCodeHost = Layer.succeed(
         });
       }),
     setBody: () => Effect.void,
+    markReady: () => Effect.void,
+    merge: () => Effect.void,
+    state: () => Effect.succeed({ merged: false }),
   }),
 );
 
