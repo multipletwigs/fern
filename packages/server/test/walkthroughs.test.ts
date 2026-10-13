@@ -36,6 +36,7 @@ import {
 import {
   NoEscapes,
   NoStacks,
+  UnusedCodeHost,
   UnusedCommands,
   UnusedProjectSettings,
   UnusedFlows,
@@ -178,6 +179,7 @@ const Services = Layer.mergeAll(
       Writer,
       NoEscapes,
       NoStacks,
+      UnusedCodeHost,
       DatabaseLive(":memory:"),
     ]),
   ),
