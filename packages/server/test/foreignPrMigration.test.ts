@@ -155,6 +155,9 @@ it.effect(
             prRepo: null,
             prNumber: null,
             mergeBase: null,
+            reviewUrl: null,
+            reviewPostedAt: null,
+            reviewError: null,
           },
           {
             id: "w2",
@@ -176,6 +179,9 @@ it.effect(
             prRepo: null,
             prNumber: null,
             mergeBase: null,
+            reviewUrl: null,
+            reviewPostedAt: null,
+            reviewError: null,
           },
         ],
       );

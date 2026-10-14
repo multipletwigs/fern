@@ -1,5 +1,19 @@
-import { GhPrState, type PrListState, type PrState } from "@repo/api";
-import { Context, Duration, Effect, Layer, Schema, Stream } from "effect";
+import {
+  type DiffSide,
+  GhPrState,
+  type PrListState,
+  type PrReviewEvent,
+  type PrState,
+} from "@repo/api";
+import {
+  Context,
+  Duration,
+  Effect,
+  Layer,
+  Option,
+  Schema,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 // A branch name Fern can pass to git and `gh` as it is: no leading dash, nothing git refuses in a
@@ -56,6 +70,26 @@ export interface HostIssue {
 export interface HostPullRequestDetail extends HostPullRequest {
   readonly body: string;
   readonly issue: HostIssue | undefined;
+}
+
+// A review to post on a PR: on which of its commits, what it says of the PR, its body, and notes on
+// single lines of the PR's diff.
+export interface HostReview {
+  readonly commit: string;
+  readonly event: PrReviewEvent;
+  readonly body: string;
+  readonly comments: ReadonlyArray<{
+    readonly path: string;
+    readonly line: number;
+    readonly side: DiffSide;
+    readonly body: string;
+  }>;
+}
+
+// A review that went up: where it is, and when GitHub took it, in milliseconds.
+export interface HostPostedReview {
+  readonly url: string;
+  readonly postedAt: number;
 }
 
 // A Stack on the repo, as GitHub has it: its PRs' numbers, bottom first, open or not.
@@ -167,6 +201,44 @@ const StacksPage = Schema.fromJsonString(
     }),
   ),
 );
+// A review GitHub took, as its REST API has it.
+const PostedPrReview = Schema.fromJsonString(
+  Schema.Struct({ html_url: Schema.String, submitted_at: Schema.String }),
+);
+// Why GitHub's REST API refused a call, as `gh api` prints its answer: a message, and sometimes
+// more particular errors, as sentences or objects with a message.
+const RestRefusal = Schema.fromJsonString(
+  Schema.Struct({
+    message: Schema.String,
+    errors: Schema.optional(
+      Schema.Array(
+        Schema.Union([
+          Schema.String,
+          Schema.Struct({ message: Schema.optional(Schema.String) }),
+        ]),
+      ),
+    ),
+  }),
+);
+// GitHub's reason for refusing, in plain words: its particular errors when it gave some, else its
+// message, else what `gh` said.
+const refusalOf = (stdout: string, stderr: string, exitCode: number) => {
+  const answer = Option.getOrUndefined(
+    Schema.decodeOption(RestRefusal)(stdout.trim()),
+  );
+  if (answer === undefined)
+    return (
+      plainly(stderr.replace(/^gh:\s*/gmu, "")) ||
+      `GitHub refused (gh exit ${exitCode}).`
+    );
+  const particular = (answer.errors ?? []).flatMap((e) =>
+    typeof e === "string" ? [e] : e.message === undefined ? [] : [e.message],
+  );
+  return particular.length > 0
+    ? particular.map(sentence).join(" ")
+    : sentence(answer.message);
+};
+
 // A GitHub login, as `gh api user` prints it.
 const Login = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9[\]-]{1,64}$/));
 
@@ -350,6 +422,14 @@ export class CodeHost extends Context.Service<
       cwd: string,
       commits: { readonly from: string; readonly to: string },
     ): Effect.Effect<number, CodeHostError>;
+    // Posts the review on the PR, in one call: its body and its line comments together, or none of
+    // it. Fails with GitHub's reason, in plain words, as for a comment on a line the PR doesn't
+    // change, or approving one's own PR.
+    postReview(
+      cwd: string,
+      pr: number,
+      review: HostReview,
+    ): Effect.Effect<HostPostedReview, CodeHostError>;
   }
 >()("@repo/server/codehost/CodeHost") {
   static readonly layer = Layer.effect(
@@ -737,6 +817,54 @@ export class CodeHost extends Context.Service<
         },
       );
 
+      // As JSON on stdin, so nothing the review says, the developer's notes and the writer's
+      // Section titles included, ever reaches an argument.
+      const postReview = Effect.fn("CodeHost.postReview")(function* (
+        cwd: string,
+        pr: number,
+        review: HostReview,
+      ) {
+        if (!Number.isInteger(pr) || pr <= 0)
+          return yield* new CodeHostError({
+            message: `#${pr} isn't a PR number.`,
+          });
+        const { stdout, stderr, exitCode } = yield* exec(
+          cwd,
+          "gh",
+          [
+            "api",
+            "-X",
+            "POST",
+            `repos/{owner}/{repo}/pulls/${pr}/reviews`,
+            "--input",
+            "-",
+          ],
+          JSON.stringify({
+            commit_id: review.commit,
+            event: review.event,
+            body: review.body,
+            comments: review.comments.map((c) => ({
+              path: c.path,
+              line: c.line,
+              side: c.side,
+              body: c.body,
+            })),
+          }),
+        );
+        if (exitCode !== 0)
+          return yield* new CodeHostError({
+            message: refusalOf(stdout, stderr, exitCode),
+          });
+        const posted = yield* Effect.succeed(stdout).pipe(
+          read(PostedPrReview, "review"),
+        );
+        const postedAt = Date.parse(posted.submitted_at);
+        return {
+          url: posted.html_url,
+          postedAt: Number.isNaN(postedAt) ? Date.now() : postedAt,
+        };
+      }, late(CALL_TIMEOUT));
+
       // A page at a time, until each PR is found or a page comes back short of full. A repo
       // without Stacks answers 404.
       const stacks = Effect.fn("CodeHost.stacks")(function* (
@@ -808,6 +936,7 @@ export class CodeHost extends Context.Service<
         pullRequest,
         fetchPullRequest,
         commitsAhead,
+        postReview,
       });
     }),
   );

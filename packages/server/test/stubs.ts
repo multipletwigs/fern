@@ -103,6 +103,9 @@ export const UnusedWalkthroughs = Layer.succeed(
     foreignStates: () => Effect.die("unused"),
     lastWritten: () => Effect.die("unused"),
     liveForeignStates: () => Stream.die("unused"),
+    foreign: () => Effect.die("unused"),
+    reviewPosted: () => Effect.die("unused"),
+    reviewRefused: () => Effect.die("unused"),
     openRejections: () => Effect.die("unused"),
   }),
 );
@@ -149,6 +152,7 @@ export const NotListing = {
   pullRequest: () => Effect.die("unused"),
   fetchPullRequest: () => Effect.die("unused"),
   commitsAhead: () => Effect.die("unused"),
+  postReview: () => Effect.die("unused"),
 };
 
 // A code host Fern never asks, where no Session's work lands as a Stack.
@@ -206,6 +210,8 @@ export const UnusedPullRequests = Layer.succeed(
     list: () => Effect.die("unused"),
     walkThrough: () => Effect.die("unused"),
     walkThroughStack: () => Effect.die("unused"),
+    review: () => Effect.die("unused"),
+    postReview: () => Effect.die("unused"),
     tryIt: () => Effect.die("unused"),
     dismiss: () => Effect.die("unused"),
     worktree: () => Effect.die("unused"),

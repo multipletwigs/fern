@@ -77,7 +77,7 @@ export function PullRequestsPage({ root }: { root: string }) {
         repo={list.repo}
         number={open}
         pr={pr}
-        walkthrough={pr && walkthroughOf(pr, live)}
+        latest={pr && walkthroughOf(pr, live)}
         onBack={() => setOpen(undefined)}
         onChanged={refresh}
       />

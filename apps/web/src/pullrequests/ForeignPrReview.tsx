@@ -20,7 +20,7 @@ export function ForeignPrReview({
   repo,
   number,
   pr,
-  walkthrough,
+  latest,
   onBack,
   onChanged,
 }: {
@@ -31,7 +31,7 @@ export function ForeignPrReview({
   // The PR as last listed, when the list still has it.
   pr: ListedPullRequest | undefined;
   // Its latest Walkthrough, as it stands now.
-  walkthrough: PrWalkthrough | undefined;
+  latest: PrWalkthrough | undefined;
   onBack: () => void;
   // Told when the PR's worktree is checked out or removed, for the list to show it.
   onChanged: () => void;
@@ -77,16 +77,23 @@ export function ForeignPrReview({
           active
           actions={
             pr !== undefined &&
-            foreignPrStateOf(pr, walkthrough) === "stale" && (
+            foreignPrStateOf(pr, latest) === "stale" && (
               <WalkThroughButton
                 root={root}
                 number={number}
-                label={walkThroughNewLabel(walkthrough?.newCommits)}
+                label={walkThroughNewLabel(latest?.newCommits)}
                 disabled={writing}
               />
             )
           }
-          outcome={ForeignReviewOutcome}
+          renderOutcome={(walkthrough) => (
+            <ForeignReviewOutcome
+              walkthrough={walkthrough}
+              root={root}
+              number={number}
+              open={pr?.state === "open"}
+            />
+          )}
           retry={
             <WalkThroughButton
               root={root}

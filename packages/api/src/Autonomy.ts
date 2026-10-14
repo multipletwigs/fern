@@ -12,7 +12,11 @@ import { MilestoneStatus } from "./States";
 export const Boundary = Schema.Literals(["spec", "implement", "land"]);
 export type Boundary = typeof Boundary.Type;
 
-export const BOUNDARIES: ReadonlyArray<Boundary> = ["spec", "implement", "land"];
+export const BOUNDARIES: ReadonlyArray<Boundary> = [
+  "spec",
+  "implement",
+  "land",
+];
 
 // Clean passes in a row that earn a Milestone.
 export const AUTONOMY_THRESHOLD = 5;

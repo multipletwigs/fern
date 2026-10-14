@@ -195,6 +195,7 @@ const FakeCodeHost = Layer.succeed(
         git(cwd, "update-ref", prHeadRef(number), found.head);
         git(cwd, "update-ref", prBaseRef(number), found.base);
       }),
+    postReview: () => Effect.die("unused"),
   }),
 );
 
