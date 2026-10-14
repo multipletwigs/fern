@@ -63,6 +63,7 @@ case "$1 $2" in
   "pr view")
     case "$3" in
       77) echo '{"number":77,"url":"https://github.com/acme/app/pull/77","title":"Dark mode","body":"Adds it.","author":{"login":"monalisa"},"headRefName":"dark","baseRefName":"main","headRefOid":"cccc","isDraft":false,"state":"OPEN","reviewRequests":[],"closingIssuesReferences":[{"number":70,"url":"https://github.com/acme/app/issues/70"}]}' ;;
+      79) echo '{"number":79,"url":"https://github.com/acme/app/pull/79","title":"Leak","body":"","author":{"login":"mallory"},"headRefName":"leak","baseRefName":"main","headRefOid":"eeee","isDraft":false,"state":"OPEN","reviewRequests":[],"closingIssuesReferences":[{"number":1,"url":"https://github.com/acme/secret/issues/1"}]}' ;;
       78) echo '{"number":78,"url":"https://github.com/acme/app/pull/78","title":"Typo","body":"","author":null,"headRefName":"typo","baseRefName":"main","headRefOid":"dddd","isDraft":true,"state":"MERGED","reviewRequests":[],"closingIssuesReferences":[]}' ;;
       *) echo '{"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","reviewDecision":"REVIEW_REQUIRED"}' ;;
     esac
@@ -373,6 +374,12 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
             [unlinked.state, unlinked.author, unlinked.issue],
             ["merged", "ghost", undefined],
           );
+          assert.lengthOf(calls(), 1);
+
+          // An issue on another repo is never read, as it could be one only the developer sees.
+          writeFileSync(log, "");
+          const elsewhere = yield* host.pullRequest("/", 79);
+          assert.isUndefined(elsewhere.issue);
           assert.lengthOf(calls(), 1);
         }),
       ),

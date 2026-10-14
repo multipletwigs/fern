@@ -80,21 +80,57 @@ export class PrWorktrees extends Context.Service<
       const run = (cwd: string, args: ReadonlyArray<string>) =>
         git.run(cwd, args).pipe(Effect.mapError((e) => failed(e.message)));
 
+      // Git config that turns off every filter the developer has set up, such as git-lfs's: the
+      // PR's own .gitattributes choose which filter runs on which file, and a filter runs a
+      // command, so checking a PR out, or asking its worktree's status, would run them at the PR's
+      // say-so. Its files are checked out as committed.
+      const unfiltered = (repo: string) =>
+        git.run(repo, ["config", "--get-regexp", "^filter\\."]).pipe(
+          // None set: git exits 1.
+          Effect.orElseSucceed(() => ""),
+          Effect.map((out) => {
+            const names = new Set(
+              out
+                .split("\n")
+                .map((line) => line.split(" ")[0] ?? "")
+                .filter((key) => key.startsWith("filter."))
+                .map((key) =>
+                  key.slice("filter.".length, key.lastIndexOf(".")),
+                ),
+            );
+            return [...names].flatMap((name) => [
+              "-c",
+              `filter.${name}.smudge=`,
+              "-c",
+              `filter.${name}.clean=`,
+              "-c",
+              `filter.${name}.process=`,
+              "-c",
+              `filter.${name}.required=false`,
+            ]);
+          }),
+        );
+
       const checkout = Effect.fn("PrWorktrees.checkout")(function* (
         root: string,
         pr: PrKey,
         commit: string,
       ) {
         const worktree = yield* path(pr);
+        const off = yield* unfiltered(root);
         if (
           yield* fs.exists(worktree).pipe(Effect.orElseSucceed(() => false))
         ) {
-          const status = yield* run(worktree, ["status", "--porcelain"]);
+          const status = yield* run(worktree, [
+            ...off,
+            "status",
+            "--porcelain",
+          ]);
           if (status.trim() !== "")
             return yield* failed(
               `PR #${pr.number}'s worktree has changes not committed. Commit or discard them first.`,
             );
-          yield* run(worktree, ["checkout", "-q", "--detach", commit]);
+          yield* run(worktree, [...off, "checkout", "-q", "--detach", commit]);
           return worktree;
         }
         const top = yield* run(root, ["rev-parse", "--show-toplevel"]).pipe(
@@ -103,6 +139,7 @@ export class PrWorktrees extends Context.Service<
         // A worktree deleted by hand is still registered until pruned, which would refuse it.
         yield* run(top, ["worktree", "prune"]);
         yield* run(top, [
+          ...off,
           "worktree",
           "add",
           "-q",

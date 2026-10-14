@@ -687,7 +687,14 @@ export class CodeHost extends Context.Service<
           "--json",
           `${PR_FIELDS},body,closingIssuesReferences`,
         ]).pipe(read(ViewedPr, "PR"));
-        const [closes] = viewed.closingIssuesReferences;
+        // Only an issue on the PR's own repo: one elsewhere could be one only the developer can
+        // see, and what's read goes to the writer of a PR anyone could have opened.
+        const issues = viewed.url.replace(/\/pull\/\d+$/u, "/issues/");
+        const closes = viewed.closingIssuesReferences.find(
+          (issue) =>
+            issue.url.startsWith(issues) &&
+            issue.url.slice(issues.length) === String(issue.number),
+        );
         return {
           ...hostPr(viewed),
           body: viewed.body,

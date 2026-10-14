@@ -587,6 +587,50 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
       }),
   );
 
+  it.effect(
+    "checking a PR out runs none of the developer's git filters, whatever its .gitattributes ask for",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const initial = git(root, "rev-parse", "HEAD");
+        const head = commitOn(root, initial, {
+          ".gitattributes": "*.ts filter=evil\n",
+          "a.ts": "export const a = 9;\n",
+        });
+        opened(14, { head, base: initial });
+        // A filter of the developer's own, as git-lfs installs one.
+        const marker = join(root, "..", `smudged-${crypto.randomUUID()}`);
+        git(root, "config", "filter.evil.smudge", `touch ${marker} && cat`);
+        git(root, "config", "filter.evil.process", `touch ${marker}`);
+        git(root, "config", "filter.evil.required", "true");
+        answers = (request) => [
+          {
+            sections: [
+              section("Bump a", [
+                hunkIn(request, "a.ts"),
+                hunkIn(request, ".gitattributes"),
+              ]),
+            ],
+            notFromSession: [],
+          },
+        ];
+        const client = yield* makeClient;
+        yield* client.pullRequests.walkThrough({
+          params: { number: 14 },
+          payload: { root },
+        });
+        assert.strictEqual(only(yield* written(14)).status, "ready");
+        assert.isFalse(existsSync(marker));
+        assert.strictEqual(
+          readFileSync(
+            join(dataDir, "prs", "acme", "app", "14", "a.ts"),
+            "utf8",
+          ),
+          "export const a = 9;\n",
+        );
+      }),
+  );
+
   it.effect("a PR that changes nothing has nothing to walk through", () =>
     Effect.gen(function* () {
       const root = project();
