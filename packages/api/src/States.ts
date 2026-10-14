@@ -182,6 +182,18 @@ export const PrWalkthroughState = Schema.Literals([
 ]);
 export type PrWalkthroughState = typeof PrWalkthroughState.Type;
 
+// Where a Foreign PR stands with the developer's Walkthroughs of it, as the Pull requests page
+// filters it: none to read (none written, or its latest failed or being written), its latest
+// waiting on the developer's verdicts, Reviewed, or stale: written of a head the PR has since moved
+// on from.
+export const ForeignPrState = Schema.Literals([
+  "none",
+  "unreviewed",
+  "reviewed",
+  "stale",
+]);
+export type ForeignPrState = typeof ForeignPrState.Type;
+
 // The developer's tools
 
 // The tools Fern runs on that the developer installs and signs in to themselves: Claude Code, the

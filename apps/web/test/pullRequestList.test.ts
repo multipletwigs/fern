@@ -1,5 +1,12 @@
 import { assert, it } from "@effect/vitest";
-import { ListedPullRequest, ListedStack, PullRequestList } from "@repo/api";
+import {
+  ListedPullRequest,
+  ListedStack,
+  PrWalkthrough,
+  PrWalkthroughOf,
+  PullRequestList,
+} from "@repo/api";
+import { liveWalkthroughs } from "../src/pullrequests/prWalkthroughs";
 import {
   authorChoices,
   defaultFilters,
@@ -165,15 +172,21 @@ it("search finds PRs by title, branch or number, whatever the case", () => {
   assert.deepStrictEqual(searched(""), [12, 120, 7, 31]);
 });
 
-it("each preset sets whose PRs show, keeping the draft, state and search filters; Mine is the default", () => {
+it("each preset sets whose PRs show, keeping the draft, Walkthrough, state and search filters; Mine is the default", () => {
   const narrowed = filters({
     author: { login: "hubot" },
     reviewRequested: true,
     draft: "ready",
+    walkthrough: "stale",
     state: "merged",
     search: "theme",
   });
-  const kept = { draft: "ready", state: "merged", search: "theme" } as const;
+  const kept = {
+    draft: "ready",
+    walkthrough: "stale",
+    state: "merged",
+    search: "theme",
+  } as const;
   assert.deepStrictEqual(withPreset(narrowed, "mine"), {
     author: "me",
     reviewRequested: false,
@@ -232,11 +245,85 @@ it("filters combine: a PR shows only when it passes every one", () => {
   );
 });
 
+// A Foreign PR's latest Walkthrough, of the head `at`.
+const walked = (
+  state: PrWalkthrough["state"],
+  at: string,
+): Partial<ListedPullRequest> => ({
+  walkthrough: new PrWalkthrough({ state, head: at }),
+});
+const HEAD = "1".padStart(40, "a");
+
+it("the Walkthrough filter shows the PRs with none to read, one to review, one Reviewed, or one the PR has moved on from", () => {
+  const fetched = list(
+    [
+      stack(901, [
+        pr(1, walked("reviewed", HEAD)),
+        pr(2, { headCommit: HEAD, ...walked("reviewed", "old") }),
+        pr(3, { session: "hosted" }),
+      ]),
+    ],
+    [
+      pr(4),
+      pr(5, { headCommit: HEAD, ...walked("unreviewed", HEAD) }),
+      pr(6, { headCommit: HEAD, ...walked("unreviewed", "old") }),
+      pr(7, walked("failed", HEAD)),
+      pr(8, walked("writing", HEAD)),
+      pr(9, { author: "hubot" }),
+    ],
+  );
+  const by = (walkthrough: PrFilters["walkthrough"]) =>
+    shown(fetched, filters({ walkthrough }));
+  assert.deepStrictEqual(by("any"), {
+    stacks: [[1, 2, 3]],
+    lone: [4, 5, 6, 7, 8],
+  });
+  // A Hosted Session's PR has its Session's Walkthroughs: no Foreign PR's state.
+  assert.deepStrictEqual(by("none"), {
+    stacks: [],
+    lone: [4, 7, 8],
+  });
+  assert.deepStrictEqual(by("unreviewed"), { stacks: [], lone: [5] });
+  assert.deepStrictEqual(by("reviewed"), {
+    stacks: [[1, "(2)", "(3)"]],
+    lone: [],
+  });
+  assert.deepStrictEqual(by("stale"), {
+    stacks: [["(1)", 2, "(3)"]],
+    lone: [6],
+  });
+  // It combines with the others.
+  assert.deepStrictEqual(
+    shown(fetched, filters({ walkthrough: "none", author: "anyone" })),
+    { stacks: [], lone: [4, 7, 8, 9] },
+  );
+});
+
+it("the Walkthrough filter goes by each PR's Walkthrough as it stands now, not as last fetched", () => {
+  const fetched = list([], [pr(1, walked("writing", HEAD)), pr(2)]);
+  const live = liveWalkthroughs([
+    new PrWalkthroughOf({
+      number: 1,
+      walkthrough: new PrWalkthrough({ state: "unreviewed", head: HEAD }),
+    }),
+  ]);
+  const toReview = filters({ walkthrough: "unreviewed" });
+  assert.strictEqual(
+    rowsOf(fetched, toReview).empty?.text,
+    "No pull requests match these filters.",
+  );
+  assert.deepStrictEqual(
+    rowsOf(fetched, toReview, live).lone.map((p) => p.number),
+    [1],
+  );
+});
+
 // Every filter off, in a state.
 const cleared = (state: PrFilters["state"]): PrFilters => ({
   author: "anyone",
   reviewRequested: false,
   draft: "any",
+  walkthrough: "any",
   state,
   search: "",
 });

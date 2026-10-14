@@ -170,6 +170,9 @@ const StacksPage = Schema.fromJsonString(
 // A GitHub login, as `gh api user` prints it.
 const Login = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9[\]-]{1,64}$/));
 
+// A commit id, in full or abbreviated: nothing else goes into a compare.
+const CommitId = Schema.String.check(Schema.isPattern(/^[0-9a-f]{7,64}$/));
+
 // The repo's default branch, as `gh repo view` has it.
 const RepoView = Schema.fromJsonString(
   Schema.Struct({ defaultBranchRef: Schema.Struct({ name: BranchName }) }),
@@ -341,6 +344,12 @@ export class CodeHost extends Context.Service<
       cwd: string,
       pr: { readonly number: number; readonly base: string },
     ): Effect.Effect<void, CodeHostError>;
+    // How many commits `to` has that `from` doesn't, as GitHub compares the two, so it needs
+    // neither fetched. Both are commit ids.
+    commitsAhead(
+      cwd: string,
+      commits: { readonly from: string; readonly to: string },
+    ): Effect.Effect<number, CodeHostError>;
   }
 >()("@repo/server/codehost/CodeHost") {
   static readonly layer = Layer.effect(
@@ -763,6 +772,26 @@ export class CodeHost extends Context.Service<
         return found;
       }, late(LIST_TIMEOUT));
 
+      // One commit per page: only the count is read.
+      const commitsAhead = Effect.fn("CodeHost.commitsAhead")(function* (
+        cwd: string,
+        { from, to }: { readonly from: string; readonly to: string },
+      ) {
+        if (!Schema.is(CommitId)(from) || !Schema.is(CommitId)(to))
+          return yield* new CodeHostError({
+            message: "Fern compares commits by their ids only.",
+          });
+        return yield* ask(cwd, [
+          "api",
+          `repos/{owner}/{repo}/compare/${from}...${to}?per_page=1`,
+          "--jq",
+          ".ahead_by",
+        ]).pipe(
+          Effect.map((out) => out.trim()),
+          read(Schema.NumberFromString.check(Schema.isInt()), "count"),
+        );
+      });
+
       return CodeHost.of({
         ready,
         defaultBranch,
@@ -778,6 +807,7 @@ export class CodeHost extends Context.Service<
         stacks,
         pullRequest,
         fetchPullRequest,
+        commitsAhead,
       });
     }),
   );

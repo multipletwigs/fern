@@ -22,12 +22,14 @@ export const GitHubRepoName = Schema.String.check(
 );
 
 // Where a Foreign PR's latest Walkthrough stands: its state, the PR's head commit it explains, and
-// why writing it failed, when it did.
+// why writing it failed, when it did. Once the PR's head has moved on from it, the list also says
+// how many commits the head has that the Walkthrough's doesn't, when GitHub could count them.
 export class PrWalkthrough extends Schema.Class<PrWalkthrough>("PrWalkthrough")(
   {
     state: PrWalkthroughState,
     head: Schema.String,
     error: Schema.optional(Schema.String),
+    newCommits: Schema.optional(Schema.Int),
   },
 ) {}
 
@@ -129,11 +131,38 @@ export class PrNothingToReview extends Schema.TaggedError<PrNothingToReview>()(
   { httpApiStatus: 409 },
 ) {}
 
+// The PR's latest Walkthrough is at its head already: there is nothing new to walk through.
+export class PrWalkthroughUpToDate extends Schema.TaggedError<PrWalkthroughUpToDate>()(
+  "PrWalkthroughUpToDate",
+  { number: Schema.Int },
+  { httpApiStatus: 409 },
+) {}
+
+// The Stack isn't among the Project's PRs in the state asked for.
+export class PrStackNotFound extends Schema.TaggedError<PrStackNotFound>()(
+  "PrStackNotFound",
+  { id: Schema.Int },
+  { httpApiStatus: 404 },
+) {}
+
+// What Walk through Stack did, by PR number, bottom first: the PRs whose Walkthroughs it started,
+// and those it left alone, as up to date, being written already, a Hosted Session's, or changing
+// nothing.
+export class PrStackWalkthrough extends Schema.Class<PrStackWalkthrough>(
+  "PrStackWalkthrough",
+)({
+  started: Schema.Array(Schema.Int),
+  skipped: Schema.Array(Schema.Int),
+}) {}
+
 // A PR number, as a path parameter: a positive whole number.
 const PrNumber = Schema.NumberFromString.check(
   Schema.isInt(),
   Schema.isGreaterThan(0),
 );
+
+// A Stack's id on GitHub, as a path parameter: a positive whole number too.
+const StackId = PrNumber;
 
 export class PullRequestsApi extends HttpApiGroup.make("pullRequests")
   .add(
@@ -160,9 +189,11 @@ export class PullRequestsApi extends HttpApiGroup.make("pullRequests")
     }),
   )
   .add(
-    // Starts writing a Walkthrough of a Foreign PR, of its head from where it leaves its base: a
-    // fresh read-only agent reads the PR in a worktree of its own, never the developer's checkout
-    // (ADR 0010). Until it's written, the PR shows its Walkthrough as being written.
+    // Starts writing a Walkthrough of a Foreign PR at its head: a fresh read-only agent reads the
+    // PR in a worktree of its own, never the developer's checkout (ADR 0010). The first covers the
+    // PR from where it leaves its base. A later one covers only the commits since the previous one,
+    // unless the PR was force-pushed or its base moved, when it covers the whole PR again. Until
+    // it's written, the PR shows its Walkthrough as being written.
     HttpApiEndpoint.post("walkThrough", "/:number/walkthrough", {
       params: { number: PrNumber },
       payload: Schema.Struct({ root: Schema.NonEmptyString }),
@@ -174,7 +205,28 @@ export class PullRequestsApi extends HttpApiGroup.make("pullRequests")
         PullRequestsError,
         PullRequestNotForeign,
         PrWalkthroughInProgress,
+        PrWalkthroughUpToDate,
         PrNothingToReview,
+        WalkthroughError,
+      ],
+    }),
+  )
+  .add(
+    // Walks through each Foreign PR of the Stack, as the list in `state` holds it, bottom first,
+    // one at a time, as Walk through does: skipping those up to date or being written already.
+    HttpApiEndpoint.post("walkThroughStack", "/stacks/:id/walkthrough", {
+      params: { id: StackId },
+      payload: Schema.Struct({
+        root: Schema.NonEmptyString,
+        state: PrListState,
+      }),
+      success: PrStackWalkthrough,
+      error: [
+        ProjectNotFound,
+        WorkspaceError,
+        PullRequestsUnavailable,
+        PullRequestsError,
+        PrStackNotFound,
         WalkthroughError,
       ],
     }),

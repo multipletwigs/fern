@@ -2,10 +2,14 @@ import {
   ListedPullRequest,
   ListedStack,
   type PrNothingToReview,
+  PrStackNotFound,
   PrStackPlace,
+  PrStackWalkthrough,
   type PrListState,
-  type PrWalkthrough,
+  PrWalkthrough,
   PrWalkthroughInProgress,
+  type PrWalkthroughOf,
+  PrWalkthroughUpToDate,
   ProjectNotFound,
   PullRequestList,
   PullRequestNotForeign,
@@ -15,7 +19,16 @@ import {
   WalkthroughError,
   WorkspaceError,
 } from "@repo/api";
-import { Cache, Context, Effect, Layer, Option, Schema } from "effect";
+import {
+  Cache,
+  Context,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Schema,
+} from "effect";
 import { SqlClient, SqlSchema } from "effect/sql";
 import {
   CodeHost,
@@ -33,6 +46,10 @@ import { PrWorktrees } from "./PrWorktrees";
 // How long Fern goes by what git and `gh` last said about a Project's repo: long enough that the
 // sidebar asks once for every Project, short enough that signing in or out of `gh` soon shows.
 const REMEMBERED = "30 seconds";
+// How long Fern goes without a count of a PR's new commits GitHub couldn't give, before asking
+// again, and how many it asks for at once.
+const NOT_COUNTED = "5 minutes";
+const COMPARING = 4;
 
 // Where a Project's PRs are on GitHub: its repo, and who `gh` is signed in as.
 interface OnGitHub {
@@ -136,7 +153,23 @@ export class PullRequests extends Context.Service<
       | PullRequestsError
       | PullRequestNotForeign
       | PrWalkthroughInProgress
+      | PrWalkthroughUpToDate
       | PrNothingToReview
+      | WalkthroughError
+    >;
+    // Walks through the Stack's Foreign PRs as the list in `state` holds them, bottom first, one
+    // at a time, skipping any up to date.
+    walkThroughStack(
+      root: string,
+      id: number,
+      state: PrListState,
+    ): Effect.Effect<
+      PrStackWalkthrough,
+      | ProjectNotFound
+      | WorkspaceError
+      | PullRequestsUnavailable
+      | PullRequestsError
+      | PrStackNotFound
       | WalkthroughError
     >;
   }
@@ -217,6 +250,60 @@ export class PullRequests extends Context.Service<
           new PullRequestsError({ message: e.message }),
       );
 
+      // How many commits a PR's head has that its Walkthrough's doesn't, by `root\0from\0to`. Two
+      // commits always compare the same, so a count is kept for good; a failure is asked again
+      // after a while.
+      const ahead = yield* Cache.makeWith(
+        (key: string) => {
+          const [root = "", from = "", to = ""] = key.split("\0");
+          return codeHost.commitsAhead(root, { from, to });
+        },
+        {
+          capacity: 1024,
+          timeToLive: (exit) =>
+            Exit.isSuccess(exit) ? Duration.infinity : NOT_COUNTED,
+        },
+      );
+      // Each Foreign PR's latest Walkthrough, with how many commits came since, once its PR's head
+      // has moved on from a written one.
+      const withNewCommits = (
+        root: string,
+        prs: ReadonlyArray<HostPullRequest>,
+        latest: ReadonlyArray<PrWalkthroughOf>,
+      ) => {
+        const heads = new Map(prs.map((pr) => [pr.number, pr.headCommit]));
+        return Effect.forEach(
+          latest,
+          ({ number, walkthrough }) => {
+            const head = heads.get(number);
+            const written =
+              walkthrough.state === "unreviewed" ||
+              walkthrough.state === "reviewed";
+            if (!written || head === undefined || head === walkthrough.head)
+              return Effect.succeed([number, walkthrough] as const);
+            return Cache.get(
+              ahead,
+              `${root}\0${walkthrough.head}\0${head}`,
+            ).pipe(
+              Effect.option,
+              Effect.map(
+                (count) =>
+                  [
+                    number,
+                    new PrWalkthrough({
+                      state: walkthrough.state,
+                      head: walkthrough.head,
+                      error: walkthrough.error,
+                      newCommits: Option.getOrUndefined(count),
+                    }),
+                  ] as const,
+              ),
+            );
+          },
+          { concurrency: COMPARING },
+        );
+      };
+
       const list = Effect.fn("PullRequests.list")(function* (
         root: string,
         state: PrListState,
@@ -227,20 +314,18 @@ export class PullRequests extends Context.Service<
           [
             codeHost.stacks(root, chained(prs)).pipe(refused),
             sessionsOf(prs.map((pr) => pr.url)),
-            walkthroughs.foreignStates(repo),
+            walkthroughs
+              .foreignStates(repo)
+              .pipe(
+                Effect.flatMap((latest) => withNewCommits(root, prs, latest)),
+              ),
           ],
           { concurrency: "unbounded" },
         );
         return new PullRequestList({
           repo,
           login,
-          ...grouped(
-            prs,
-            stacks,
-            login,
-            sessions,
-            new Map(states.map((s) => [s.number, s.walkthrough])),
-          ),
+          ...grouped(prs, stacks, login, sessions, new Map(states)),
         });
       });
 
@@ -248,11 +333,21 @@ export class PullRequests extends Context.Service<
         git
           .run(root, ["rev-parse", "--verify", "-q", `${ref}^{commit}`])
           .pipe(Effect.map((out) => out.trim()));
+      // Any failure means no: then the Walkthrough covers the whole PR, which is never wrong.
+      const isAncestor = (root: string, ancestor: string, of: string) =>
+        git.run(root, ["merge-base", "--is-ancestor", ancestor, of]).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
 
-      // One at a time for each PR, so its worktree never moves while it's being read.
-      const walkThrough = Effect.fn("PullRequests.walkThrough")(function* (
+      // One at a time for each PR, so its worktree never moves while it's being read. After its
+      // first, a PR's Walkthrough covers only what came since the last one written, when that's
+      // honest: the PR's head grew from the last one's (no force-push), and the PR still leaves its
+      // base where it did (the base didn't move). Otherwise, the whole PR again.
+      const walkThroughIn = Effect.fn("PullRequests.walkThrough")(function* (
         root: string,
         number: number,
+        queue?: string,
       ) {
         const { repo } = yield* reached(root);
         const pr = yield* codeHost.pullRequest(root, number).pipe(refused);
@@ -267,6 +362,11 @@ export class PullRequests extends Context.Service<
             );
             if (latest?.walkthrough.state === "writing")
               return yield* new PrWalkthroughInProgress({ number });
+            const previous = Option.getOrUndefined(
+              yield* walkthroughs.lastWritten(repo, number),
+            );
+            if (previous?.head === pr.headCommit)
+              return yield* new PrWalkthroughUpToDate({ number });
             yield* codeHost
               .fetchPullRequest(root, { number, base: pr.baseRef })
               .pipe(refused);
@@ -278,12 +378,21 @@ export class PullRequests extends Context.Service<
               commitOf(root, prHeadRef(number)),
               commitOf(root, prBaseRef(number)),
             ]).pipe(gitFailed);
+            if (previous?.head === head)
+              return yield* new PrWalkthroughUpToDate({ number });
             const mergeBase = yield* git
               .run(root, ["merge-base", base, head])
               .pipe(
                 Effect.map((out) => out.trim()),
                 gitFailed,
               );
+            // The Walkthrough this one follows on from, when it only covers what came since.
+            const following =
+              previous !== undefined &&
+              previous.mergeBase === mergeBase &&
+              (yield* isAncestor(root, previous.head, head))
+                ? previous
+                : undefined;
             const cwd = yield* worktrees
               .checkout(root, key, head)
               .pipe(gitFailed);
@@ -297,15 +406,57 @@ export class PullRequests extends Context.Service<
                 body: pr.body,
                 issue: pr.issue,
               },
-              from: mergeBase,
+              since: following === undefined ? "pr" : "previous",
+              from: following?.head ?? mergeBase,
               to: head,
               mergeBase,
+              queue,
             });
           }),
         );
       });
+      const walkThrough = (root: string, number: number) =>
+        walkThroughIn(root, number);
 
-      return PullRequests.of({ available, list, walkThrough });
+      // Each of the Stack's PRs in turn, bottom first, behind the one below: those that can't be
+      // walked through as they stand are left alone, and anything else stops the run there.
+      const walkThroughStack = Effect.fn("PullRequests.walkThroughStack")(
+        function* (root: string, id: number, state: PrListState) {
+          const listed = yield* list(root, state);
+          const stack = listed.stacks.find((s) => s.id === id);
+          if (stack === undefined) return yield* new PrStackNotFound({ id });
+          const queue = `stack:${listed.repo}#${id}`;
+          const started: Array<number> = [];
+          const skipped: Array<number> = [];
+          for (const pr of stack.prs) {
+            const upToDate =
+              pr.walkthrough !== undefined &&
+              pr.walkthrough.state !== "failed" &&
+              pr.walkthrough.head === pr.headCommit;
+            const walked =
+              pr.session !== undefined || upToDate
+                ? false
+                : yield* walkThroughIn(root, pr.number, queue).pipe(
+                    Effect.as(true),
+                    Effect.catchTags({
+                      PullRequestNotForeign: () => Effect.succeed(false),
+                      PrWalkthroughInProgress: () => Effect.succeed(false),
+                      PrWalkthroughUpToDate: () => Effect.succeed(false),
+                      PrNothingToReview: () => Effect.succeed(false),
+                    }),
+                  );
+            (walked ? started : skipped).push(pr.number);
+          }
+          return new PrStackWalkthrough({ started, skipped });
+        },
+      );
+
+      return PullRequests.of({
+        available,
+        list,
+        walkThrough,
+        walkThroughStack,
+      });
     }),
   ).pipe(Layer.provide(Git.layer));
 }

@@ -16,9 +16,10 @@ import {
 } from "./atoms";
 import { ForeignPrReview } from "./ForeignPrReview";
 import { listStateOf, rowsOf } from "./list";
+import { WalkThroughStackButton } from "./WalkThroughStackButton";
 import { ListedPr } from "./ListedPr";
 import { NothingListed } from "./NothingListed";
-import { walkthroughOf } from "./prWalkthroughs";
+import { walkable, walkthroughOf } from "./prWalkthroughs";
 import { PullRequestFiltersBar } from "./PullRequestFiltersBar";
 import { useLiveWalkthroughs } from "./useLiveWalkthroughs";
 import { usePolling } from "./usePolling";
@@ -55,29 +56,32 @@ export function PullRequestsPage({ root }: { root: string }) {
     [projects],
   );
   const list = Option.getOrUndefined(AsyncResult.value(result));
-  const rows = useMemo(
-    () => (list === undefined ? undefined : rowsOf(list, filters)),
-    [list, filters],
-  );
   const live = useLiveWalkthroughs(list?.repo);
+  const rows = useMemo(
+    () => (list === undefined ? undefined : rowsOf(list, filters, live)),
+    [list, filters, live],
+  );
   const refreshing = AsyncResult.isInitial(result) || result.waiting;
   const failed = AsyncResult.isFailure(result)
     ? whyFailed(Option.getOrUndefined(Cause.findErrorOption(result.cause)))
     : undefined;
 
-  if (open !== undefined && list !== undefined)
+  if (open !== undefined && list !== undefined) {
+    const pr = [...list.lone, ...list.stacks.flatMap((s) => s.prs)].find(
+      (listed) => listed.number === open,
+    );
     return (
       <ForeignPrReview
         key={open}
         root={root}
         repo={list.repo}
         number={open}
-        pr={[...list.lone, ...list.stacks.flatMap((s) => s.prs)].find(
-          (pr) => pr.number === open,
-        )}
+        pr={pr}
+        walkthrough={pr && walkthroughOf(pr, live)}
         onBack={() => setOpen(undefined)}
       />
     );
+  }
 
   return (
     <PullRequestsPanel
@@ -114,6 +118,20 @@ export function PullRequestsPage({ root }: { root: string }) {
               number={stack.number}
               count={prs.length}
               authors={[...new Set(prs.map(({ pr }) => pr.author))]}
+              action={
+                prs.some(({ pr }) => pr.session === undefined) && (
+                  <WalkThroughStackButton
+                    root={root}
+                    id={stack.id}
+                    state={listStateOf(filters)}
+                    disabled={
+                      !prs.some(({ pr }) =>
+                        walkable(pr, walkthroughOf(pr, live)),
+                      )
+                    }
+                  />
+                )
+              }
             >
               {prs.map(({ pr, dimmed }) => (
                 <ListedPr

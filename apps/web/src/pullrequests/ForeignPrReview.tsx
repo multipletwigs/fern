@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { ListedPullRequest } from "@repo/api";
+import type { ListedPullRequest, PrWalkthrough } from "@repo/api";
 import { PullRequestReviewPanel } from "@repo/ui/PullRequestReviewPanel";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
@@ -8,16 +8,18 @@ import { ReviewQueue } from "../review/ReviewQueue";
 import { prReviewKey, prWalkthroughsAtom } from "./atoms";
 import { ForeignPrEmpty } from "./ForeignPrEmpty";
 import { ForeignReviewOutcome } from "./ForeignReviewOutcome";
+import { foreignPrStateOf, walkThroughNewLabel } from "./prWalkthroughs";
 import { WalkThroughButton } from "./WalkThroughButton";
 
-// A Foreign PR open on the Pull requests page: its Walkthroughs in the Review layout, with the same
-// keys as a Session's Review tab, or, before there are any, a way to ask for one. Verdicts stay in
-// Fern.
+// A Foreign PR open on the Pull requests page: its Walkthroughs in the Review layout, oldest first,
+// with the same keys as a Session's Review tab, or, before there are any, a way to ask for one.
+// Once the PR got commits since its latest, a way to walk through them. Verdicts stay in Fern.
 export function ForeignPrReview({
   root,
   repo,
   number,
   pr,
+  walkthrough,
   onBack,
 }: {
   root: string;
@@ -26,6 +28,8 @@ export function ForeignPrReview({
   number: number;
   // The PR as last listed, when the list still has it.
   pr: ListedPullRequest | undefined;
+  // Its latest Walkthrough, as it stands now.
+  walkthrough: PrWalkthrough | undefined;
   onBack: () => void;
 }) {
   const key = prReviewKey(repo, number);
@@ -62,12 +66,15 @@ export function ForeignPrReview({
           waiting={waitingCount(walkthroughs)}
           active
           actions={
-            <WalkThroughButton
-              root={root}
-              number={number}
-              label="Walk through again"
-              disabled={writing}
-            />
+            pr !== undefined &&
+            foreignPrStateOf(pr, walkthrough) === "stale" && (
+              <WalkThroughButton
+                root={root}
+                number={number}
+                label={walkThroughNewLabel(walkthrough?.newCommits)}
+                disabled={writing}
+              />
+            )
           }
           outcome={ForeignReviewOutcome}
           retry={

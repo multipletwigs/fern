@@ -25,6 +25,7 @@ import {
   CodeHost,
   CodeHostError,
   type HostPullRequestDetail,
+  type HostStack,
   prBaseRef,
   prHeadRef,
 } from "../src/codehost/CodeHost";
@@ -102,6 +103,17 @@ const commitOn = (
   return commit;
 };
 
+// A merge of `other` into `from`, made as on someone else's machine, as when an author brings their
+// PR up to date with the branch it's based on.
+const mergeOn = (repo: string, from: string, other: string) => {
+  const elsewhere = join(mkdtempSync(join(tmpdir(), "fern-fork-")), "work");
+  git(repo, "worktree", "add", "-q", "--detach", elsewhere, from);
+  git(elsewhere, "merge", "-q", "--no-edit", other);
+  const commit = git(elsewhere, "rev-parse", "HEAD");
+  git(repo, "worktree", "remove", "--force", elsewhere);
+  return commit;
+};
+
 // What GitHub has of the repo: each PR, and the commits its head and base branch are at.
 interface OnGitHub {
   readonly pr: HostPullRequestDetail;
@@ -109,6 +121,8 @@ interface OnGitHub {
   readonly base: string;
 }
 const github = new Map<number, OnGitHub>();
+// The repo's Stacks on GitHub.
+let stacksOnGitHub: ReadonlyArray<HostStack> = [];
 const fetched: Array<{ readonly cwd: string; readonly number: number }> = [];
 const prOf = (
   number: number,
@@ -155,7 +169,12 @@ const FakeCodeHost = Layer.succeed(
     login: () => Effect.succeed("octocat"),
     pullRequests: () =>
       Effect.sync(() => [...github.values()].map(({ pr }) => pr)),
-    stacks: () => Effect.succeed([]),
+    stacks: () => Effect.sync(() => stacksOnGitHub),
+    // As GitHub's compare would count them, for commits the repo has.
+    commitsAhead: (cwd, { from, to }) =>
+      Effect.sync(() =>
+        Number(git(cwd, "rev-list", "--count", `${from}..${to}`)),
+      ),
     pullRequest: (_cwd, number) =>
       Effect.suspend(() => {
         const found = github.get(number);
@@ -682,6 +701,266 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
           { tag: "PullRequestNotForeign", session: "hosted" },
         );
         assert.isFalse(existsSync(join(dataDir, "prs", "acme", "app", "13")));
+      }),
+  );
+
+  it.effect(
+    "after new commits the PR says how many, and walking through again explains only them, earlier verdicts standing",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const initial = git(root, "rev-parse", "HEAD");
+        const first = commitOn(root, initial, {
+          "a.ts": "export const a = 30;\n",
+        });
+        opened(30, { head: first, base: initial });
+        answers = (request) => [
+          {
+            sections: request.hunks.map((hunk) =>
+              section(`Change ${hunk.path}`, [hunk.id]),
+            ),
+            notFromSession: [],
+          },
+        ];
+        const client = yield* makeClient;
+        yield* client.pullRequests.walkThrough({
+          params: { number: 30 },
+          payload: { root },
+        });
+        const { id } = only(yield* written(30));
+        yield* client.walkthroughs.verdict({
+          params: { id, item: "s1" },
+          payload: { kind: "rejected", note: "a should stay small." },
+        });
+
+        // The author answers the review with two more commits.
+        const answer = commitOn(root, first, {
+          "a.ts": "export const a = 3;\n",
+        });
+        const second = commitOn(root, answer, {
+          "c.ts": "export const c = 1;\n",
+        });
+        opened(30, { head: second, base: initial });
+        const stale = (yield* listedAs(root, 30))?.walkthrough;
+        assert.deepStrictEqual(
+          [stale?.state, stale?.head, stale?.newCommits],
+          ["reviewed", first, 2],
+        );
+
+        yield* client.pullRequests.walkThrough({
+          params: { number: 30 },
+          payload: { root },
+        });
+        const [earlier, later] = yield* written(30, 2);
+        assert.deepStrictEqual(
+          [later?.number, later?.since, later?.status],
+          [2, "previous", "ready"],
+        );
+        assert.deepStrictEqual(
+          later?.sections.map((s) => s.hunks.map((h) => [h.path, h.lines])),
+          [
+            [["a.ts", ["-export const a = 30;", "+export const a = 3;"]]],
+            [["c.ts", ["+export const c = 1;"]]],
+          ],
+        );
+        // The developer's note on the first still stands, offered to the writer to say it's fixed.
+        assert.deepStrictEqual(
+          [
+            earlier?.reviewedAt !== undefined,
+            earlier?.sections[0]?.verdict?.kind,
+            earlier?.sections[0]?.verdict?.note,
+          ],
+          [true, "rejected", "a should stay small."],
+        );
+        assert.deepStrictEqual(
+          explored.at(-1)?.rejections.map((r) => r.note),
+          ["a should stay small."],
+        );
+        const current = (yield* listedAs(root, 30))?.walkthrough;
+        assert.deepStrictEqual(
+          [current?.state, current?.head, current?.newCommits],
+          ["unreviewed", second, undefined],
+        );
+
+        // Nothing new since: nothing to walk through again.
+        const again = yield* client.pullRequests
+          .walkThrough({ params: { number: 30 }, payload: { root } })
+          .pipe(Effect.flip);
+        assert.strictEqual(again._tag, "PrWalkthroughUpToDate");
+      }),
+  );
+
+  it.effect(
+    "after a force-push, walking through again explains the whole PR",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const initial = git(root, "rev-parse", "HEAD");
+        const first = commitOn(root, initial, {
+          "a.ts": "export const a = 31;\n",
+        });
+        opened(31, { head: first, base: initial });
+        answers = (request) => [
+          {
+            sections: request.hunks.map((hunk) =>
+              section(`Change ${hunk.path}`, [hunk.id]),
+            ),
+            notFromSession: [],
+          },
+        ];
+        const client = yield* makeClient;
+        yield* client.pullRequests.walkThrough({
+          params: { number: 31 },
+          payload: { root },
+        });
+        only(yield* written(31));
+
+        // Rewritten from where it left `main`: the first head is no longer in it.
+        const rewritten = commitOn(root, initial, {
+          "a.ts": "export const a = 32;\n",
+          "c.ts": "export const c = 1;\n",
+        });
+        opened(31, { head: rewritten, base: initial });
+        yield* client.pullRequests.walkThrough({
+          params: { number: 31 },
+          payload: { root },
+        });
+        const [, later] = yield* written(31, 2);
+        assert.strictEqual(later?.since, "pr");
+        assert.deepStrictEqual(
+          later?.sections.map((s) => s.hunks.map((h) => [h.path, h.lines])),
+          [
+            [["a.ts", ["-export const a = 1;", "+export const a = 32;"]]],
+            [["c.ts", ["+export const c = 1;"]]],
+          ],
+        );
+      }),
+  );
+
+  it.effect(
+    "after the PR's base moved, walking through again explains the whole PR, never the PR below's change",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const initial = git(root, "rev-parse", "HEAD");
+        // PR 32 on `main`, and PR 33 on top of it.
+        const below = commitOn(root, initial, {
+          "a.ts": "export const a = 32;\n",
+        });
+        const first = commitOn(root, below, {
+          "b.ts": "export const b = 1;\n",
+        });
+        opened(33, { head: first, base: below }, { baseRef: "branch-32" });
+        answers = (request) => [
+          {
+            sections: request.hunks.map((hunk) =>
+              section(`Change ${hunk.path}`, [hunk.id]),
+            ),
+            notFromSession: [],
+          },
+        ];
+        const client = yield* makeClient;
+        yield* client.pullRequests.walkThrough({
+          params: { number: 33 },
+          payload: { root },
+        });
+        only(yield* written(33));
+
+        // PR 32 changes, and PR 33's author brings it in: a fast-forward, but onto a new base.
+        const belowAgain = commitOn(root, below, {
+          "x.ts": "export const x = 1;\n",
+        });
+        const merged = mergeOn(root, first, belowAgain);
+        opened(
+          33,
+          { head: merged, base: belowAgain },
+          { baseRef: "branch-32" },
+        );
+        yield* client.pullRequests.walkThrough({
+          params: { number: 33 },
+          payload: { root },
+        });
+        const [, later] = yield* written(33, 2);
+        assert.strictEqual(later?.since, "pr");
+        assert.deepStrictEqual(
+          later?.sections.flatMap((s) => s.hunks.map((h) => h.path)),
+          ["b.ts"],
+        );
+      }),
+  );
+
+  it.effect(
+    "Walk through Stack writes its Foreign PRs bottom first, one at a time, skipping those up to date",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const initial = git(root, "rev-parse", "HEAD");
+        const bottom = commitOn(root, initial, {
+          "a.ts": "export const a = 40;\n",
+        });
+        const middle = commitOn(root, bottom, {
+          "b.ts": "export const b = 41;\n",
+        });
+        const top = commitOn(root, middle, {
+          "c.ts": "export const c = 42;\n",
+        });
+        opened(40, { head: bottom, base: initial });
+        opened(41, { head: middle, base: bottom }, { baseRef: "branch-40" });
+        opened(42, { head: top, base: middle }, { baseRef: "branch-41" });
+        stacksOnGitHub = [{ id: 900, number: 4, prs: [40, 41, 42] }];
+        answers = (request) => [
+          {
+            sections: request.hunks.map((hunk) =>
+              section(`Change ${hunk.path}`, [hunk.id]),
+            ),
+            notFromSession: [],
+          },
+        ];
+        const client = yield* makeClient;
+        // The middle one is up to date already.
+        yield* client.pullRequests.walkThrough({
+          params: { number: 41 },
+          payload: { root },
+        });
+        only(yield* written(41));
+
+        gate = yield* Deferred.make<void>();
+        const asked = explored.length;
+        const run = yield* client.pullRequests.walkThroughStack({
+          params: { id: 900 },
+          payload: { root, state: "open" },
+        });
+        assert.deepStrictEqual([run.started, run.skipped], [[40, 42], [41]]);
+        // Both show as being written, but only the bottom one is: the top waits its turn.
+        assert.deepStrictEqual(
+          [
+            (yield* listedAs(root, 40))?.walkthrough?.state,
+            (yield* listedAs(root, 42))?.walkthrough?.state,
+          ],
+          ["writing", "writing"],
+        );
+        assert.deepStrictEqual(
+          explored.slice(asked).map((r) => r.pr.number),
+          [40],
+        );
+        yield* Deferred.succeed(gate, undefined);
+        gate = undefined;
+        only(yield* written(40));
+        only(yield* written(42));
+        assert.deepStrictEqual(
+          explored.slice(asked).map((r) => r.pr.number),
+          [40, 42],
+        );
+        assert.strictEqual(only(yield* written(41)).number, 1);
+
+        const missing = yield* client.pullRequests
+          .walkThroughStack({
+            params: { id: 901 },
+            payload: { root, state: "open" },
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(missing._tag, "PrStackNotFound");
+        stacksOnGitHub = [];
       }),
   );
 });

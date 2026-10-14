@@ -205,6 +205,7 @@ const FakeCodeHost = Layer.succeed(
       }),
     pullRequest: () => Effect.die("unused"),
     fetchPullRequest: () => Effect.die("unused"),
+    commitsAhead: () => Effect.die("unused"),
   }),
 );
 

@@ -1,10 +1,16 @@
 import type {
+  ForeignPrState,
   ListedPullRequest,
   ListedStack,
   PrListState,
   PrState,
   PullRequestList,
 } from "@repo/api";
+import {
+  foreignPrStateOf,
+  type LiveWalkthroughs,
+  walkthroughOf,
+} from "./prWalkthroughs";
 
 // How the Pull requests page narrows the PRs it fetched, like a generic list: filters that combine,
 // presets that set them, and Stacks shown whole when only some of their PRs pass. Everything the
@@ -17,12 +23,17 @@ export type AuthorFilter =
 // Drafts, PRs ready for review, or either.
 export type DraftFilter = "any" | "draft" | "ready";
 
+// Foreign PRs where they stand with their Walkthroughs, or any PR.
+export type WalkthroughFilter = ForeignPrState | "any";
+
 // What the page narrows the fetched PRs to. They combine: a PR passes when it passes every one.
 export interface PrFilters {
   readonly author: AuthorFilter;
   // Only the PRs the developer is asked to review.
   readonly reviewRequested: boolean;
   readonly draft: DraftFilter;
+  // A Hosted Session's PR has its Session's Walkthroughs, so it passes only "any".
+  readonly walkthrough: WalkthroughFilter;
   readonly state: PrState;
   // Free text, over each PR's title, branch and number.
   readonly search: string;
@@ -33,6 +44,7 @@ export const defaultFilters: PrFilters = {
   author: "me",
   reviewRequested: false,
   draft: "any",
+  walkthrough: "any",
   state: "open",
   search: "",
 };
@@ -42,6 +54,7 @@ const clearedIn = (state: PrState): PrFilters => ({
   author: "anyone",
   reviewRequested: false,
   draft: "any",
+  walkthrough: "any",
   state,
   search: "",
 });
@@ -165,11 +178,25 @@ const found = (pr: ListedPullRequest, search: string) => {
   );
 };
 
-const passes = (pr: ListedPullRequest, filters: PrFilters, me: string) =>
+const byWalkthrough = (
+  pr: ListedPullRequest,
+  walkthrough: WalkthroughFilter,
+  live: LiveWalkthroughs | undefined,
+) =>
+  walkthrough === "any" ||
+  foreignPrStateOf(pr, walkthroughOf(pr, live)) === walkthrough;
+
+const passes = (
+  pr: ListedPullRequest,
+  filters: PrFilters,
+  me: string,
+  live: LiveWalkthroughs | undefined,
+) =>
   pr.state === filters.state &&
   byAuthor(pr, filters.author, me) &&
   (!filters.reviewRequested || pr.reviewRequested) &&
   byDraft(pr, filters.draft) &&
+  byWalkthrough(pr, filters.walkthrough, live) &&
   found(pr, filters.search);
 
 // A PR as the page lists it: dimmed when it's shown only for the Stack it's in.
@@ -218,8 +245,15 @@ const emptiness = (
     : { text, clear: clearedIn("open") };
 };
 
-export const rowsOf = (list: PullRequestList, filters: PrFilters): PrRows => {
-  const shows = (pr: ListedPullRequest) => passes(pr, filters, list.login);
+// The Walkthrough filter goes by each Foreign PR's Walkthrough as it stands now, `live`, once
+// that's known.
+export const rowsOf = (
+  list: PullRequestList,
+  filters: PrFilters,
+  live?: LiveWalkthroughs,
+): PrRows => {
+  const shows = (pr: ListedPullRequest) =>
+    passes(pr, filters, list.login, live);
   const stacks = list.stacks.flatMap((stack) =>
     stack.prs.some(shows)
       ? [{ stack, prs: stack.prs.map((pr) => ({ pr, dimmed: !shows(pr) })) }]
