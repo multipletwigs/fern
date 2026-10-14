@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { ProjectNotFound, WorkspaceError } from "./Projects";
-import { PrState } from "./States";
+import { PrListState, PrState } from "./States";
 
 // A Project's pull requests on GitHub, for its Pull requests page: every PR on the repo, whoever
 // wrote it, grouped into the GitHub Stacks they form. A PR one of Fern's Hosted Sessions holds on
@@ -47,8 +47,8 @@ export class ListedStack extends Schema.Class<ListedStack>("ListedStack")({
   prs: Schema.Array(ListedPullRequest),
 }) {}
 
-// A Project's open PRs: its Stacks, newest first, each bottom first, then the PRs in no Stack.
-// Every PR is in it once.
+// A Project's PRs, open or closed: its Stacks, newest first, each bottom first, then the PRs in no
+// Stack. Every PR is in it once.
 export class PullRequestList extends Schema.Class<PullRequestList>(
   "PullRequestList",
 )({
@@ -92,9 +92,10 @@ export class PullRequestsApi extends HttpApiGroup.make("pullRequests")
     }),
   )
   .add(
-    // The Project's open PRs, asked of GitHub each time.
+    // The Project's PRs in one `state`, asked of GitHub each time: the open ones, or the closed
+    // ones with the merged ones.
     HttpApiEndpoint.get("list", "/", {
-      query: { root: Schema.NonEmptyString },
+      query: { root: Schema.NonEmptyString, state: PrListState },
       success: PullRequestList,
       error: [
         ProjectNotFound,

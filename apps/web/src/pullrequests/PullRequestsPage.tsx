@@ -1,4 +1,4 @@
-import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { Callout } from "@repo/ui/Callout";
 import { GhostButton } from "@repo/ui/GhostButton";
 import { Hint } from "@repo/ui/Hint";
@@ -9,8 +9,11 @@ import { Cause, Option } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
 import { projectsAtom } from "../session/atoms";
-import { pullRequestListAtom } from "./atoms";
+import { pullRequestFiltersAtom, pullRequestListAtom } from "./atoms";
+import { listStateOf, rowsOf } from "./list";
 import { ListedPr } from "./ListedPr";
+import { NothingListed } from "./NothingListed";
+import { PullRequestFiltersBar } from "./PullRequestFiltersBar";
 import { usePolling } from "./usePolling";
 import { whyFailed } from "./whyFailed";
 
@@ -19,11 +22,13 @@ const POLL_EVERY = 60_000;
 
 const projectName = (path: string) => path.split("/").at(-1) || "Unknown";
 
-// A Project's Pull requests page: its open PRs on GitHub, in their Stacks, bottom first, then the
-// PRs in no Stack. Fetched when it opens, on Refresh, and every minute while it's in sight. A failed
-// fetch says why, with a retry, over the last list fetched.
+// A Project's Pull requests page: its PRs on GitHub, in their Stacks, bottom first, then the PRs in
+// no Stack, narrowed by the filters, the developer's own open PRs to start with. A Stack only some
+// of whose PRs pass shows whole, the rest dimmed. Fetched when it opens, on Refresh, and every minute
+// while it's in sight. A failed fetch says why, with a retry, over the last list fetched.
 export function PullRequestsPage({ root }: { root: string }) {
-  const atom = pullRequestListAtom(root);
+  const [filters, setFilters] = useAtom(pullRequestFiltersAtom(root));
+  const atom = pullRequestListAtom(root, listStateOf(filters));
   const result = useAtomValue(atom);
   const refresh = useAtomRefresh(atom);
   usePolling(refresh, POLL_EVERY);
@@ -41,6 +46,10 @@ export function PullRequestsPage({ root }: { root: string }) {
     [projects],
   );
   const list = Option.getOrUndefined(AsyncResult.value(result));
+  const rows = useMemo(
+    () => (list === undefined ? undefined : rowsOf(list, filters)),
+    [list, filters],
+  );
   const refreshing = AsyncResult.isInitial(result) || result.waiting;
   const failed = AsyncResult.isFailure(result)
     ? whyFailed(Option.getOrUndefined(Cause.findErrorOption(result.cause)))
@@ -64,35 +73,42 @@ export function PullRequestsPage({ root }: { root: string }) {
         )
       }
     >
-      {list === undefined ? (
-        !failed && <Hint text="Asking GitHub for the open pull requests…" />
-      ) : list.stacks.length === 0 && list.lone.length === 0 ? (
-        <Hint text="No open pull requests." />
+      <PullRequestFiltersBar
+        filters={filters}
+        list={list}
+        onChange={setFilters}
+      />
+      {rows === undefined ? (
+        !failed && <Hint text="Asking GitHub for the pull requests…" />
+      ) : rows.empty !== undefined ? (
+        <NothingListed empty={rows.empty} onClear={setFilters} />
       ) : (
         <>
-          {list.stacks.map((stack) => (
+          {rows.stacks.map(({ stack, prs }) => (
             <PullRequestStack
               key={stack.id}
               number={stack.number}
-              count={stack.prs.length}
-              authors={[...new Set(stack.prs.map((pr) => pr.author))]}
+              count={prs.length}
+              authors={[...new Set(prs.map(({ pr }) => pr.author))]}
             >
-              {stack.prs.map((pr) => (
+              {prs.map(({ pr, dimmed }) => (
                 <ListedPr
                   key={pr.number}
                   pr={pr}
                   sessionTitle={pr.session && titles.get(pr.session)}
+                  dimmed={dimmed}
                 />
               ))}
             </PullRequestStack>
           ))}
-          {list.lone.length > 0 && (
+          {rows.lone.length > 0 && (
             <LonePullRequests>
-              {list.lone.map((pr) => (
+              {rows.lone.map((pr) => (
                 <ListedPr
                   key={pr.number}
                   pr={pr}
                   sessionTitle={pr.session && titles.get(pr.session)}
+                  dimmed={false}
                 />
               ))}
             </LonePullRequests>
