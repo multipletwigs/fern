@@ -23,6 +23,7 @@ export function ListedPr({
       url={pr.url}
       draft={pr.draft}
       reviewRequested={pr.reviewRequested}
+      state={pr.state}
       dimmed={dimmed}
     />
   ) : (

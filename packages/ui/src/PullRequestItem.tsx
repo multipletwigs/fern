@@ -3,6 +3,7 @@ import {
   ArrowUpRightIcon,
   RobotIcon,
 } from "@phosphor-icons/react";
+import type { PrState } from "@repo/api";
 import { clsx } from "clsx";
 import type { ReactNode } from "react";
 import { PullRequestMark } from "./PullRequestMark";
@@ -13,7 +14,7 @@ const GO =
   "size-3 shrink-0 text-faint opacity-0 transition-opacity group-hover:opacity-100";
 
 // One pull request on the Pull requests page, on one line: its number, title and author, marked
-// when it's a draft, when the developer is asked to review it, and when one of the developer's
+// when it's a draft, closed or merged, when the developer is asked to review it, and when one of the developer's
 // Hosted Sessions holds it. A Session's PR opens in the Session through `onOpen`; any other opens
 // on GitHub at `url`. Dimmed when it's shown only for the Stack it's in, still there to open.
 export function PullRequestItem({
@@ -23,6 +24,7 @@ export function PullRequestItem({
   url,
   draft,
   reviewRequested,
+  state,
   session,
   dimmed = false,
   onOpen,
@@ -33,6 +35,7 @@ export function PullRequestItem({
   url: string;
   draft: boolean;
   reviewRequested: boolean;
+  state: PrState;
   // What to call the Hosted Session holding it, when one does.
   session?: string | undefined;
   dimmed?: boolean | undefined;
@@ -50,6 +53,12 @@ export function PullRequestItem({
         <PullRequestMark tone="amber">Review requested</PullRequestMark>
       )}
       {draft && <PullRequestMark tone="muted">Draft</PullRequestMark>}
+      {state === "merged" && (
+        <PullRequestMark tone="muted">Merged</PullRequestMark>
+      )}
+      {state === "closed" && (
+        <PullRequestMark tone="muted">Closed</PullRequestMark>
+      )}
       {session !== undefined && (
         <span
           title={`On your Session's Stack: ${session}`}
