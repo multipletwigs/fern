@@ -207,29 +207,46 @@ const makeClient = HttpApiTest.groups(FernApi, [
 ]);
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
-// The PR's one Walkthrough, once it's written and `ready` holds of it.
+// The PR's latest Walkthrough, once there are `count`, none being written, and `ready` holds of
+// it.
 const walkthroughOf = (
   number: number,
   ready: (walkthrough: Walkthrough) => boolean = () => true,
+  count = 1,
 ) =>
   Effect.gen(function* () {
     const live = yield* makeLive;
     const [walkthroughs] = yield* live
       .PullRequestWalkthroughs({ repo: "acme/app", number })
       .pipe(
-        Stream.filter(
-          (all) =>
-            all.length === 1 &&
-            all.every((w) => w.status !== "writing" && ready(w)),
-        ),
+        Stream.filter((all) => {
+          const latest = all.at(-1);
+          return (
+            all.length === count &&
+            all.every((w) => w.status !== "writing") &&
+            latest !== undefined &&
+            ready(latest)
+          );
+        }),
         Stream.take(1),
         Stream.runCollect,
         Effect.timeout("5 seconds"),
       );
-    const [walkthrough] = walkthroughs ?? [];
+    const walkthrough = walkthroughs?.at(-1);
     assert.isDefined(walkthrough);
     return walkthrough;
   });
+
+// Walks through the PR again, for its `count`th Walkthrough.
+const rewalked = (
+  client: Effect.Success<typeof makeClient>,
+  root: string,
+  number: number,
+  count: number,
+) =>
+  client.pullRequests
+    .walkThrough({ params: { number }, payload: { root } })
+    .pipe(Effect.andThen(walkthroughOf(number, () => true, count)));
 
 // A PR changing `a.ts` and adding `b.ts` and `c.ts`, walked through: one Section for each of the
 // first two, and `c.ts` left Unexplained.
@@ -285,6 +302,7 @@ const judged = (walkthrough: Walkthrough, notes: Record<string, string> = {}) =>
     return yield* walkthroughOf(
       walkthrough.foreignPr?.number ?? 0,
       (w) => w.reviewedAt !== undefined,
+      walkthrough.number,
     );
   });
 
@@ -609,6 +627,76 @@ layer(fern, { excludeTestServices: true })("Post review", (it) => {
           posted.filter((p) => p.pr === 36),
           1,
         );
+      }),
+  );
+
+  it.effect(
+    "a review of a Walkthrough of the PR's new commits still requests changes for Rejections in earlier ones never posted, unless a later Section fixes them",
+    () =>
+      Effect.gen(function* () {
+        const { root, head, walkthrough, client } = yield* walkedThrough(39);
+        yield* judged(walkthrough, {
+          s1: "five should stay quiet.",
+          s2: "Not yet.",
+        });
+
+        // The author answers the first Rejection, r1, and changes b again.
+        const answer = commitOn(root, head, {
+          "a.ts": "one\ntwo\nthree\nfour\nfive\nsix\nseven\n",
+          "b.ts": "export const b = 1;\n",
+        });
+        opened(39, { head: answer, base: git(root, "rev-parse", "main") });
+        answers = (request) => ({
+          sections: [
+            {
+              ...section("Quiet five", [hunkIn(request, "a.ts")]),
+              fixes: request.rejections[0]?.id,
+            },
+            section("Trim b", [hunkIn(request, "b.ts")]),
+          ],
+          notFromSession: [],
+        });
+        const second = yield* rewalked(client, root, 39, 2);
+        assert.strictEqual(second.since, "previous");
+        yield* judged(second);
+
+        const preview = yield* client.pullRequests.review({
+          params: { number: 39 },
+          query: { root, walkthrough: second.id },
+        });
+        assert.deepStrictEqual(
+          [preview.event, preview.body, preview.comments.length],
+          [
+            "REQUEST_CHANGES",
+            [
+              "Reviewed in Fern. Rejected:",
+              "",
+              "1. `Add b` (from Walkthrough 1)",
+              "",
+              "   Not yet.",
+            ].join("\n"),
+            0,
+          ],
+        );
+        yield* client.pullRequests.postReview({
+          params: { number: 39 },
+          payload: { root, walkthrough: second.id },
+        });
+
+        // Once a review went up with them, they're not posted again.
+        const third = commitOn(root, answer, { "c.ts": "gone\n" });
+        opened(39, { head: third, base: git(root, "rev-parse", "main") });
+        answers = (request) => ({
+          sections: [section("Tidy c", [hunkIn(request, "c.ts")])],
+          notFromSession: [],
+        });
+        const last = yield* rewalked(client, root, 39, 3);
+        yield* judged(last);
+        const approving = yield* client.pullRequests.review({
+          params: { number: 39 },
+          query: { root, walkthrough: last.id },
+        });
+        assert.strictEqual(approving.event, "APPROVE");
       }),
   );
 });

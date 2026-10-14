@@ -523,14 +523,77 @@ interface Writing {
   readonly late: string;
 }
 
-// A Foreign PR's Walkthrough, with the PR it explains, by its repo on GitHub and number, and the
-// PR's head commit it explains.
+// A Rejection in one of a Foreign PR's earlier Walkthroughs, which the review of a later one
+// carries: a Section's, by its title, or an Unexplained change's, by its path.
+export interface EarlierRejection {
+  // The number of the Walkthrough it's in.
+  readonly walkthrough: number;
+  readonly title: string | undefined;
+  readonly path: string | undefined;
+  readonly note: string;
+}
+
+// A Foreign PR's Walkthrough, with the PR it explains, by its repo on GitHub and number, the PR's
+// head commit it explains, and the Rejections its review carries from earlier ones.
 export interface ForeignWalkthrough {
   readonly walkthrough: Walkthrough;
   readonly repo: string;
   readonly number: number;
   readonly head: string;
+  readonly earlier: ReadonlyArray<EarlierRejection>;
 }
+
+// The Rejections a review of the Foreign PR's Walkthrough `id` carries from earlier ones, when it
+// only explains what came since: those in each Walkthrough it follows on from, back to the one
+// explaining the whole PR, that no review went up with, and that no later Section says it fixes.
+const earlierRejections = (
+  rows: SessionRows,
+  id: string,
+): ReadonlyArray<EarlierRejection> => {
+  const index = rows.walkthroughs.findIndex((w) => w.id === id);
+  if (rows.walkthroughs[index]?.since !== "previous") return [];
+  const followed = new Set<string>();
+  for (const w of rows.walkthroughs.slice(0, index).toReversed()) {
+    if (w.status !== "ready") continue;
+    // Its review went up with every Rejection before it.
+    if (w.reviewUrl !== null) break;
+    followed.add(w.id);
+    if (w.since !== "previous") break;
+  }
+  const fixed = new Set(
+    rows.sections.flatMap((s) =>
+      s.fixesWalkthroughId !== null && s.fixesItemId !== null
+        ? [key(s.fixesWalkthroughId, s.fixesItemId)]
+        : [],
+    ),
+  );
+  const open = (walkthroughId: string, itemId: string) =>
+    followed.has(walkthroughId) && !fixed.has(key(walkthroughId, itemId));
+  const numbers = new Map(rows.walkthroughs.map((w) => [w.id, w.number]));
+  return [
+    ...rows.sections
+      .filter((s) => s.verdict === "rejected" && open(s.walkthroughId, s.id))
+      .map((s) => ({
+        walkthrough: numbers.get(s.walkthroughId) ?? 0,
+        title: s.title,
+        path: undefined,
+        note: s.note ?? "",
+      })),
+    ...rows.hunks
+      .filter(
+        (h) =>
+          h.sectionId === null &&
+          h.verdict === "rejected" &&
+          open(h.walkthroughId, h.id),
+      )
+      .map((h) => ({
+        walkthrough: numbers.get(h.walkthroughId) ?? 0,
+        title: undefined,
+        path: h.path,
+        note: h.note ?? "",
+      })),
+  ].toSorted((a, b) => a.walkthrough - b.walkthrough);
+};
 
 // Where a Foreign PR's latest Walkthrough stands.
 const prStateOf = (row: {
@@ -1457,6 +1520,7 @@ export class Walkthroughs extends Context.Service<
           repo: owner.repo,
           number: owner.number,
           head: row.headCommit,
+          earlier: earlierRejections(rows, walkthroughId),
         };
       });
       const reviewPosted = (

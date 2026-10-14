@@ -5,9 +5,11 @@ import {
   type PrReviewEvent,
   type Walkthrough,
 } from "@repo/api";
+import type { EarlierRejection } from "../walkthrough/Walkthroughs";
 
 // The review a Foreign PR's Reviewed Walkthrough posts on GitHub: each Rejection listed in its
-// body, and each Section's note again on the Section's first changed line. Approved items post
+// body, those of the earlier Walkthroughs it follows on from that never went up included, and each
+// of its own Sections' notes again on the Section's first changed line. Approved items post
 // nothing.
 
 // Control characters, but for line breaks and tabs: nothing anyone typed on purpose.
@@ -68,10 +70,21 @@ const indented = (text: string) =>
     .map((line) => (line === "" ? "" : `   ${line}`))
     .join("\n");
 
+// What an earlier Walkthrough's Rejection is called in the body.
+const earlierTitle = (rejection: EarlierRejection) =>
+  `${
+    rejection.path === undefined
+      ? code(rejection.title ?? "")
+      : `Unexplained change in ${code(rejection.path)}`
+  } (from Walkthrough ${rejection.walkthrough})`;
+
 export const reviewOf = (
   walkthrough: Walkthrough,
   // The PR is the developer's own, which GitHub won't let them approve or request changes on.
   own: boolean,
+  // The Rejections it carries from the earlier Walkthroughs it follows on from: in the body only,
+  // as their lines may have moved since.
+  earlier: ReadonlyArray<EarlierRejection>,
 ): {
   readonly event: PrReviewEvent;
   readonly body: string;
@@ -92,6 +105,7 @@ export const reviewOf = (
       title: `Unexplained change in ${code(u.hunk.path)}`,
       note: noteText(u.verdict?.note),
     })),
+    ...earlier.map((r) => ({ title: earlierTitle(r), note: noteText(r.note) })),
   ];
   // A Walkthrough of the PR's newest commits alone numbers the lines it removes as they were
   // before those commits, not as the PR's base has them, so its notes go only on lines it adds.

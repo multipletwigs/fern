@@ -657,6 +657,7 @@ export class PullRequests extends Context.Service<
           ...reviewOf(
             walkthrough,
             pr.author.toLowerCase() === login.toLowerCase(),
+            found.earlier,
           ),
         });
       });
