@@ -46,7 +46,7 @@ export const TerminalExitScrollback = Context.Reference<number>(
   { defaultValue: () => 16_000 },
 );
 
-// How many viewers one Session's shell may have at once.
+// How many viewers one terminal's shell may have at once.
 export const TerminalViewers = Context.Reference<number>(
   "@repo/server/terminal/TerminalViewers",
   { defaultValue: () => 8 },
@@ -59,15 +59,21 @@ export const TerminalViewerBacklog = Context.Reference<number>(
   { defaultValue: () => 1000 },
 );
 
+// What a Foreign PR's terminal is kept by, apart from every Session's, which go by their ids.
+export const prTerminalKey = (pr: {
+  readonly repo: string;
+  readonly number: number;
+}) => `pr:${pr.repo}#${pr.number}`;
+
 // How long a shell gets to exit on its hangup before it's killed outright.
 const HANGUP_GRACE = "1 second";
 
 type Viewer = Queue.Queue<TerminalEvent, TerminalError | Cause.Done>;
 
-// A Session's shell in its folder, on its PTY, what it has printed lately, and whoever is watching
+// A terminal's shell in its folder, on its PTY, what it has printed lately, and whoever is watching
 // it. Kept after the shell exits, with its exit code and its last lines but not its PTY, until
 // it's killed.
-interface SessionShell {
+interface Shell {
   readonly root: string;
   // Until the shell exits.
   term: pty.IPty | undefined;
@@ -84,35 +90,36 @@ const exitEvent = (code: number): TerminalEvent => ({
   code,
 });
 
-// One shell per Session, on a PTY, in the Session's folder. A shell starts the first time its
-// Session's terminal is opened and runs until it exits, it's killed, the Session's folder changes,
-// or the service's scope closes, which kills every shell still running. Viewers come and go without
-// touching the shell, and each one is first sent what the shell printed before it came.
+// One shell per terminal, kept by its key: a Session's id, or `prTerminalKey` for a Foreign PR's.
+// Each runs on a PTY, in its folder. A shell starts the first time its terminal is opened and runs
+// until it exits, it's killed, its folder changes, or the service's scope closes, which kills every
+// shell still running. Viewers come and go without touching the shell, and each one is first sent
+// what the shell printed before it came.
 export class Terminals extends Context.Service<
   Terminals,
   {
-    // Streams what the Session's shell has printed lately, as a replay, and goes on to print, then
-    // its exit. Starts the shell in `root` at `size` when the Session has none, else attaches to
+    // Streams what the terminal's shell has printed lately, as a replay, and goes on to print, then
+    // its exit. Starts the shell in `root` at `size` when it has none, else attaches to
     // the one it has, at `size`. One in another folder is ended for a fresh one in `root`. A shell
     // that has exited is only replayed, up to its exit, until it's killed.
     readonly open: (
-      sessionId: string,
+      key: string,
       root: string,
       size: TerminalSize,
     ) => Stream.Stream<TerminalEvent, TerminalError>;
-    // Types into the Session's shell. Fails when none is running.
+    // Types into the terminal's shell. Fails when none is running.
     readonly write: (
-      sessionId: string,
+      key: string,
       data: string,
     ) => Effect.Effect<void, TerminalError>;
     // Fails when none is running.
     readonly resize: (
-      sessionId: string,
+      key: string,
       size: TerminalSize,
     ) => Effect.Effect<void, TerminalError>;
-    // Ends the Session's shell, if it's still running, and forgets it, so the next `open` starts a
-    // fresh one. Viewers see it exit. Fails when the Session has none, running or exited.
-    readonly kill: (sessionId: string) => Effect.Effect<void, TerminalError>;
+    // Ends the terminal's shell, if it's still running, and forgets it, so the next `open` starts a
+    // fresh one. Viewers see it exit. Fails when it has none, running or exited.
+    readonly kill: (key: string) => Effect.Effect<void, TerminalError>;
   }
 >()("@repo/server/terminal/Terminals") {
   static readonly layer = Layer.effect(
@@ -124,13 +131,13 @@ export class Terminals extends Context.Service<
       const maxViewers = yield* TerminalViewers;
       const backlog = yield* TerminalViewerBacklog;
       const scope = yield* Effect.scope;
-      const shells = new Map<string, SessionShell>();
-      // Two viewers opening the same Session at once start one shell, and a kill isn't undone by
+      const shells = new Map<string, Shell>();
+      // Two viewers opening the same terminal at once start one shell, and a kill isn't undone by
       // an open racing it.
       const lock = yield* Semaphore.make(1);
 
       // Hangs up on the shell, and kills it if it doesn't go.
-      const stop = ({ term, exited }: SessionShell) =>
+      const stop = ({ term, exited }: Shell) =>
         Effect.gen(function* () {
           if (term === undefined || Deferred.isDoneUnsafe(exited)) return;
           term.kill("SIGHUP");
@@ -141,7 +148,7 @@ export class Terminals extends Context.Service<
         });
 
       const start = Effect.fn("Terminals.start")(function* (
-        sessionId: string,
+        key: string,
         root: string,
         size: TerminalSize,
       ) {
@@ -160,7 +167,7 @@ export class Terminals extends Context.Service<
                 // PWD as given, so the shell shows the folder by the path Fern knows it by.
                 env: { ...process.env, TERM: "xterm-256color", PWD: root },
               });
-              const entry: SessionShell = {
+              const entry: Shell = {
                 root,
                 term,
                 viewers: new Set(),
@@ -211,7 +218,7 @@ export class Terminals extends Context.Service<
           Scope.provide(own),
           Effect.onError(() => Scope.close(own, Exit.void)),
         );
-        shells.set(sessionId, started);
+        shells.set(key, started);
         // Once the shell exits by itself, its finalizer has nothing left to do.
         yield* Deferred.await(exited).pipe(
           Effect.andThen(Scope.close(own, Exit.void)),
@@ -220,34 +227,34 @@ export class Terminals extends Context.Service<
         return started;
       });
 
-      // Ends the Session's shell and forgets it.
-      const end = (sessionId: string) =>
+      // Ends the terminal's shell and forgets it.
+      const end = (key: string) =>
         Effect.gen(function* () {
-          const entry = shells.get(sessionId);
+          const entry = shells.get(key);
           if (entry === undefined) return;
-          shells.delete(sessionId);
+          shells.delete(key);
           yield* Scope.close(entry.scope, Exit.void);
         });
 
-      // Starts the Session's shell, or attaches to the one it has unless that one has all the
+      // Starts the terminal's shell, or attaches to the one it has unless that one has all the
       // viewers it may, and sends the viewer what it has printed so far.
       const attach = (
-        sessionId: string,
+        key: string,
         root: string,
         size: TerminalSize,
         viewer: Viewer,
       ) =>
         Effect.gen(function* () {
-          let entry = shells.get(sessionId);
+          let entry = shells.get(key);
           if (entry?.root === root) {
             if (entry.viewers.size >= maxViewers)
               return yield* new TerminalError({
-                message: `This Session's terminal is open in ${maxViewers} places already`,
+                message: `This terminal is open in ${maxViewers} places already`,
               });
             entry.term?.resize(size.cols, size.rows);
           } else {
-            yield* end(sessionId);
-            entry = yield* start(sessionId, root, size);
+            yield* end(key);
+            entry = yield* start(key, root, size);
           }
           Queue.offerUnsafe(viewer, {
             _tag: "TerminalReplay",
@@ -261,45 +268,45 @@ export class Terminals extends Context.Service<
           return entry;
         }).pipe(lock.withPermits(1));
 
-      const open = (sessionId: string, root: string, size: TerminalSize) =>
+      const open = (key: string, root: string, size: TerminalSize) =>
         Stream.callback<TerminalEvent, TerminalError>(
           (viewer) =>
             Effect.acquireRelease(
-              attach(sessionId, root, size, viewer),
+              attach(key, root, size, viewer),
               (entry) => Effect.sync(() => entry.viewers.delete(viewer)),
             ),
           // Its backlog, then the shell's exit; never more.
           { bufferSize: backlog + 1, strategy: "sliding" },
         );
 
-      // The Session's shell, if it's still running.
+      // The terminal's shell, if it's still running.
       const running = (
-        sessionId: string,
+        key: string,
       ): Effect.Effect<pty.IPty, TerminalError> => {
-        const term = shells.get(sessionId)?.term;
+        const term = shells.get(key)?.term;
         return term === undefined
           ? Effect.fail(
               new TerminalError({
-                message: "This Session's shell isn't running",
+                message: "This terminal's shell isn't running",
               }),
             )
           : Effect.succeed(term);
       };
 
-      const write = (sessionId: string, data: string) =>
-        running(sessionId).pipe(Effect.map((term) => term.write(data)));
+      const write = (key: string, data: string) =>
+        running(key).pipe(Effect.map((term) => term.write(data)));
 
-      const resize = (sessionId: string, size: TerminalSize) =>
-        running(sessionId).pipe(
+      const resize = (key: string, size: TerminalSize) =>
+        running(key).pipe(
           Effect.map((term) => term.resize(size.cols, size.rows)),
         );
 
-      const kill = Effect.fn("Terminals.kill")(function* (sessionId: string) {
-        if (!shells.has(sessionId))
+      const kill = Effect.fn("Terminals.kill")(function* (key: string) {
+        if (!shells.has(key))
           return yield* new TerminalError({
-            message: "This Session has no shell",
+            message: "This terminal has no shell",
           });
-        return yield* end(sessionId);
+        return yield* end(key);
       }, lock.withPermits(1));
 
       return Terminals.of({ open, write, resize, kill });

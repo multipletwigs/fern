@@ -1,13 +1,20 @@
+import type { TerminalTarget } from "@repo/api";
 import { Atom } from "effect/reactivity";
 
-// Whether a Session's terminal panel shows, for as long as the page is open.
-export const terminalOpenAtom = Atom.family((_sessionId: string) =>
+// What a terminal's panel is kept by: a Session's id, or `pr:<repo>#<n>` for a Foreign PR's, as
+// the server keeps their shells.
+export const terminalKeyOf = (target: TerminalTarget) =>
+  target._tag === "Session"
+    ? target.sessionId
+    : `pr:${target.repo}#${target.number}`;
+
+// Whether a terminal's panel shows, by `terminalKeyOf`, for as long as the page is open.
+export const terminalOpenAtom = Atom.family((_key: string) =>
   Atom.make(false).pipe(Atom.keepAlive),
 );
 
-// How tall a Session's terminal panel is, in pixels, as last dragged, for as long as the page is
-// open.
-export const terminalHeightAtom = Atom.family((_sessionId: string) =>
+// How tall a terminal's panel is, in pixels, as last dragged, for as long as the page is open.
+export const terminalHeightAtom = Atom.family((_key: string) =>
   Atom.make(280).pipe(Atom.keepAlive),
 );
 

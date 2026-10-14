@@ -200,6 +200,12 @@ export const PullRequestsHandlers = HttpApiBuilder.group(
           params.number,
           payload.walkthrough,
         ),
+      tryIt: ({ params, payload }) =>
+        pullRequests.tryIt(payload.root, params.number),
+      dismiss: ({ params, payload }) =>
+        pullRequests.dismiss(payload.root, params.number, {
+          discard: payload.discard ?? false,
+        }),
     });
   }),
 );

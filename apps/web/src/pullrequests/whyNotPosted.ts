@@ -12,7 +12,7 @@ export const whyNotPosted = (error: unknown): string => {
     return "This review is on GitHub already.";
   if (Predicate.isTagged(error, "WalkthroughNotReviewed"))
     return "Give every Section and Unexplained change a verdict first.";
-  if (Predicate.isTagged(error, "PullRequestNotOpen"))
+  if (Predicate.isTagged(error, "PrNotOpen"))
     return "This PR isn't open any more, so it can't be reviewed.";
   if (Predicate.isTagged(error, "WalkthroughNotFound"))
     return "Fern no longer has this Walkthrough.";

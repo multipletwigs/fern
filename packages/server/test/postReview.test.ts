@@ -472,14 +472,14 @@ layer(fern, { excludeTestServices: true })("Post review", (it) => {
               payload: { root, walkthrough: walkthrough.id },
             })
             .pipe(Effect.flip);
-          assert.strictEqual(closed._tag, "PullRequestNotOpen");
+          assert.strictEqual(closed._tag, "PrNotOpen");
           const preview = yield* client.pullRequests
             .review({
               params: { number: 34 },
               query: { root, walkthrough: walkthrough.id },
             })
             .pipe(Effect.flip);
-          assert.strictEqual(preview._tag, "PullRequestNotOpen");
+          assert.strictEqual(preview._tag, "PrNotOpen");
         }
 
         // Nor for another PR's Walkthrough.

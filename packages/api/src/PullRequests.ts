@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { ProjectNotFound, WorkspaceError } from "./Projects";
+import { WorktreeError } from "./Sessions";
 import {
   PrListState,
   PrReviewEvent,
@@ -48,6 +49,12 @@ export class PrWalkthroughOf extends Schema.Class<PrWalkthroughOf>(
   walkthrough: PrWalkthrough,
 }) {}
 
+// A Foreign PR's worktree, where Try it runs it and its Walkthrough writer reads it: checked out
+// detached at `head`.
+export class PrWorktree extends Schema.Class<PrWorktree>("PrWorktree")({
+  head: Schema.String,
+}) {}
+
 // One pull request on the Project's repo, as GitHub has it.
 export class ListedPullRequest extends Schema.Class<ListedPullRequest>(
   "ListedPullRequest",
@@ -72,6 +79,8 @@ export class ListedPullRequest extends Schema.Class<ListedPullRequest>(
   session: Schema.optional(Schema.String),
   // Its latest Walkthrough, when it's a Foreign PR with one.
   walkthrough: Schema.optional(PrWalkthrough),
+  // Its worktree, when it's a Foreign PR that has one.
+  worktree: Schema.optional(PrWorktree),
 }) {}
 
 // A GitHub Stack of the repo's PRs, bottom first: only those the list holds.
@@ -167,9 +176,17 @@ export class PrReview extends Schema.Class<PrReview>("PrReview")({
   comments: Schema.Array(PrReviewComment),
 }) {}
 
-// Only an open PR is reviewed.
-export class PullRequestNotOpen extends Schema.TaggedError<PullRequestNotOpen>()(
-  "PullRequestNotOpen",
+// The PR isn't open, so it can't be tried or reviewed: closed and merged PRs are only for reading.
+export class PrNotOpen extends Schema.TaggedError<PrNotOpen>()(
+  "PrNotOpen",
+  { number: Schema.Int, state: PrState },
+  { httpApiStatus: 409 },
+) {}
+
+// The PR's worktree has changes not committed, which removing it, or moving it to another commit,
+// would throw away or mix in.
+export class PrUncommittedChanges extends Schema.TaggedError<PrUncommittedChanges>()(
+  "PrUncommittedChanges",
   { number: Schema.Int },
   { httpApiStatus: 409 },
 ) {}
@@ -194,7 +211,7 @@ const ReviewErrors = [
   PullRequestsUnavailable,
   PullRequestsError,
   WalkthroughNotFound,
-  PullRequestNotOpen,
+  PrNotOpen,
   WalkthroughNotReviewed,
   ReviewPostedAlready,
 ];
@@ -274,6 +291,48 @@ export class PullRequestsApi extends HttpApiGroup.make("pullRequests")
       }),
       success: PostedReview,
       error: ReviewErrors,
+    }),
+  )
+  .add(
+    // Try it: checks an open Foreign PR's head out in its own detached worktree, never the
+    // developer's checkout, for a Terminal to run it in. Pressed again, it reuses the worktree,
+    // moved to the PR's head if the PR moved, which a worktree with changes not committed refuses.
+    // The worktree is the one the PR's Walkthroughs are written in, so it never moves while one is.
+    HttpApiEndpoint.post("tryIt", "/:number/try", {
+      params: { number: PrNumber },
+      payload: Schema.Struct({ root: Schema.NonEmptyString }),
+      success: PrWorktree,
+      error: [
+        ProjectNotFound,
+        WorkspaceError,
+        PullRequestsUnavailable,
+        PullRequestsError,
+        PullRequestNotForeign,
+        PrNotOpen,
+        PrWalkthroughInProgress,
+        PrUncommittedChanges,
+        WorktreeError,
+      ],
+    }),
+  )
+  .add(
+    // Removes a PR's worktree, and ends the shell in its Terminal. One with changes not committed is
+    // only removed with `discard`. Nothing to do for a PR with no worktree.
+    HttpApiEndpoint.post("dismiss", "/:number/try/dismiss", {
+      params: { number: PrNumber },
+      payload: Schema.Struct({
+        root: Schema.NonEmptyString,
+        discard: Schema.optional(Schema.Boolean),
+      }),
+      success: HttpApiSchema.NoContent,
+      error: [
+        ProjectNotFound,
+        WorkspaceError,
+        PullRequestsUnavailable,
+        PrWalkthroughInProgress,
+        PrUncommittedChanges,
+        WorktreeError,
+      ],
     }),
   )
   .prefix("/pull-requests") {}
