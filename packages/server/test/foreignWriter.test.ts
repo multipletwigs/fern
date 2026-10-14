@@ -80,10 +80,11 @@ const request: ForeignWriteRequest = {
   decisions: [],
 };
 
-// What the guard says to a tool call reading these paths, from the checkout.
+// What the guard says to a call of the tool with this input, from the checkout.
 const decide = (
   hook: HookCallback | undefined,
   input: Record<string, unknown>,
+  tool = "Read",
 ) =>
   Effect.promise(async () => {
     const said = await hook?.(
@@ -92,7 +93,7 @@ const decide = (
         session_id: "s",
         transcript_path: "",
         cwd: checkout,
-        tool_name: "Read",
+        tool_name: tool,
         tool_input: input,
         tool_use_id: "t",
       },
@@ -138,7 +139,27 @@ layer(WalkthroughWriter.layer)("WalkthroughWriter.explore", (it) => {
           yield* decide(guard, { file_path: join(checkout, "src", "a.ts") }),
           "allow",
         );
-        assert.strictEqual(yield* decide(guard, { pattern: "theme" }), "allow");
+        // A search for text is no path; a glob is, for Glob and as Grep's file filter.
+        assert.strictEqual(
+          yield* decide(guard, { pattern: "/etc/passwd" }, "Grep"),
+          "allow",
+        );
+        assert.strictEqual(
+          yield* decide(guard, { pattern: "src/**/*.ts" }, "Glob"),
+          "allow",
+        );
+        assert.strictEqual(
+          yield* decide(guard, { pattern: `${outside}/*` }, "Glob"),
+          "deny",
+        );
+        assert.strictEqual(
+          yield* decide(guard, { pattern: "../**/id_rsa" }, "Glob"),
+          "deny",
+        );
+        assert.strictEqual(
+          yield* decide(guard, { pattern: "secret", glob: "../*" }, "Grep"),
+          "deny",
+        );
         assert.strictEqual(
           yield* decide(guard, { file_path: join(outside, "id_rsa") }),
           "deny",

@@ -313,6 +313,13 @@ const inside = (root: string, cwd: string, target: string) => {
   return within === "" || (!within.startsWith("..") && !isAbsolute(within));
 };
 
+// Whether a glob matches only below the folder it's read from: not from the root or a home folder,
+// and never up out of it.
+const staysInside = (glob: string) =>
+  !isAbsolute(glob) &&
+  !glob.startsWith("~") &&
+  !glob.split(/[\\/]/u).includes("..");
+
 // Keeps the writer's reading inside the PR's checkout: a path anywhere else, or a link out of it,
 // is denied before the tool runs. Tools allowed up front never reach `canUseTool`, so this is a hook.
 export const insideCheckout =
@@ -324,8 +331,16 @@ export const insideCheckout =
       Predicate.hasProperty(args, "file_path") ? args.file_path : undefined,
       Predicate.hasProperty(args, "path") ? args.path : undefined,
     ].filter(Predicate.isString);
+    // Glob's pattern, and Grep's file filter, name paths too; Grep's pattern is only text.
+    const globs = [
+      input.tool_name === "Glob" && Predicate.hasProperty(args, "pattern")
+        ? args.pattern
+        : undefined,
+      Predicate.hasProperty(args, "glob") ? args.glob : undefined,
+    ].filter(Predicate.isString);
     return Promise.resolve(
-      paths.every((path) => inside(root, input.cwd || root, path))
+      paths.every((path) => inside(root, input.cwd || root, path)) &&
+        globs.every(staysInside)
         ? {}
         : {
             hookSpecificOutput: {
