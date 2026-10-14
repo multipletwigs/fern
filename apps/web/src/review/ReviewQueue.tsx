@@ -196,6 +196,11 @@ export function ReviewQueue({
           onApprove={() => void decide("approved")}
           onNoting={(open) => (open ? startNote() : setNoting(undefined))}
           onReject={() => void decide("rejected", note.trim())}
+          notePlaceholder={
+            entry.walkthrough.foreignPr === undefined
+              ? undefined
+              : "What should change? This stays in Fern until you post a review."
+          }
         />
         {locked && <Outcome walkthrough={entry.walkthrough} />}
       </div>
