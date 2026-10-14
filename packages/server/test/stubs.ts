@@ -200,6 +200,7 @@ export const UnusedTerminals = Layer.succeed(
     write: () => Effect.die("unused"),
     resize: () => Effect.die("unused"),
     kill: () => Effect.die("unused"),
+    isRunning: () => Effect.die("unused"),
   }),
 );
 

@@ -12,9 +12,11 @@ import { HttpApiTest } from "effect/http-api";
 import { RpcTest } from "effect/rpc";
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   writeFileSync,
@@ -58,6 +60,22 @@ const project = () => {
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "Initial");
   git(repo, "remote", "add", "origin", "git@github.com:acme/app.git");
+  known(repo);
+  writeFileSync(join(repo, "a.ts"), "export const a = 'mine';\n");
+  return repo;
+};
+
+// A second clone of acme/app, with the branches of the one at `from`, also a Project.
+const cloneOf = (from: string) => {
+  const repo = join(realpathSync(mkdtempSync(join(tmpdir(), "fern-"))), "app");
+  git(from, "clone", "-q", from, repo);
+  git(repo, "remote", "set-url", "origin", "git@github.com:acme/app.git");
+  known(repo);
+  return repo;
+};
+
+// A Session ran in the folder, so Fern knows it as a Project.
+const known = (repo: string) => {
   const file = join(
     configDir,
     "projects",
@@ -79,8 +97,6 @@ const project = () => {
       message: { role: "user", content: "Earlier work" },
     })}\n`,
   );
-  writeFileSync(join(repo, "a.ts"), "export const a = 'mine';\n");
-  return repo;
 };
 
 // A commit on top of `from` with the files, made as on someone else's machine: no branch of the
@@ -232,11 +248,28 @@ const fern = Layer.mergeAll(
   HttpServer.layerServices,
 );
 
-const worktreeOf = (number: number) =>
-  join(dataDir, "prs", "acme", "app", String(number));
+// Where the Project's worktree of the PR is, as its repo has it: under Fern's worktrees folder,
+// apart from the developer's checkout. None once it has none.
+const worktreeOf = (root: string, number: number) =>
+  git(root, "worktree", "list", "--porcelain")
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length))
+    .find(
+      (path) =>
+        path.startsWith(`${join(dataDir, "prs")}/`) &&
+        path.endsWith(`/acme/app/${number}`),
+    );
+// The same, for one the test knows is there.
+const worktreeAt = (root: string, number: number) => {
+  const found = worktreeOf(root, number);
+  assert.isDefined(found);
+  return found;
+};
 
-const prTerminal = (number: number): TerminalTarget => ({
+const prTerminal = (root: string, number: number): TerminalTarget => ({
   _tag: "PullRequest",
+  root,
   repo: "acme/app",
   number,
 });
@@ -290,7 +323,114 @@ const listedAs = (root: string, number: number, state: PrListState = "open") =>
     );
   });
 
+// A commit on top of `from` adding git hooks in `folder`, as a PR could: each, when it runs, leaves
+// a file named after itself in `marks`.
+const commitHooks = (
+  repo: string,
+  from: string,
+  folder: string,
+  marks: string,
+) => {
+  const elsewhere = join(mkdtempSync(join(tmpdir(), "fern-fork-")), "work");
+  git(repo, "worktree", "add", "-q", "--detach", elsewhere, from);
+  mkdirSync(join(elsewhere, folder), { recursive: true });
+  for (const hook of ["post-checkout", "reference-transaction"]) {
+    const file = join(elsewhere, folder, hook);
+    writeFileSync(file, `#!/bin/sh\ntouch "${marks}/${hook}"\n`);
+    chmodSync(file, 0o755);
+  }
+  git(elsewhere, "add", "-A", "-f");
+  git(elsewhere, "commit", "-q", "-m", "Hooks");
+  const commit = git(elsewhere, "rev-parse", "HEAD");
+  git(repo, "worktree", "remove", "--force", elsewhere);
+  return commit;
+};
+
 layer(fern, { excludeTestServices: true })("Try it", (it) => {
+  it.effect(
+    "runs none of the git hooks a PR brings, though the developer's hooks path is relative",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const initial = git(root, "rev-parse", "HEAD");
+        const marks = realpathSync(mkdtempSync(join(tmpdir(), "fern-hooks-")));
+        const first = commitHooks(root, initial, ".husky/_", marks);
+        const second = commitOn(root, first, {
+          "a.ts": "export const a = 3;\n",
+        });
+        // As husky sets it: relative, so git reads it in whichever worktree it runs in.
+        git(root, "config", "core.hooksPath", ".husky/_");
+        opened(113, { head: first, base: initial });
+        const client = yield* makeClient;
+
+        // Made, then moved to the PR's new head, then read for a Walkthrough, then removed.
+        yield* client.pullRequests.tryIt({
+          params: { number: 113 },
+          payload: { root },
+        });
+        changed(113, { head: second });
+        yield* client.pullRequests.tryIt({
+          params: { number: 113 },
+          payload: { root },
+        });
+        yield* client.pullRequests.walkThrough({
+          params: { number: 113 },
+          payload: { root },
+        });
+        yield* client.pullRequests
+          .dismiss({ params: { number: 113 }, payload: { root } })
+          .pipe(
+            Effect.retry({
+              schedule: Schedule.spaced("50 millis"),
+              times: 100,
+            }),
+          );
+
+        assert.isUndefined(worktreeOf(root, 113));
+        assert.deepStrictEqual(readdirSync(marks), []);
+      }),
+  );
+
+  it.effect(
+    "two clones of the same repo, each a Project, each have a worktree and a Terminal of their own for the same PR",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const initial = git(root, "rev-parse", "HEAD");
+        const head = commitOn(root, initial, {
+          "a.ts": "export const a = 2;\n",
+        });
+        git(root, "branch", "pr-114", head);
+        const other = cloneOf(root);
+        opened(114, { head, base: initial });
+        const client = yield* makeClient;
+        for (const at of [root, other])
+          yield* client.pullRequests.tryIt({
+            params: { number: 114 },
+            payload: { root: at },
+          });
+
+        const [mine, theirs] = [worktreeAt(root, 114), worktreeAt(other, 114)];
+        assert.notStrictEqual(mine, theirs);
+        const [inMine, inTheirs] = [
+          yield* watch(prTerminal(root, 114)),
+          yield* watch(prTerminal(other, 114)),
+        ];
+        yield* inMine.until("echo $PWD", `${mine}\r`);
+        yield* inTheirs.until("echo $PWD", `${theirs}\r`);
+
+        yield* client.pullRequests.dismiss({
+          params: { number: 114 },
+          payload: { root: other },
+        });
+        assert.isFalse(existsSync(theirs));
+        assert.isTrue(yield* inTheirs.exited);
+        assert.strictEqual(git(mine, "rev-parse", "HEAD"), head);
+        assert.strictEqual((yield* listedAs(root, 114))?.worktree?.head, head);
+        assert.isUndefined((yield* listedAs(other, 114))?.worktree);
+      }),
+  );
+
   it.effect(
     "checks the PR's head out in a detached worktree of its own, with a Terminal there, leaving the developer's checkout alone",
     () =>
@@ -310,7 +450,7 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
         });
 
         assert.strictEqual(tried.head, head);
-        const worktree = worktreeOf(101);
+        const worktree = worktreeAt(root, 101);
         assert.strictEqual(git(worktree, "rev-parse", "HEAD"), head);
         assert.strictEqual(git(worktree, "branch", "--show-current"), "");
         assert.strictEqual(
@@ -321,7 +461,7 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
         assert.strictEqual(git(root, "rev-parse", "HEAD"), initial);
         assert.strictEqual(git(root, "status", "--porcelain"), status);
 
-        const terminal = yield* watch(prTerminal(101));
+        const terminal = yield* watch(prTerminal(root, 101));
         yield* terminal.until("echo $PWD", `${worktree}\r`);
 
         assert.strictEqual((yield* listedAs(root, 101))?.worktree?.head, head);
@@ -344,7 +484,7 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
           payload: { root },
         });
         yield* tryIt;
-        const terminal = yield* watch(prTerminal(102));
+        const terminal = yield* watch(prTerminal(root, 102));
         yield* terminal.until("echo pid=$$", "pid=");
         const pid = /pid=(\d+)/.exec(terminal.printed.join(""))?.[1];
 
@@ -356,7 +496,7 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
         changed(102, { head: second });
         assert.strictEqual((yield* tryIt).head, second);
 
-        const worktree = worktreeOf(102);
+        const worktree = worktreeAt(root, 102);
         assert.strictEqual(git(worktree, "rev-parse", "HEAD"), second);
         assert.strictEqual(
           readFileSync(join(worktree, "a.ts"), "utf8"),
@@ -385,22 +525,22 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
           params: { number: 104 },
           payload: { root },
         });
-        const terminal = yield* watch(prTerminal(104));
+        const terminal = yield* watch(prTerminal(root, 104));
         yield* terminal.until("echo up", "up\r");
+        const worktree = worktreeAt(root, 104);
 
         yield* client.pullRequests.dismiss({
           params: { number: 104 },
           payload: { root },
         });
 
-        const worktree = worktreeOf(104);
         assert.isFalse(existsSync(worktree));
-        assert.notInclude(git(root, "worktree", "list"), worktree);
+        assert.isUndefined(worktreeOf(root, 104));
         assert.isTrue(yield* terminal.exited);
         assert.isUndefined((yield* listedAs(root, 104))?.worktree);
         const live = yield* makeLive;
         const reopened = yield* live
-          .Terminal({ target: prTerminal(104), cols: 80, rows: 24 })
+          .Terminal({ target: prTerminal(root, 104), cols: 80, rows: 24 })
           .pipe(Stream.runDrain, Effect.flip);
         assert.strictEqual(reopened._tag, "TerminalError");
         // Nothing left to dismiss.
@@ -426,7 +566,7 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
           params: { number: 105 },
           payload: { root },
         });
-        const worktree = worktreeOf(105);
+        const worktree = worktreeAt(root, 105);
         writeFileSync(join(worktree, "new.ts"), "export const tried = 1;\n");
 
         const refused = yield* client.pullRequests
@@ -460,10 +600,10 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
             .tryIt({ params: { number }, payload: { root } })
             .pipe(Effect.flip);
           assert.strictEqual(refused._tag, "PrNotOpen");
-          assert.isFalse(existsSync(worktreeOf(number)));
+          assert.isUndefined(worktreeOf(root, number));
           const live = yield* makeLive;
           const noTerminal = yield* live
-            .Terminal({ target: prTerminal(number), cols: 80, rows: 24 })
+            .Terminal({ target: prTerminal(root, number), cols: 80, rows: 24 })
             .pipe(Stream.runDrain, Effect.flip);
           assert.strictEqual(noTerminal._tag, "TerminalError");
         }
@@ -471,7 +611,7 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
   );
 
   it.effect(
-    "a refresh of the list removes the worktree of a PR that has closed or merged since",
+    "a refresh of the list removes the worktree of a PR that has closed or merged since, once its Terminal's shell has ended",
     () =>
       Effect.gen(function* () {
         const root = project();
@@ -488,27 +628,40 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
             params: { number },
             payload: { root },
           });
-        const terminal = yield* watch(prTerminal(108));
+        const terminal = yield* watch(prTerminal(root, 108));
         yield* terminal.until("echo up", "up\r");
+        const [merged, closed] = [worktreeAt(root, 108), worktreeAt(root, 109)];
 
-        // Merged: gone from the open list, so GitHub is asked about it.
+        // Merged: gone from the open list, so GitHub is asked about it. Its shell is still
+        // running, so the worktree stays, and the shell with it.
         changed(108, { state: "merged" });
-        yield* listedAs(root, 110);
-        assert.isFalse(existsSync(worktreeOf(108)));
-        assert.isTrue(yield* terminal.exited);
-        assert.isTrue(existsSync(worktreeOf(109)));
-
-        // Closed: seen so in the closed list.
-        changed(109, { state: "closed" });
-        assert.isUndefined((yield* listedAs(root, 109, "closed"))?.worktree);
-        assert.isFalse(existsSync(worktreeOf(109)));
-
-        // Still open.
         assert.strictEqual(
-          (yield* listedAs(root, 110))?.worktree?.head,
+          (yield* listedAs(root, 108, "closed"))?.worktree?.head,
           head,
         );
-        assert.notInclude(git(root, "worktree", "list"), worktreeOf(108));
+        yield* listedAs(root, 110);
+        assert.isTrue(existsSync(merged));
+        yield* terminal.until("echo still", "still\r");
+        assert.isTrue(existsSync(closed));
+
+        // Once the shell has ended, the next refresh removes it.
+        const live = yield* makeLive;
+        yield* live.TerminalInput({
+          target: prTerminal(root, 108),
+          data: "exit\r",
+        });
+        assert.isTrue(yield* terminal.exited);
+        yield* listedAs(root, 110);
+        assert.isFalse(existsSync(merged));
+        assert.isUndefined(worktreeOf(root, 108));
+
+        // Closed: seen so in the closed list. Its Terminal was never opened.
+        changed(109, { state: "closed" });
+        assert.isUndefined((yield* listedAs(root, 109, "closed"))?.worktree);
+        assert.isFalse(existsSync(closed));
+
+        // Still open.
+        assert.strictEqual((yield* listedAs(root, 110))?.worktree?.head, head);
       }),
   );
 
@@ -527,7 +680,8 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
           params: { number: 111 },
           payload: { root },
         });
-        writeFileSync(join(worktreeOf(111), "a.ts"), "export const a = 9;\n");
+        const worktree = worktreeAt(root, 111);
+        writeFileSync(join(worktree, "a.ts"), "export const a = 9;\n");
         changed(111, { state: "closed" });
 
         asked.length = 0;
@@ -538,13 +692,13 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
           (yield* listedAs(root, 111, "closed"))?.worktree?.head,
           head,
         );
-        assert.isTrue(existsSync(worktreeOf(111)));
+        assert.isTrue(existsSync(worktree));
 
         yield* client.pullRequests.dismiss({
           params: { number: 111 },
           payload: { root, discard: true },
         });
-        assert.isFalse(existsSync(worktreeOf(111)));
+        assert.isFalse(existsSync(worktree));
       }),
   );
 
@@ -589,7 +743,10 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
           [moving._tag, removing._tag],
           ["PrWalkthroughInProgress", "PrWalkthroughInProgress"],
         );
-        assert.strictEqual(git(worktreeOf(112), "rev-parse", "HEAD"), first);
+        assert.strictEqual(
+          git(worktreeAt(root, 112), "rev-parse", "HEAD"),
+          first,
+        );
         gate = undefined;
         yield* Deferred.succeed(held, undefined);
       }),
@@ -611,7 +768,7 @@ layer(fern, { excludeTestServices: true })("Try it", (it) => {
           payload: { root },
         });
         yield* tryIt;
-        const worktree = worktreeOf(103);
+        const worktree = worktreeAt(root, 103);
         writeFileSync(join(worktree, "a.ts"), "export const a = 'tried';\n");
 
         assert.strictEqual((yield* tryIt).head, first);

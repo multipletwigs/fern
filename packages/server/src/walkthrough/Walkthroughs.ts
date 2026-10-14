@@ -1215,12 +1215,14 @@ export class Walkthroughs extends Context.Service<
 
       // A Foreign PR's change is between two commits of the PR's own worktree, read by a fresh
       // writer in it. Its Sections may cite the Project's Decisions, and its Rejections are the
-      // developer's own notes on its earlier Walkthroughs.
+      // developer's own notes on its earlier Walkthroughs. Fern's own git runs in the Project's
+      // checkout, which has the same commits, never in the PR's worktree, where a hooks path that's
+      // relative would find hooks the PR brings.
       const prepareForeign = Effect.fn("Walkthroughs.prepareForeign")(
         function* (change: ForeignChange) {
           const owner = { repo: change.pr.repo, number: change.pr.number };
           const repo = yield* snapshots
-            .repo(change.cwd)
+            .repo(change.project)
             .pipe(Effect.mapError(gitFailed));
           const [baseTree, headTree] = yield* Effect.all([
             snapshots.treeOf(repo, change.from),

@@ -243,7 +243,7 @@ export class PullRequests extends Context.Service<
       | PrUncommittedChanges
       | WorktreeError
     >;
-    // The folder of the PR's worktree, for its Terminal, when it has one.
+    // The folder of the PR's worktree in the Project, for its Terminal, when it has one.
     worktree(pr: PrKey): Effect.Effect<Option.Option<string>>;
   }
 >()("@repo/server/pullrequest/PullRequests") {
@@ -343,15 +343,17 @@ export class PullRequests extends Context.Service<
           .pipe(Effect.catchTag("TerminalError", () => Effect.void));
 
       // Removes the worktree of a PR that's closed or merged, unless the developer has to say so
-      // first, as it has changes not committed, or a Walkthrough is being written in it. Whether
-      // it went.
-      const tidy = (root: string, pr: PrKey) =>
+      // first, as it has changes not committed, or it's in use: a Walkthrough is being written in
+      // it, or its Terminal's shell is still running, which a later refresh finds ended or
+      // dismissed. Whether it went.
+      const tidy = (pr: PrKey) =>
         worktrees.exclusive(pr)(
           Effect.gen(function* () {
             if (yield* beingWritten(pr.repo, pr.number)) return false;
+            if (yield* terminals.isRunning(prTerminalKey(pr))) return false;
             if (yield* worktrees.isDirty(pr)) return false;
             yield* endShell(pr);
-            yield* worktrees.remove(root, pr, { force: false });
+            yield* worktrees.remove(pr, { force: false });
             return true;
           }),
         );
@@ -375,8 +377,8 @@ export class PullRequests extends Context.Service<
         Effect.gen(function* () {
           const listed = new Map(prs.map((pr) => [pr.number, pr.state]));
           const found = new Map<number, PrWorktree>();
-          for (const number of yield* worktrees.checkedOut(repo)) {
-            const pr = { repo, number };
+          for (const number of yield* worktrees.checkedOut(root, repo)) {
+            const pr = { root, repo, number };
             const seen = listed.get(number);
             const closed =
               seen !== undefined
@@ -388,7 +390,7 @@ export class PullRequests extends Context.Service<
                   (yield* closedOnGitHub(root, number));
             const removed =
               closed &&
-              (yield* tidy(root, pr).pipe(
+              (yield* tidy(pr).pipe(
                 Effect.catch((error) =>
                   Effect.logWarning(
                     `Couldn't remove PR #${number}'s worktree`,
@@ -511,7 +513,7 @@ export class PullRequests extends Context.Service<
         const held = (yield* sessionsOf([pr.url])).get(pr.url);
         if (held !== undefined)
           return yield* new PullRequestNotForeign({ number, session: held });
-        const key = { repo, number };
+        const key = { root, repo, number };
         return yield* worktrees.exclusive(key)(
           Effect.gen(function* () {
             const latest = (yield* walkthroughs.foreignStates(repo)).find(
@@ -550,9 +552,7 @@ export class PullRequests extends Context.Service<
               (yield* isAncestor(root, previous.head, head))
                 ? previous
                 : undefined;
-            const cwd = yield* worktrees
-              .checkout(root, key, head)
-              .pipe(gitFailed);
+            const cwd = yield* worktrees.checkout(key, head).pipe(gitFailed);
             return yield* walkthroughs.writeForeign({
               project: root,
               cwd,
@@ -677,7 +677,7 @@ export class PullRequests extends Context.Service<
           return yield* new PullRequestNotForeign({ number, session: held });
         if (pr.state !== "open")
           return yield* new PrNotOpen({ number, state: pr.state });
-        const key = { repo, number };
+        const key = { root, repo, number };
         return yield* worktrees.exclusive(key)(
           Effect.gen(function* () {
             yield* codeHost
@@ -695,7 +695,7 @@ export class PullRequests extends Context.Service<
               return yield* new PrWalkthroughInProgress({ number });
             if (yield* worktrees.isDirty(key))
               return yield* new PrUncommittedChanges({ number });
-            yield* worktrees.checkout(root, key, head);
+            yield* worktrees.checkout(key, head);
             return new PrWorktree({ head });
           }),
         );
@@ -707,7 +707,7 @@ export class PullRequests extends Context.Service<
         { discard }: { readonly discard: boolean },
       ) {
         const { repo } = yield* reached(root);
-        const key = { repo, number };
+        const key = { root, repo, number };
         return yield* worktrees.exclusive(key)(
           Effect.gen(function* () {
             if (yield* beingWritten(repo, number))
@@ -715,13 +715,15 @@ export class PullRequests extends Context.Service<
             if (!discard && (yield* worktrees.isDirty(key)))
               return yield* new PrUncommittedChanges({ number });
             yield* endShell(key);
-            return yield* worktrees.remove(root, key, { force: discard });
+            return yield* worktrees.remove(key, { force: discard });
           }),
         );
       });
 
+      // Only of a folder Fern knows as a Project.
       const worktree = (pr: PrKey) =>
-        worktrees.head(pr).pipe(
+        known(pr.root).pipe(
+          Effect.andThen(worktrees.head(pr)),
           Effect.flatMap(
             Option.match({
               onNone: () => Effect.succeedNone,

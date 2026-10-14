@@ -114,6 +114,14 @@ const mergeOn = (repo: string, from: string, other: string) => {
   return commit;
 };
 
+// The Project's worktrees under Fern's worktrees folder for PRs, as its repo has them.
+const prWorktrees = (root: string) =>
+  git(root, "worktree", "list", "--porcelain")
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length))
+    .filter((path) => path.startsWith(`${join(dataDir, "prs")}/`));
+
 // What GitHub has of the repo: each PR, and the commits its head and base branch are at.
 interface OnGitHub {
   readonly pr: HostPullRequestDetail;
@@ -400,11 +408,9 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
           request.decisions.map((d) => [d.id, d.question, d.answer]),
           [["d1", "How big should a be?", "Two"]],
         );
-        // Read in the PR's own worktree, at its head, under Fern's worktrees.
-        assert.strictEqual(
-          request.cwd,
-          join(dataDir, "prs", "acme", "app", "7"),
-        );
+        // Read in the PR's own worktree of the Project, at its head, under Fern's worktrees.
+        assert.deepStrictEqual(prWorktrees(root), [request.cwd]);
+        assert.match(request.cwd, /\/acme\/app\/7$/u);
         assert.strictEqual(git(request.cwd, "rev-parse", "HEAD"), head);
         assert.strictEqual(
           readFileSync(join(request.cwd, "a.ts"), "utf8"),
@@ -642,10 +648,7 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
         assert.strictEqual(only(yield* written(14)).status, "ready");
         assert.isFalse(existsSync(marker));
         assert.strictEqual(
-          readFileSync(
-            join(dataDir, "prs", "acme", "app", "14", "a.ts"),
-            "utf8",
-          ),
+          readFileSync(join(explored.at(-1)?.cwd ?? "", "a.ts"), "utf8"),
           "export const a = 9;\n",
         );
       }),
@@ -701,7 +704,7 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
           },
           { tag: "PullRequestNotForeign", session: "hosted" },
         );
-        assert.isFalse(existsSync(join(dataDir, "prs", "acme", "app", "13")));
+        assert.deepStrictEqual(prWorktrees(root), []);
       }),
   );
 

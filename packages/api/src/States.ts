@@ -135,7 +135,10 @@ export const WalkthroughSince = Schema.Literals([
 export type WalkthroughSince = typeof WalkthroughSince.Type;
 
 // Where a Foreign PR's Walkthrough starts: where the PR leaves its base, or the previous one.
-export const ForeignWalkthroughSince = WalkthroughSince.pick(["pr", "previous"]);
+export const ForeignWalkthroughSince = WalkthroughSince.pick([
+  "pr",
+  "previous",
+]);
 export type ForeignWalkthroughSince = typeof ForeignWalkthroughSince.Type;
 
 // What a Session's changes in its Project are against: the snapshot Fern took when it started, or,
