@@ -39,7 +39,10 @@ export function SectionPane({
           {section.fixes.walkthrough}
         </p>
       )}
-      <Markdown>{section.explanation}</Markdown>
+      {/* A Foreign PR's is written from its author's words, so it loads no images. */}
+      <Markdown images={walkthrough.foreignPr === undefined}>
+        {section.explanation}
+      </Markdown>
       {section.dropped && (
         <p className="text-[13px] leading-5 text-muted">
           <span className="text-faint">Tried and dropped: </span>

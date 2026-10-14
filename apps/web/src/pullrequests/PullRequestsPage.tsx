@@ -9,11 +9,18 @@ import { Cause, Option } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
 import { projectsAtom } from "../session/atoms";
-import { pullRequestFiltersAtom, pullRequestListAtom } from "./atoms";
+import {
+  openPullRequestAtom,
+  pullRequestFiltersAtom,
+  pullRequestListAtom,
+} from "./atoms";
+import { ForeignPrReview } from "./ForeignPrReview";
 import { listStateOf, rowsOf } from "./list";
 import { ListedPr } from "./ListedPr";
 import { NothingListed } from "./NothingListed";
+import { walkthroughOf } from "./prWalkthroughs";
 import { PullRequestFiltersBar } from "./PullRequestFiltersBar";
+import { useLiveWalkthroughs } from "./useLiveWalkthroughs";
 import { usePolling } from "./usePolling";
 import { whyFailed } from "./whyFailed";
 
@@ -25,9 +32,11 @@ const projectName = (path: string) => path.split("/").at(-1) || "Unknown";
 // A Project's Pull requests page: its PRs on GitHub, in their Stacks, bottom first, then the PRs in
 // no Stack, narrowed by the filters, the developer's own open PRs to start with. A Stack only some
 // of whose PRs pass shows whole, the rest dimmed. Fetched when it opens, on Refresh, and every minute
-// while it's in sight. A failed fetch says why, with a retry, over the last list fetched.
+// while it's in sight. A failed fetch says why, with a retry, over the last list fetched. A Foreign
+// PR opens here, in place of the list, on its Walkthroughs.
 export function PullRequestsPage({ root }: { root: string }) {
   const [filters, setFilters] = useAtom(pullRequestFiltersAtom(root));
+  const [open, setOpen] = useAtom(openPullRequestAtom(root));
   const atom = pullRequestListAtom(root, listStateOf(filters));
   const result = useAtomValue(atom);
   const refresh = useAtomRefresh(atom);
@@ -50,10 +59,25 @@ export function PullRequestsPage({ root }: { root: string }) {
     () => (list === undefined ? undefined : rowsOf(list, filters)),
     [list, filters],
   );
+  const live = useLiveWalkthroughs(list?.repo);
   const refreshing = AsyncResult.isInitial(result) || result.waiting;
   const failed = AsyncResult.isFailure(result)
     ? whyFailed(Option.getOrUndefined(Cause.findErrorOption(result.cause)))
     : undefined;
+
+  if (open !== undefined && list !== undefined)
+    return (
+      <ForeignPrReview
+        key={open}
+        root={root}
+        repo={list.repo}
+        number={open}
+        pr={[...list.lone, ...list.stacks.flatMap((s) => s.prs)].find(
+          (pr) => pr.number === open,
+        )}
+        onBack={() => setOpen(undefined)}
+      />
+    );
 
   return (
     <PullRequestsPanel
@@ -97,6 +121,8 @@ export function PullRequestsPage({ root }: { root: string }) {
                   pr={pr}
                   sessionTitle={pr.session && titles.get(pr.session)}
                   dimmed={dimmed}
+                  walkthrough={walkthroughOf(pr, live)}
+                  onOpen={() => setOpen(pr.number)}
                 />
               ))}
             </PullRequestStack>
@@ -109,6 +135,8 @@ export function PullRequestsPage({ root }: { root: string }) {
                   pr={pr}
                   sessionTitle={pr.session && titles.get(pr.session)}
                   dimmed={false}
+                  walkthrough={walkthroughOf(pr, live)}
+                  onOpen={() => setOpen(pr.number)}
                 />
               ))}
             </LonePullRequests>

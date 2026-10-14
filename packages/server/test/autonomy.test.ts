@@ -196,6 +196,7 @@ let gate: Deferred.Deferred<void> | undefined;
 const Writer = Layer.succeed(
   WalkthroughWriter,
   WalkthroughWriter.of({
+    explore: () => Effect.die("unused"),
     write: (request) =>
       Effect.gen(function* () {
         if (gate) yield* Deferred.await(gate);

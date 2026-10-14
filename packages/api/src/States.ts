@@ -171,6 +171,17 @@ export type PrListState = typeof PrListState.Type;
 export const GhPrState = Schema.Literals(["OPEN", "CLOSED", "MERGED"]);
 export type GhPrState = typeof GhPrState.Type;
 
+// Where a Foreign PR's latest Walkthrough stands, as the Pull requests page lists it: being written,
+// failed to be written, written and waiting on the developer's verdicts, or Reviewed. A PR with no
+// Walkthrough has none of these.
+export const PrWalkthroughState = Schema.Literals([
+  "writing",
+  "failed",
+  "unreviewed",
+  "reviewed",
+]);
+export type PrWalkthroughState = typeof PrWalkthroughState.Type;
+
 // The developer's tools
 
 // The tools Fern runs on that the developer installs and signs in to themselves: Claude Code, the

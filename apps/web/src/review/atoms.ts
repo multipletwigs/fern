@@ -1,7 +1,8 @@
 import { Atom } from "effect/reactivity";
 import type { ReviewTarget } from "./queue";
 
-// What's open in a Session's Review tab, kept while the tab is out of sight. Until something is
+// What's open in a Session's Review tab, or a Foreign PR's review on the Pull requests page (keyed
+// `pr:<repo>#<number>`), kept while it's out of sight. Until something is
 // picked, the tab opens on the first item still waiting.
 export const reviewAtAtom = Atom.family((_sessionId: string) =>
   Atom.make<ReviewTarget | undefined>(undefined).pipe(Atom.keepAlive),

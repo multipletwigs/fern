@@ -9,6 +9,7 @@ import {
   SessionChanges,
   WorkspaceError,
 } from "./Projects";
+import { GitHubRepoName, PrWalkthroughOf } from "./PullRequests";
 import { SessionRounds } from "./Rounds";
 import {
   Project,
@@ -89,6 +90,21 @@ export class LiveRpcs extends RpcGroup.make(
   Rpc.make("Walkthroughs", {
     payload: { session: Schema.NonEmptyString },
     success: Schema.Array(Walkthrough),
+    error: WalkthroughError,
+    stream: true,
+  }),
+  // A Foreign PR's Walkthroughs, oldest first, re-sent whenever one changes.
+  Rpc.make("PullRequestWalkthroughs", {
+    payload: { repo: GitHubRepoName, number: Schema.Int },
+    success: Schema.Array(Walkthrough),
+    error: WalkthroughError,
+    stream: true,
+  }),
+  // The latest Walkthrough of each of a repo's Foreign PRs that has one, re-sent whenever one
+  // changes, so the Pull requests page shows one being written as it finishes.
+  Rpc.make("PullRequestWalkthroughStates", {
+    payload: { repo: GitHubRepoName },
+    success: Schema.Array(PrWalkthroughOf),
     error: WalkthroughError,
     stream: true,
   }),

@@ -61,8 +61,14 @@ case "$1 $2" in
     echo "✗ cannot merge the whole stack: pull request #101 is blocked" >&2
     exit 2 ;;
   "pr view")
-    echo '{"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","reviewDecision":"REVIEW_REQUIRED"}'
+    case "$3" in
+      77) echo '{"number":77,"url":"https://github.com/acme/app/pull/77","title":"Dark mode","body":"Adds it.","author":{"login":"monalisa"},"headRefName":"dark","baseRefName":"main","headRefOid":"cccc","isDraft":false,"state":"OPEN","reviewRequests":[],"closingIssuesReferences":[{"number":70,"url":"https://github.com/acme/app/issues/70"}]}' ;;
+      79) echo '{"number":79,"url":"https://github.com/acme/app/pull/79","title":"Leak","body":"","author":{"login":"mallory"},"headRefName":"leak","baseRefName":"main","headRefOid":"eeee","isDraft":false,"state":"OPEN","reviewRequests":[],"closingIssuesReferences":[{"number":1,"url":"https://github.com/acme/secret/issues/1"}]}' ;;
+      78) echo '{"number":78,"url":"https://github.com/acme/app/pull/78","title":"Typo","body":"","author":null,"headRefName":"typo","baseRefName":"main","headRefOid":"dddd","isDraft":true,"state":"MERGED","reviewRequests":[],"closingIssuesReferences":[]}' ;;
+      *) echo '{"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","reviewDecision":"REVIEW_REQUIRED"}' ;;
+    esac
     exit 0 ;;
+  "issue view") echo '{"number":70,"title":"Themes","body":"We want themes."}'; exit 0 ;;
   "api repos/{owner}/{repo}/pulls/101") echo '{"merged_at":"2026-10-13T09:00:00Z"}'; exit 0 ;;
   "api repos/{owner}/{repo}/pulls/102") echo '{"merged_at":null}'; exit 0 ;;
 esac
@@ -70,6 +76,15 @@ exit 1
 `,
 );
 chmodSync(join(dir, "gh"), 0o755);
+// A stub `git` that only logs, for the calls the code host makes through git.
+writeFileSync(
+  join(dir, "git"),
+  `#!/bin/sh
+echo "git $@" >> "${log}"
+exit 0
+`,
+);
+chmodSync(join(dir, "git"), 0o755);
 
 const calls = () =>
   readFileSync(log, { encoding: "utf8", flag: "a+" })
@@ -321,6 +336,73 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
           writeFileSync(log, "");
           yield* host.stacks("/", [999]);
           assert.deepStrictEqual(calls(), [page(1), page(2)]);
+        }),
+      ),
+  );
+
+  it.effect(
+    "one PR comes with its author's description and the issue it says it closes",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          const found = yield* host.pullRequest("/", 77);
+
+          assert.deepStrictEqual(found, {
+            number: 77,
+            url: "https://github.com/acme/app/pull/77",
+            title: "Dark mode",
+            author: "monalisa",
+            headRef: "dark",
+            baseRef: "main",
+            headCommit: "cccc",
+            draft: false,
+            state: "open",
+            reviewers: [],
+            body: "Adds it.",
+            issue: { number: 70, title: "Themes", body: "We want themes." },
+          });
+          assert.match(calls()[0] ?? "", /^pr view 77 --json /);
+          assert.strictEqual(
+            calls()[1],
+            "issue view https://github.com/acme/app/issues/70 --json number,title,body",
+          );
+
+          writeFileSync(log, "");
+          const unlinked = yield* host.pullRequest("/", 78);
+          assert.deepStrictEqual(
+            [unlinked.state, unlinked.author, unlinked.issue],
+            ["merged", "ghost", undefined],
+          );
+          assert.lengthOf(calls(), 1);
+
+          // An issue on another repo is never read, as it could be one only the developer sees.
+          writeFileSync(log, "");
+          const elsewhere = yield* host.pullRequest("/", 79);
+          assert.isUndefined(elsewhere.issue);
+          assert.lengthOf(calls(), 1);
+        }),
+      ),
+  );
+
+  it.effect(
+    "a PR's head is fetched as GitHub keeps it, a fork's PR too, into hidden refs that leave the checkout alone",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          yield* host.fetchPullRequest("/", { number: 77, base: "main" });
+
+          assert.deepStrictEqual(calls(), [
+            "git fetch --quiet --no-tags --no-write-fetch-head origin +refs/pull/77/head:refs/fern/prs/77/head +refs/heads/main:refs/fern/prs/77/base",
+          ]);
+
+          writeFileSync(log, "");
+          const flag = yield* host
+            .fetchPullRequest("/", { number: 77, base: "--upload-pack=x" })
+            .pipe(Effect.flip);
+          assert.strictEqual(flag._tag, "CodeHostError");
+          assert.deepStrictEqual(calls(), []);
         }),
       ),
   );

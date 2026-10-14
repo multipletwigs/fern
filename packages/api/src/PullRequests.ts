@@ -1,7 +1,8 @@
 import { Schema } from "effect";
-import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { ProjectNotFound, WorkspaceError } from "./Projects";
-import { PrListState, PrState } from "./States";
+import { PrListState, PrState, PrWalkthroughState } from "./States";
+import { WalkthroughError } from "./Walkthroughs";
 
 // A Project's pull requests on GitHub, for its Pull requests page: every PR on the repo, whoever
 // wrote it, grouped into the GitHub Stacks they form. A PR one of Fern's Hosted Sessions holds on
@@ -13,6 +14,29 @@ export class PrStackPlace extends Schema.Class<PrStackPlace>("PrStackPlace")({
   id: Schema.Int,
   // 1 for the bottom PR, the one based on the Stack's base branch.
   position: Schema.Int,
+}) {}
+
+// A repo on GitHub, as "owner/name".
+export const GitHubRepoName = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/),
+);
+
+// Where a Foreign PR's latest Walkthrough stands: its state, the PR's head commit it explains, and
+// why writing it failed, when it did.
+export class PrWalkthrough extends Schema.Class<PrWalkthrough>("PrWalkthrough")(
+  {
+    state: PrWalkthroughState,
+    head: Schema.String,
+    error: Schema.optional(Schema.String),
+  },
+) {}
+
+// A Foreign PR's latest Walkthrough, by the PR's number.
+export class PrWalkthroughOf extends Schema.Class<PrWalkthroughOf>(
+  "PrWalkthroughOf",
+)({
+  number: Schema.Int,
+  walkthrough: PrWalkthrough,
 }) {}
 
 // One pull request on the Project's repo, as GitHub has it.
@@ -37,6 +61,8 @@ export class ListedPullRequest extends Schema.Class<ListedPullRequest>(
   stack: Schema.optional(PrStackPlace),
   // The Hosted Session whose Stack holds it, when one does.
   session: Schema.optional(Schema.String),
+  // Its latest Walkthrough, when it's a Foreign PR with one.
+  walkthrough: Schema.optional(PrWalkthrough),
 }) {}
 
 // A GitHub Stack of the repo's PRs, bottom first: only those the list holds.
@@ -81,6 +107,34 @@ export class PullRequestsError extends Schema.TaggedError<PullRequestsError>()(
   { httpApiStatus: 502 },
 ) {}
 
+// The PR is on a Hosted Session's Stack, so its Walkthroughs are that Session's: it gets no Foreign
+// PR Walkthrough.
+export class PullRequestNotForeign extends Schema.TaggedError<PullRequestNotForeign>()(
+  "PullRequestNotForeign",
+  { number: Schema.Int, session: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
+// A Walkthrough of the PR is being written already.
+export class PrWalkthroughInProgress extends Schema.TaggedError<PrWalkthroughInProgress>()(
+  "PrWalkthroughInProgress",
+  { number: Schema.Int },
+  { httpApiStatus: 409 },
+) {}
+
+// The PR changes nothing from where it leaves its base, so there is nothing to explain.
+export class PrNothingToReview extends Schema.TaggedError<PrNothingToReview>()(
+  "PrNothingToReview",
+  { number: Schema.Int },
+  { httpApiStatus: 409 },
+) {}
+
+// A PR number, as a path parameter: a positive whole number.
+const PrNumber = Schema.NumberFromString.check(
+  Schema.isInt(),
+  Schema.isGreaterThan(0),
+);
+
 export class PullRequestsApi extends HttpApiGroup.make("pullRequests")
   .add(
     // Whether the Project has a Pull requests page: its `origin` is on GitHub and `gh` is signed
@@ -102,6 +156,26 @@ export class PullRequestsApi extends HttpApiGroup.make("pullRequests")
         WorkspaceError,
         PullRequestsUnavailable,
         PullRequestsError,
+      ],
+    }),
+  )
+  .add(
+    // Starts writing a Walkthrough of a Foreign PR, of its head from where it leaves its base: a
+    // fresh read-only agent reads the PR in a worktree of its own, never the developer's checkout
+    // (ADR 0010). Until it's written, the PR shows its Walkthrough as being written.
+    HttpApiEndpoint.post("walkThrough", "/:number/walkthrough", {
+      params: { number: PrNumber },
+      payload: Schema.Struct({ root: Schema.NonEmptyString }),
+      success: HttpApiSchema.NoContent,
+      error: [
+        ProjectNotFound,
+        WorkspaceError,
+        PullRequestsUnavailable,
+        PullRequestsError,
+        PullRequestNotForeign,
+        PrWalkthroughInProgress,
+        PrNothingToReview,
+        WalkthroughError,
       ],
     }),
   )

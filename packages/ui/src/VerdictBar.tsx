@@ -8,7 +8,7 @@ const button =
 // The verdict on the item open in the Review tab, at the foot of its pane: Approve and Reject with
 // their keys, or the verdict given, which can change until the Walkthrough is Reviewed. Rejecting
 // opens a field for the note, which a Rejection can't go without; the parent holds it, so a key
-// can open it too.
+// can open it too. `notePlaceholder` says where the note goes.
 export function VerdictBar({
   verdict,
   locked,
@@ -20,6 +20,7 @@ export function VerdictBar({
   onApprove,
   onNoting,
   onReject,
+  notePlaceholder = "What should change? This goes back to the Session.",
 }: {
   verdict: { kind: VerdictKind; note?: string | undefined } | undefined;
   // The review is done; verdicts can no longer change.
@@ -35,6 +36,7 @@ export function VerdictBar({
   // Opens or closes the note field.
   onNoting: (noting: boolean) => void;
   onReject: () => void;
+  notePlaceholder?: string;
 }) {
   const noted = note.trim() !== "";
   return (
@@ -58,7 +60,7 @@ export function VerdictBar({
                 onNoting(false);
               }
             }}
-            placeholder="What should change? This goes back to the Session."
+            placeholder={notePlaceholder}
             rows={3}
             className="w-full resize-none rounded-xl border border-hairline bg-white/[0.02] px-3 py-2 text-sm text-ink outline-none placeholder:text-faint focus:border-danger/30"
           />
