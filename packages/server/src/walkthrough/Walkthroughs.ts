@@ -1008,14 +1008,19 @@ export class Walkthroughs extends Context.Service<
       ) =>
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
-          yield* sql
+          return yield* sql
             .withTransaction(
               Effect.gen(function* () {
-                if (!("session" in owner)) {
-                  const failed = sql`SELECT w.id FROM walkthroughs w
-                    WHERE ${ownedBy(owner)} AND w.status = 'failed'`;
-                  yield* sql`DELETE FROM walkthrough_hunks WHERE walkthrough_id IN (${failed})`;
-                  yield* sql`DELETE FROM walkthroughs WHERE id IN (${failed})`;
+                const replaced =
+                  "session" in owner
+                    ? []
+                    : yield* sql<{ id: string; repo: string }>`
+                        SELECT w.id, w.repo FROM walkthroughs w
+                        WHERE ${ownedBy(owner)} AND w.status = 'failed'`;
+                const ids = replaced.map((row) => row.id);
+                if (ids.length > 0) {
+                  yield* sql`DELETE FROM walkthrough_hunks WHERE walkthrough_id IN ${sql.in(ids)}`;
+                  yield* sql`DELETE FROM walkthroughs WHERE id IN ${sql.in(ids)}`;
                 }
                 const [last] = yield* sql<{ number: number }>`
                   SELECT MAX(w.number) AS number FROM walkthroughs w
@@ -1041,6 +1046,7 @@ export class Walkthroughs extends Context.Service<
                     added: hunk.added,
                     removed: hunk.removed,
                   })}`;
+                return replaced;
               }),
             )
             .pipe(Effect.orDie);
@@ -1243,7 +1249,7 @@ export class Walkthroughs extends Context.Service<
             rows,
             yield* decisionsOfProject(change.project).pipe(Effect.orDie),
           );
-          yield* insert(
+          const replaced = yield* insert(
             owner,
             {
               id,
@@ -1258,6 +1264,12 @@ export class Walkthroughs extends Context.Service<
               mergeBase: change.mergeBase,
             },
             hunks,
+          );
+          // Nothing keeps the commits of the failed ones it replaced any longer.
+          yield* Effect.forEach(replaced, (failed) =>
+            snapshots
+              .unpin(failed.repo, walkthroughRef(failed.id))
+              .pipe(Effect.ignore),
           );
           return {
             id,

@@ -610,6 +610,16 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
         });
         const again = only(yield* written(11));
         assert.deepStrictEqual([again.status, again.number], ["ready", 1]);
+        // The failed one's commit is no longer kept for it.
+        assert.deepStrictEqual(
+          git(
+            root,
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/fern/walkthroughs/",
+          ),
+          `refs/fern/walkthroughs/${again.id}`,
+        );
       }),
   );
 
