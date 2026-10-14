@@ -19,6 +19,8 @@ import { CodeHost } from "../src/codehost/CodeHost";
 // Only shell builtins work inside it, as PATH is its folder alone.
 const dir = mkdtempSync(join(tmpdir(), "fern-gh-"));
 const log = join(dir, "calls.log");
+// What `gh api --input -` read from stdin.
+const input = join(dir, "input.log");
 writeFileSync(
   join(dir, "gh"),
   `#!/bin/sh
@@ -44,6 +46,17 @@ case "$1 $2" in
     esac
     exit 0 ;;
   "api user") echo "octocat"; exit 0 ;;
+  "api -X")
+    : > "${input}"
+    while IFS= read -r l || [ -n "$l" ]; do printf '%s\\n' "$l" >> "${input}"; done
+    case "$PWD" in
+      *-refused)
+        echo '{"message":"Unprocessable Entity","errors":["Line could not be resolved"],"documentation_url":"https://docs.github.com/rest","status":"422"}'
+        echo "gh: Unprocessable Entity (HTTP 422)" >&2
+        exit 1 ;;
+    esac
+    echo '{"id":1,"html_url":"https://github.com/acme/app/pull/77#pullrequestreview-1","submitted_at":"2026-10-14T09:30:00Z","state":"CHANGES_REQUESTED"}'
+    exit 0 ;;
   "pr list")
     case "$PWD" in
       *-refused) echo "HTTP 403: API rate limit exceeded for user ID 1." >&2; exit 1 ;;
@@ -405,6 +418,62 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
           assert.deepStrictEqual(calls(), []);
         }),
       ),
+  );
+
+  it.effect(
+    "a review goes up in one call, its body and notes as JSON on stdin whatever they hold, never as arguments",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          const note = `Don't $(touch /tmp/pwned) "quote" \`tick\` --flag\nsecond line`;
+          const review = {
+            commit: "cccc",
+            event: "REQUEST_CHANGES" as const,
+            body: `Rejected:\n\n${note}`,
+            comments: [
+              { path: "src/a.ts", line: 3, side: "RIGHT" as const, body: note },
+            ],
+          };
+          const posted = yield* host.postReview("/", 77, review);
+
+          assert.deepStrictEqual(posted, {
+            url: "https://github.com/acme/app/pull/77#pullrequestreview-1",
+            postedAt: Date.parse("2026-10-14T09:30:00Z"),
+          });
+          assert.deepStrictEqual(calls(), [
+            "api -X POST repos/{owner}/{repo}/pulls/77/reviews --input -",
+          ]);
+          assert.deepStrictEqual(JSON.parse(readFileSync(input, "utf8")), {
+            commit_id: "cccc",
+            event: "REQUEST_CHANGES",
+            body: `Rejected:\n\n${note}`,
+            comments: [
+              { path: "src/a.ts", line: 3, side: "RIGHT", body: note },
+            ],
+          });
+        }),
+      ),
+  );
+
+  it.effect("a refused review fails with GitHub's reason", () =>
+    withStub(
+      Effect.gen(function* () {
+        const host = yield* CodeHost;
+        const refused = yield* host
+          .postReview(inFolder("-refused"), 77, {
+            commit: "cccc",
+            event: "APPROVE",
+            body: "Looks good.",
+            comments: [],
+          })
+          .pipe(Effect.flip);
+        assert.deepStrictEqual(
+          [refused._tag, refused.message],
+          ["CodeHostError", "Line could not be resolved."],
+        );
+      }),
+    ),
   );
 
   it.effect("a repo without Stacks has none", () =>

@@ -396,6 +396,14 @@ export const migrations = {
     yield* sql`ALTER TABLE walkthrough_sections_new RENAME TO walkthrough_sections`;
     yield* sql`ALTER TABLE walkthrough_hunks_new RENAME TO walkthrough_hunks`;
   }),
+  // A Foreign PR's Walkthrough keeps the review the developer posted of it on GitHub, at most one:
+  // where it is and when it went up, or why GitHub refused the last try.
+  "0019_foreign_pr_reviews": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE walkthroughs ADD COLUMN review_url TEXT`;
+    yield* sql`ALTER TABLE walkthroughs ADD COLUMN review_posted_at INTEGER`;
+    yield* sql`ALTER TABLE walkthroughs ADD COLUMN review_error TEXT`;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

@@ -182,6 +182,16 @@ export const PrWalkthroughState = Schema.Literals([
 ]);
 export type PrWalkthroughState = typeof PrWalkthroughState.Type;
 
+// What a review the developer posts on a Foreign PR says of it, as GitHub takes it: approved, with
+// nothing rejected; changes requested, with something rejected; or a plain comment, on the
+// developer's own PR, which GitHub won't let them approve or request changes on.
+export const PrReviewEvent = Schema.Literals([
+  "APPROVE",
+  "REQUEST_CHANGES",
+  "COMMENT",
+]);
+export type PrReviewEvent = typeof PrReviewEvent.Type;
+
 // The developer's tools
 
 // The tools Fern runs on that the developer installs and signs in to themselves: Claude Code, the

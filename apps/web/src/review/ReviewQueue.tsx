@@ -6,7 +6,6 @@ import { ReviewLayout } from "@repo/ui/ReviewLayout";
 import { VerdictBar } from "@repo/ui/VerdictBar";
 import { Exit } from "effect";
 import {
-  type ComponentType,
   type KeyboardEvent,
   type ReactNode,
   useLayoutEffect,
@@ -59,7 +58,7 @@ const entryDetail = (item: ReviewQueueItem) => {
 // Session's work lands as a Stack, bottom PR first, and one item at a time on the right. `a`
 // approves, `r` opens the note a Rejection needs, `j`/`k` move. After a verdict the view snaps to
 // the next item still waiting. `active` is false while it's out of sight. `reviewKey` keeps what's
-// open while it is; `actions` sit above the list, `outcome` under a Reviewed Walkthrough's items,
+// open while it is; `actions` sit above the list, `renderOutcome` under a Reviewed Walkthrough's items,
 // and `retry`, when given, is how a Walkthrough that couldn't be written is tried again.
 export function ReviewQueue({
   reviewKey,
@@ -68,7 +67,7 @@ export function ReviewQueue({
   waiting,
   active,
   actions,
-  outcome: Outcome,
+  renderOutcome,
   retry,
 }: {
   reviewKey: string;
@@ -77,7 +76,7 @@ export function ReviewQueue({
   waiting: number;
   active: boolean;
   actions: ReactNode;
-  outcome: ComponentType<{ walkthrough: Walkthrough }>;
+  renderOutcome: (walkthrough: Walkthrough) => ReactNode;
   retry?: ReactNode;
 }) {
   const [target, setTarget] = useAtom(reviewAtAtom(reviewKey));
@@ -202,7 +201,7 @@ export function ReviewQueue({
               : "What should change? This stays in Fern until you post a review."
           }
         />
-        {locked && <Outcome walkthrough={entry.walkthrough} />}
+        {locked && renderOutcome(entry.walkthrough)}
       </div>
     );
     return {

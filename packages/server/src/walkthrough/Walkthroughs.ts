@@ -9,6 +9,7 @@ import {
   PrWalkthrough,
   PrWalkthroughInProgress,
   PrWalkthroughOf,
+  PostedReview,
   PullRequest,
   ReviewClosed,
   ReviewItemNotFound,
@@ -104,6 +105,9 @@ const WalkthroughRow = Schema.Struct({
   reviewedAt: Schema.NullOr(Schema.Finite),
   redirectSentAt: Schema.NullOr(Schema.Finite),
   redirectError: Schema.NullOr(Schema.String),
+  reviewUrl: Schema.NullOr(Schema.String),
+  reviewPostedAt: Schema.NullOr(Schema.Finite),
+  reviewError: Schema.NullOr(Schema.String),
 });
 type WalkthroughRow = typeof WalkthroughRow.Type;
 
@@ -315,6 +319,14 @@ const assemble = (rows: SessionRows): ReadonlyArray<Walkthrough> => {
           ? undefined
           : DateTime.makeUnsafe(w.redirectSentAt),
       redirectError: w.redirectError ?? undefined,
+      review:
+        w.reviewUrl === null || w.reviewPostedAt === null
+          ? undefined
+          : PostedReview.make({
+              url: w.reviewUrl,
+              postedAt: DateTime.makeUnsafe(w.reviewPostedAt),
+            }),
+      reviewError: w.reviewError ?? undefined,
     });
   });
 };
@@ -497,6 +509,15 @@ interface Writing {
   readonly late: string;
 }
 
+// A Foreign PR's Walkthrough, with the PR it explains, by its repo on GitHub and number, and the
+// PR's head commit it explains.
+export interface ForeignWalkthrough {
+  readonly walkthrough: Walkthrough;
+  readonly repo: string;
+  readonly number: number;
+  readonly head: string;
+}
+
 // Where a Foreign PR's latest Walkthrough stands.
 const prStateOf = (row: {
   readonly status: WalkthroughStatus;
@@ -579,6 +600,19 @@ export class Walkthroughs extends Context.Service<
     liveForeignStates(
       repo: string,
     ): Stream.Stream<ReadonlyArray<PrWalkthroughOf>>;
+    // A Foreign PR's Walkthrough, with the PR it explains and the head commit it explains, for the
+    // review the developer posts of it. None for a Session's.
+    foreign(
+      walkthroughId: string,
+    ): Effect.Effect<ForeignWalkthrough, WalkthroughNotFound>;
+    // Keeps the review the developer posted of a Foreign PR's Walkthrough, clearing why an earlier
+    // try failed.
+    reviewPosted(
+      walkthroughId: string,
+      review: { readonly url: string; readonly postedAt: number },
+    ): Effect.Effect<void>;
+    // Keeps why GitHub refused the review, until one goes up.
+    reviewRefused(walkthroughId: string, reason: string): Effect.Effect<void>;
     // The Session's Rejections no later Section says it fixes: each with the Walkthrough it's in
     // and what was rejected.
     openRejections(sessionId: string): Effect.Effect<
@@ -1350,6 +1384,35 @@ export class Walkthroughs extends Context.Service<
           yield* sendRedirect(walkthroughId, owner.session).pipe(Effect.ignore);
       });
 
+      const foreign = Effect.fn("Walkthroughs.foreign")(function* (
+        walkthroughId: string,
+      ) {
+        const owner = yield* findOwner(walkthroughId);
+        if ("session" in owner)
+          return yield* new WalkthroughNotFound({ id: walkthroughId });
+        const rows = yield* load(owner);
+        const row = rows.walkthroughs.find((w) => w.id === walkthroughId);
+        const walkthrough = assemble(rows).find((w) => w.id === walkthroughId);
+        if (row === undefined || walkthrough === undefined)
+          return yield* new WalkthroughNotFound({ id: walkthroughId });
+        return {
+          walkthrough,
+          repo: owner.repo,
+          number: owner.number,
+          head: row.headCommit,
+        };
+      });
+      const reviewPosted = (
+        walkthroughId: string,
+        review: { readonly url: string; readonly postedAt: number },
+      ) =>
+        record(sql`UPDATE walkthroughs SET review_url = ${review.url},
+          review_posted_at = ${review.postedAt}, review_error = NULL
+          WHERE id = ${walkthroughId} AND pr_number IS NOT NULL`);
+      const reviewRefused = (walkthroughId: string, reason: string) =>
+        record(sql`UPDATE walkthroughs SET review_error = ${reason}
+          WHERE id = ${walkthroughId} AND pr_number IS NOT NULL AND review_url IS NULL`);
+
       // A Foreign PR's Walkthrough has no Session to send its Rejections to, so it's never open
       // for this.
       const redirect = Effect.fn("Walkthroughs.redirect")(function* (
@@ -1505,6 +1568,9 @@ export class Walkthroughs extends Context.Service<
         writeForeign,
         foreignStates,
         liveForeignStates,
+        foreign,
+        reviewPosted,
+        reviewRefused,
         openRejections: rejectionsOf,
       });
     }),
