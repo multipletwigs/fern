@@ -79,6 +79,7 @@ export function PullRequestsPage({ root }: { root: string }) {
         pr={pr}
         walkthrough={pr && walkthroughOf(pr, live)}
         onBack={() => setOpen(undefined)}
+        onChanged={refresh}
       />
     );
   }

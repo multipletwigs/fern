@@ -206,6 +206,9 @@ export const UnusedPullRequests = Layer.succeed(
     list: () => Effect.die("unused"),
     walkThrough: () => Effect.die("unused"),
     walkThroughStack: () => Effect.die("unused"),
+    tryIt: () => Effect.die("unused"),
+    dismiss: () => Effect.die("unused"),
+    worktree: () => Effect.die("unused"),
   }),
 );
 

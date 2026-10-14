@@ -1,3 +1,4 @@
+import type { TerminalTarget } from "@repo/api";
 import type { Terminal } from "@xterm/xterm";
 import { Effect, Predicate, Queue, Schedule, Stream } from "effect";
 import { LiveClient } from "../LiveClient";
@@ -14,13 +15,13 @@ const reattach = Schedule.spaced("1 second").pipe(
 const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 
-// Connects an xterm to its Session's shell: what the shell has printed, and goes on to print, is
-// written to it, and what's typed or pasted into it, and its size, go to the shell. Runs until
-// interrupted, which detaches from the shell without ending it, or until the shell exits, which it
-// tells `onExit`.
+// Connects an xterm to its target's shell, a Session's or a Foreign PR's: what the shell has
+// printed, and goes on to print, is written to it, and what's typed or pasted into it, and its
+// size, go to the shell. Runs until interrupted, which detaches from the shell without ending it,
+// or until the shell exits, which it tells `onExit`.
 export const runTerminal = (
   term: Terminal,
-  sessionId: string,
+  target: TerminalTarget,
   onExit: (code: number) => void,
 ) =>
   Effect.gen(function* () {
@@ -40,9 +41,9 @@ export const runTerminal = (
     );
     const send = (message: Outgoing) =>
       (message._tag === "Input"
-        ? client("TerminalInput", { sessionId, data: message.data })
+        ? client("TerminalInput", { target, data: message.data })
         : client("TerminalResize", {
-            sessionId,
+            target,
             cols: cells(message.cols),
             rows: cells(message.rows),
           })
@@ -58,7 +59,7 @@ export const runTerminal = (
     // the terminal shows, so nothing shows twice.
     yield* Stream.suspend(() =>
       client("Terminal", {
-        sessionId,
+        target,
         cols: cells(term.cols),
         rows: cells(term.rows),
       }),
@@ -81,9 +82,9 @@ export const runTerminal = (
     );
   }).pipe(Effect.scoped);
 
-// Ends a Session's shell, if it's still running, so the next `runTerminal` starts a fresh one.
-export const restartTerminal = (sessionId: string) =>
+// Ends a terminal's shell, if it's still running, so the next `runTerminal` starts a fresh one.
+export const restartTerminal = (target: TerminalTarget) =>
   Effect.gen(function* () {
     const client = yield* LiveClient;
-    yield* client("TerminalRestart", { sessionId });
+    yield* client("TerminalRestart", { target });
   });

@@ -194,6 +194,12 @@ export const PullRequestsHandlers = HttpApiBuilder.group(
         pullRequests.walkThrough(payload.root, params.number),
       walkThroughStack: ({ params, payload }) =>
         pullRequests.walkThroughStack(payload.root, params.id, payload.state),
+      tryIt: ({ params, payload }) =>
+        pullRequests.tryIt(payload.root, params.number),
+      dismiss: ({ params, payload }) =>
+        pullRequests.dismiss(payload.root, params.number, {
+          discard: payload.discard ?? false,
+        }),
     });
   }),
 );
