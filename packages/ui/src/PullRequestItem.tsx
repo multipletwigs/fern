@@ -3,6 +3,7 @@ import {
   ArrowUpRightIcon,
   RobotIcon,
 } from "@phosphor-icons/react";
+import { clsx } from "clsx";
 import type { ReactNode } from "react";
 import { PullRequestMark } from "./PullRequestMark";
 
@@ -14,7 +15,7 @@ const GO =
 // One pull request on the Pull requests page, on one line: its number, title and author, marked
 // when it's a draft, when the developer is asked to review it, and when one of the developer's
 // Hosted Sessions holds it. A Session's PR opens in the Session through `onOpen`; any other opens
-// on GitHub at `url`.
+// on GitHub at `url`. Dimmed when it's shown only for the Stack it's in, still there to open.
 export function PullRequestItem({
   number,
   title,
@@ -23,6 +24,7 @@ export function PullRequestItem({
   draft,
   reviewRequested,
   session,
+  dimmed = false,
   onOpen,
 }: {
   number: number;
@@ -33,6 +35,7 @@ export function PullRequestItem({
   reviewRequested: boolean;
   // What to call the Hosted Session holding it, when one does.
   session?: string | undefined;
+  dimmed?: boolean | undefined;
   onOpen?: (() => void) | undefined;
 }) {
   const content: ReactNode = (
@@ -67,7 +70,12 @@ export function PullRequestItem({
     </>
   );
   return (
-    <li>
+    <li
+      className={clsx(
+        "transition-opacity",
+        dimmed && "opacity-40 hover:opacity-100",
+      )}
+    >
       {onOpen ? (
         <button type="button" onClick={onOpen} className={ROW}>
           {content}

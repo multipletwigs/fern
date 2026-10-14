@@ -162,6 +162,11 @@ export type GhIssueState = typeof GhIssueState.Type;
 export const PrState = Schema.Literals(["open", "closed", "merged"]);
 export type PrState = typeof PrState.Type;
 
+// Which PRs the Pull requests page asks GitHub for: the open ones, or the closed ones together with
+// the merged ones, as `gh pr list --state` takes it.
+export const PrListState = Schema.Literals(["open", "closed"]);
+export type PrListState = typeof PrListState.Type;
+
 // The same, as `gh` prints it: in capitals.
 export const GhPrState = Schema.Literals(["OPEN", "CLOSED", "MERGED"]);
 export type GhPrState = typeof GhPrState.Type;
