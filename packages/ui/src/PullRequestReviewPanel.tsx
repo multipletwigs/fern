@@ -9,6 +9,7 @@ export function PullRequestReviewPanel({
   title,
   url,
   onBack,
+  actions,
   children,
 }: {
   number: number;
@@ -16,6 +17,8 @@ export function PullRequestReviewPanel({
   title: string | undefined;
   url: string;
   onBack: () => void;
+  // What can be done with it, beside the link to GitHub.
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -40,15 +43,18 @@ export function PullRequestReviewPanel({
           </>
         }
         end={
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-[13px] text-muted transition-colors hover:bg-white/[0.05] hover:text-ink"
-          >
-            Open on GitHub
-            <ArrowUpRightIcon className="size-3" />
-          </a>
+          <>
+            {actions}
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-[13px] text-muted transition-colors hover:bg-white/[0.05] hover:text-ink"
+            >
+              Open on GitHub
+              <ArrowUpRightIcon className="size-3" />
+            </a>
+          </>
         }
       />
       <div className="relative min-h-0 flex-1">{children}</div>

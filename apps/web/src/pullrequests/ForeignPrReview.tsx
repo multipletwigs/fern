@@ -8,6 +8,7 @@ import { ReviewQueue } from "../review/ReviewQueue";
 import { prReviewKey, prWalkthroughsAtom } from "./atoms";
 import { ForeignPrEmpty } from "./ForeignPrEmpty";
 import { ForeignReviewOutcome } from "./ForeignReviewOutcome";
+import { PrTryOut } from "./PrTryOut";
 import { WalkThroughButton } from "./WalkThroughButton";
 
 // A Foreign PR open on the Pull requests page: its Walkthroughs in the Review layout, with the same
@@ -19,6 +20,7 @@ export function ForeignPrReview({
   number,
   pr,
   onBack,
+  onChanged,
 }: {
   root: string;
   // The repo on GitHub, as "owner/name".
@@ -27,6 +29,8 @@ export function ForeignPrReview({
   // The PR as last listed, when the list still has it.
   pr: ListedPullRequest | undefined;
   onBack: () => void;
+  // Told when the PR's worktree is checked out or removed, for the list to show it.
+  onChanged: () => void;
 }) {
   const key = prReviewKey(repo, number);
   const result = useAtomValue(prWalkthroughsAtom(key));
@@ -42,6 +46,11 @@ export function ForeignPrReview({
       title={pr?.title}
       url={pr?.url ?? `https://github.com/${repo}/pull/${number}`}
       onBack={onBack}
+      actions={
+        pr !== undefined && pr.session === undefined && (
+          <PrTryOut root={root} repo={repo} pr={pr} onChanged={onChanged} />
+        )
+      }
     >
       {queue.length === 0 ? (
         <ForeignPrEmpty

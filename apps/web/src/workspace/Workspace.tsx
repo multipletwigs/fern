@@ -7,7 +7,7 @@ import {
   activeSessionIdAtom,
   currentSessionAtom,
 } from "../session/atoms";
-import { PullRequestsPage } from "../pullrequests/PullRequestsPage";
+import { PullRequestsWorkbench } from "../pullrequests/PullRequestsWorkbench";
 import { NewSession } from "../session/NewSession";
 import { Settings } from "../settings/Settings";
 import { SessionWorkbench } from "./SessionWorkbench";
@@ -23,13 +23,7 @@ export function Workspace() {
   if (showing._tag === "Settings")
     return <Workbench chat={<Settings />} code={undefined} animate={false} />;
   if (showing._tag === "PullRequests")
-    return (
-      <Workbench
-        chat={<PullRequestsPage key={showing.root} root={showing.root} />}
-        code={undefined}
-        animate={false}
-      />
-    );
+    return <PullRequestsWorkbench key={showing.root} root={showing.root} />;
   if (showing._tag === "NewSession")
     return (
       <Workbench

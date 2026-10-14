@@ -1,4 +1,16 @@
 import { Schema } from "effect";
+import { GitHubRepoName } from "./PullRequests";
+
+// Whose terminal it is: a Session's, in its folder, or a Foreign PR's, in the worktree Try it
+// checked it out in. The server finds the folder from its own records, never from the page.
+export const TerminalTarget = Schema.Union([
+  Schema.TaggedStruct("Session", { sessionId: Schema.NonEmptyString }),
+  Schema.TaggedStruct("PullRequest", {
+    repo: GitHubRepoName,
+    number: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+]);
+export type TerminalTarget = typeof TerminalTarget.Type;
 
 // A terminal's size in character cells, no screen showing more than a thousand either way.
 const Cells = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1000 }));
@@ -29,7 +41,7 @@ export const TerminalExit = Schema.TaggedStruct("TerminalExit", {
   code: Schema.Int,
 });
 
-// One event from a Session's terminal.
+// One event from a terminal.
 export const TerminalEvent = Schema.Union([
   TerminalReplay,
   TerminalOutput,
@@ -37,7 +49,7 @@ export const TerminalEvent = Schema.Union([
 ]);
 export type TerminalEvent = typeof TerminalEvent.Type;
 
-// The Session's shell couldn't be started, e.g. its folder is gone.
+// The terminal's shell couldn't be started, e.g. its folder is gone, or isn't running.
 export class TerminalError extends Schema.TaggedError<TerminalError>()(
   "TerminalError",
   { message: Schema.String },

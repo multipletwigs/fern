@@ -8,7 +8,7 @@ import { changedFiles, followedFile, readFiles } from "../code/paths";
 import { ProjectCode } from "../code/ProjectCode";
 import { preloadedSessionAtom } from "../session/atoms";
 import { Session } from "../session/Session";
-import { SessionTerminalPanel } from "../terminal/SessionTerminalPanel";
+import { TerminalDock } from "../terminal/TerminalDock";
 import { screenAtoms } from "./screen";
 
 // One Session's chat, joined by its code while the developer has the code panel open, by the
@@ -156,7 +156,9 @@ export function SessionWorkbench({
           ) : undefined
         }
       />
-      {root && <SessionTerminalPanel sessionId={sessionId} root={root} />}
+      {root && (
+        <TerminalDock target={{ _tag: "Session", sessionId }} folder={root} />
+      )}
     </div>
   );
 }
