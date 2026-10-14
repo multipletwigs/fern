@@ -5,11 +5,16 @@ import { ReviewHeading } from "@repo/ui/ReviewHeading";
 import { ReviewLayout } from "@repo/ui/ReviewLayout";
 import { VerdictBar } from "@repo/ui/VerdictBar";
 import { Exit } from "effect";
-import { type KeyboardEvent, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ComponentType,
+  type KeyboardEvent,
+  type ReactNode,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { verdictAtom } from "../walkthrough/atoms";
-import { prStatus, rowStatus, sinceLabel } from "../walkthrough/review";
-import { ReviewOutcome } from "../walkthrough/ReviewOutcome";
-import { WriteWalkthroughButton } from "../walkthrough/WriteWalkthroughButton";
+import { prStatus, rowStatus, sinceOf } from "../walkthrough/review";
 import { reviewAtAtom } from "./atoms";
 import { moveFrom } from "./navigation";
 import { PendingPane } from "./PendingPane";
@@ -49,25 +54,33 @@ const entryDetail = (item: ReviewQueueItem) => {
   return undefined;
 };
 
-// The Session's Walkthroughs in the review layout: each one's Sections, then its Unexplained
-// changes, listed on the left under the Walkthrough, itself under its PR when the Session's work
-// lands as a Stack, bottom PR first, and one item at a time on the right. `a`
+// Walkthroughs in the review layout, a Session's or a Foreign PR's: each one's Sections, then its
+// Unexplained changes, listed on the left under the Walkthrough, itself under its PR when the
+// Session's work lands as a Stack, bottom PR first, and one item at a time on the right. `a`
 // approves, `r` opens the note a Rejection needs, `j`/`k` move. After a verdict the view snaps to
-// the next item still waiting. `active` is false while the Session is out of sight.
+// the next item still waiting. `active` is false while it's out of sight. `reviewKey` keeps what's
+// open while it is; `actions` sit above the list, `outcome` under a Reviewed Walkthrough's items,
+// and `retry`, when given, is how a Walkthrough that couldn't be written is tried again.
 export function ReviewQueue({
-  sessionId,
+  reviewKey,
   walkthroughs,
   queue,
   waiting,
   active,
+  actions,
+  outcome: Outcome,
+  retry,
 }: {
-  sessionId: string;
+  reviewKey: string;
   walkthroughs: ReadonlyArray<Walkthrough>;
   queue: ReadonlyArray<ReviewQueueItem>;
   waiting: number;
   active: boolean;
+  actions: ReactNode;
+  outcome: ComponentType<{ walkthrough: Walkthrough }>;
+  retry?: ReactNode;
 }) {
-  const [target, setTarget] = useAtom(reviewAtAtom(sessionId));
+  const [target, setTarget] = useAtom(reviewAtAtom(reviewKey));
   const send = useAtomSet(verdictAtom, { mode: "promiseExit" });
   // By item key: the one whose verdict is on its way, whose verdict didn't save, and whose note
   // field is open.
@@ -162,7 +175,7 @@ export function ReviewQueue({
           title={`Walkthrough ${entry.walkthrough.number}`}
           status={status.status}
           tone={status.tone}
-          hint={sinceLabel[entry.walkthrough.since]}
+          hint={sinceOf(entry.walkthrough)}
           minor={pr !== undefined}
         />
       </>
@@ -184,7 +197,7 @@ export function ReviewQueue({
           onNoting={(open) => (open ? startNote() : setNoting(undefined))}
           onReject={() => void decide("rejected", note.trim())}
         />
-        {locked && <ReviewOutcome walkthrough={entry.walkthrough} />}
+        {locked && <Outcome walkthrough={entry.walkthrough} />}
       </div>
     );
     return {
@@ -219,7 +232,7 @@ export function ReviewQueue({
             footer={footer}
           />
         ) : (
-          <PendingPane walkthrough={entry.walkthrough} />
+          <PendingPane walkthrough={entry.walkthrough} retry={retry} />
         ),
     };
   });
@@ -241,10 +254,7 @@ export function ReviewQueue({
               {waiting > 0 ? `${waiting} waiting` : "Nothing waiting"}
             </span>
           </p>
-          <WriteWalkthroughButton
-            sessionId={sessionId}
-            disabled={walkthroughs.some((w) => w.status === "writing")}
-          />
+          {actions}
         </div>
       }
       items={items}
