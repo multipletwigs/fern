@@ -22,8 +22,13 @@ import {
 } from "../session/atoms";
 import { ago, useNow } from "../session/time";
 import { screenAtoms } from "../workspace/screen";
-import { newSessionAtom, settingsOpenAtom } from "../workspace/showing";
+import {
+  newSessionAtom,
+  pullRequestsPageAtom,
+  settingsOpenAtom,
+} from "../workspace/showing";
 import { ArchiveSession } from "./ArchiveSession";
+import { PullRequestsEntry } from "./PullRequestsEntry";
 import { RunningSlots } from "./RunningSlots";
 import { SettingsEntry } from "./SettingsEntry";
 
@@ -36,6 +41,7 @@ export function Sidebar() {
   const setSelected = useAtomSet(selectedSessionAtom);
   const setNew = useAtomSet(newSessionAtom);
   const settingsOpen = useAtomValue(settingsOpenAtom);
+  const pullRequestsOpen = useAtomValue(pullRequestsPageAtom) !== undefined;
   // Shows the Session, in place of a new one or Settings.
   const select = (id: string) => {
     setSelected(id);
@@ -120,6 +126,7 @@ export function Sidebar() {
           name={projectName(project.path)}
           path={project.path}
           onNew={() => setNew(project.path)}
+          entries={<PullRequestsEntry root={project.path} />}
           rows={project.sessions
             .filter((session) => !archived.has(session.id))
             .map((session) => {
@@ -130,7 +137,11 @@ export function Sidebar() {
                 <SessionRow
                   key={session.id}
                   title={session.title}
-                  active={!settingsOpen && session.id === activeId}
+                  active={
+                    !settingsOpen &&
+                    !pullRequestsOpen &&
+                    session.id === activeId
+                  }
                   live={isWorking(lastActivityMs, session.hostedTurn, now)}
                   lastActive={ago(now - lastActivityMs)}
                   phase={phaseOf.get(session.id)}

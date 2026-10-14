@@ -30,7 +30,7 @@ import {
 } from "../src/walkthrough/WalkthroughWriter";
 import { CleanupInterval } from "../src/worktree/WorktreeCleanup";
 import { WorktreesDir } from "../src/worktree/Worktrees";
-import { FakeIssues } from "./stubs";
+import { FakeIssues, NotListing } from "./stubs";
 
 const git = (cwd: string, ...args: Array<string>) =>
   execFileSync(
@@ -130,6 +130,7 @@ const askedFrom = (cwd: string, ...calls: Array<string>) =>
 const FakeCodeHost = Layer.succeed(
   CodeHost,
   CodeHost.of({
+    ...NotListing,
     ready: () => Effect.succeed(true),
     defaultBranch: () => Effect.succeed("main"),
     push: (cwd, args) =>

@@ -3,6 +3,7 @@ export * from "./Autonomy";
 export * from "./Flows";
 export * from "./Live";
 export * from "./Projects";
+export * from "./PullRequests";
 export * from "./Rounds";
 export * from "./Sessions";
 export * from "./States";

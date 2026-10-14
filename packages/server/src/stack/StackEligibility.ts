@@ -1,12 +1,9 @@
 import { Cache, Context, Effect, Layer, Option, Schema } from "effect";
 import { BranchName, CodeHost } from "../codehost/CodeHost";
+import { gitHubRepo } from "../codehost/gitHubRepo";
 import { Git } from "../git/Git";
 import { ProjectSettings } from "../project/ProjectSettings";
 import { HostedSessions } from "../turn/HostedSessions";
-
-// An `origin` on GitHub, over SSH or HTTPS.
-const ON_GITHUB =
-  /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/)[^/]+\/[^/]+?(?:\.git)?\/?$/;
 
 // Where git keeps `origin`'s default branch, once it knows it.
 const ORIGIN_HEAD = "refs/remotes/origin/";
@@ -45,7 +42,7 @@ export class StackEligibility extends Context.Service<
 
       const onGitHub = (cwd: string) =>
         git.run(cwd, ["remote", "get-url", "origin"]).pipe(
-          Effect.map((url) => ON_GITHUB.test(url.trim())),
+          Effect.map((url) => Option.isSome(gitHubRepo(url))),
           Effect.orElseSucceed(() => false),
         );
 
