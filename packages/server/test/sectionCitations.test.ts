@@ -126,6 +126,7 @@ let answer: (request: WriteRequest) => Draft = () => ({
 const Writer = Layer.succeed(
   WalkthroughWriter,
   WalkthroughWriter.of({
+    explore: () => Effect.die("unused"),
     write: (request) =>
       Effect.sync(() => {
         requests.push(request);

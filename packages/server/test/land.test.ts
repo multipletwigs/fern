@@ -187,6 +187,7 @@ const failingOn = new Set<string>();
 const Writer = Layer.succeed(
   WalkthroughWriter,
   WalkthroughWriter.of({
+    explore: () => Effect.die("unused"),
     write: (request: WriteRequest) =>
       Effect.suspend(() => {
         if (request.hunks.some((h) => failingOn.has(h.path)))

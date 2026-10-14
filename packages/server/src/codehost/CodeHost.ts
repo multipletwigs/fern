@@ -44,6 +44,20 @@ export interface HostPullRequest {
   readonly reviewers: ReadonlyArray<string>;
 }
 
+// The issue a PR says it closes.
+export interface HostIssue {
+  readonly number: number;
+  readonly title: string;
+  readonly body: string;
+}
+
+// One PR, as GitHub has it: also its author's description of it, and the first issue it says it
+// closes, when it names one Fern can read.
+export interface HostPullRequestDetail extends HostPullRequest {
+  readonly body: string;
+  readonly issue: HostIssue | undefined;
+}
+
 // A Stack on the repo, as GitHub has it: its PRs' numbers, bottom first, open or not.
 export interface HostStack {
   readonly id: number;
@@ -86,29 +100,63 @@ const StacksOfPr = Schema.fromJsonString(
 // team, without one.
 const PR_FIELDS =
   "number,url,title,author,headRefName,baseRefName,headRefOid,isDraft,state,reviewRequests";
-const ListedPrs = Schema.fromJsonString(
-  Schema.Array(
-    Schema.Struct({
-      number: Schema.Int,
-      url: Schema.String,
-      title: Schema.String,
-      author: Schema.NullOr(Schema.Struct({ login: Schema.String })),
-      headRefName: Schema.String,
-      baseRefName: Schema.String,
-      headRefOid: Schema.String,
-      isDraft: Schema.Boolean,
-      state: GhPrState,
-      reviewRequests: Schema.Array(
-        Schema.Struct({ login: Schema.optional(Schema.String) }),
-      ),
-    }),
+const GhPr = Schema.Struct({
+  number: Schema.Int,
+  url: Schema.String,
+  title: Schema.String,
+  author: Schema.NullOr(Schema.Struct({ login: Schema.String })),
+  headRefName: Schema.String,
+  baseRefName: Schema.String,
+  headRefOid: Schema.String,
+  isDraft: Schema.Boolean,
+  state: GhPrState,
+  reviewRequests: Schema.Array(
+    Schema.Struct({ login: Schema.optional(Schema.String) }),
   ),
+});
+const ListedPrs = Schema.fromJsonString(Schema.Array(GhPr));
+// One PR as `gh pr view` has it: also its description, and the issues it says it closes.
+const ViewedPr = Schema.fromJsonString(
+  Schema.Struct({
+    ...GhPr.fields,
+    body: Schema.String,
+    closingIssuesReferences: Schema.Array(
+      Schema.Struct({ number: Schema.Int, url: Schema.String }),
+    ),
+  }),
+);
+// An issue as `gh issue view` has it.
+const ViewedIssue = Schema.fromJsonString(
+  Schema.Struct({
+    number: Schema.Int,
+    title: Schema.String,
+    body: Schema.String,
+  }),
 );
 const PR_STATE: Record<GhPrState, PrState> = {
   OPEN: "open",
   CLOSED: "closed",
   MERGED: "merged",
 };
+const hostPr = (pr: typeof GhPr.Type): HostPullRequest => ({
+  number: pr.number,
+  url: pr.url,
+  title: pr.title,
+  author: pr.author?.login ?? "ghost",
+  headRef: pr.headRefName,
+  baseRef: pr.baseRefName,
+  headCommit: pr.headRefOid,
+  draft: pr.isDraft,
+  state: PR_STATE[pr.state],
+  reviewers: pr.reviewRequests.flatMap((r) =>
+    r.login === undefined ? [] : [r.login],
+  ),
+});
+
+// Where Fern keeps a PR's head, and the branch it's based on, once fetched: hidden refs in the
+// Project's own repo, which nothing pushes, never a branch the developer has.
+export const prHeadRef = (number: number) => `refs/fern/prs/${number}/head`;
+export const prBaseRef = (number: number) => `refs/fern/prs/${number}/base`;
 // One page of the repo's Stacks, as GitHub's REST API has them.
 const StacksPage = Schema.fromJsonString(
   Schema.Array(
@@ -279,6 +327,18 @@ export class CodeHost extends Context.Service<
       cwd: string,
       prs: ReadonlyArray<number>,
     ): Effect.Effect<ReadonlyArray<HostStack>, CodeHostError>;
+    // One of the repo's PRs, open or not, with its description. Fails with GitHub's reason, in
+    // plain words, as for a number that isn't a PR.
+    pullRequest(
+      cwd: string,
+      pr: number,
+    ): Effect.Effect<HostPullRequestDetail, CodeHostError>;
+    // Fetches the PR's head, as GitHub keeps it for any PR, a fork's included, and the branch it's
+    // based on, into `prHeadRef` and `prBaseRef`. Touches no branch, the index or the working tree.
+    fetchPullRequest(
+      cwd: string,
+      pr: { readonly number: number; readonly base: string },
+    ): Effect.Effect<void, CodeHostError>;
   }
 >()("@repo/server/codehost/CodeHost") {
   static readonly layer = Layer.effect(
@@ -602,21 +662,61 @@ export class CodeHost extends Context.Service<
           "--json",
           PR_FIELDS,
         ]).pipe(read(ListedPrs, "PRs"));
-        return listed.map((pr): HostPullRequest => ({
-          number: pr.number,
-          url: pr.url,
-          title: pr.title,
-          author: pr.author?.login ?? "ghost",
-          headRef: pr.headRefName,
-          baseRef: pr.baseRefName,
-          headCommit: pr.headRefOid,
-          draft: pr.isDraft,
-          state: PR_STATE[pr.state],
-          reviewers: pr.reviewRequests.flatMap((r) =>
-            r.login === undefined ? [] : [r.login],
-          ),
-        }));
+        return listed.map(hostPr);
       });
+
+      // The issue by its URL, as it may be on another repo; none where GitHub won't say.
+      const issueAt = (cwd: string, url: string) =>
+        ask(cwd, ["issue", "view", url, "--json", "number,title,body"]).pipe(
+          read(ViewedIssue, "issue"),
+          Effect.map((issue): HostIssue | undefined => issue),
+          Effect.orElseSucceed(() => undefined),
+        );
+
+      const pullRequest = Effect.fn("CodeHost.pullRequest")(function* (
+        cwd: string,
+        number: number,
+      ) {
+        const viewed = yield* ask(cwd, [
+          "pr",
+          "view",
+          String(number),
+          "--json",
+          `${PR_FIELDS},body,closingIssuesReferences`,
+        ]).pipe(read(ViewedPr, "PR"));
+        const [closes] = viewed.closingIssuesReferences;
+        return {
+          ...hostPr(viewed),
+          body: viewed.body,
+          issue: closes ? yield* issueAt(cwd, closes.url) : undefined,
+        };
+      });
+
+      // `--no-write-fetch-head`, so fetches of two PRs at once don't race for FETCH_HEAD.
+      const fetchPullRequest = Effect.fn("CodeHost.fetchPullRequest")(
+        function* (
+          cwd: string,
+          { number, base }: { readonly number: number; readonly base: string },
+        ) {
+          if (!Number.isInteger(number) || number <= 0)
+            return yield* new CodeHostError({
+              message: `#${number} isn't a PR number.`,
+            });
+          if (!Schema.is(BranchName)(base))
+            return yield* new CodeHostError({
+              message: `PR #${number}'s base isn't a branch Fern can fetch.`,
+            });
+          return yield* run(cwd, "git", [
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "origin",
+            `+refs/pull/${number}/head:${prHeadRef(number)}`,
+            `+refs/heads/${base}:${prBaseRef(number)}`,
+          ]).pipe(Effect.asVoid);
+        },
+      );
 
       // A page at a time, until each PR is found or a page comes back short of full. A repo
       // without Stacks answers 404.
@@ -666,6 +766,8 @@ export class CodeHost extends Context.Service<
         login,
         pullRequests,
         stacks,
+        pullRequest,
+        fetchPullRequest,
       });
     }),
   );

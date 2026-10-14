@@ -126,6 +126,7 @@ let failing = false;
 const Writer = Layer.succeed(
   WalkthroughWriter,
   WalkthroughWriter.of({
+    explore: () => Effect.die("unused"),
     write: (request) =>
       Effect.gen(function* () {
         requests.push(request);

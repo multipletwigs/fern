@@ -186,6 +186,7 @@ const failingOn = new Set<string>();
 const Writer = Layer.succeed(
   WalkthroughWriter,
   WalkthroughWriter.of({
+    explore: () => Effect.die("unused"),
     write: (request: WriteRequest) =>
       Effect.gen(function* () {
         if (gate) yield* Deferred.await(gate);
