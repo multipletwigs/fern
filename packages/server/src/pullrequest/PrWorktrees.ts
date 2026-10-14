@@ -41,6 +41,13 @@ export class PrWorktrees extends Context.Service<
   {
     // Where the PR's worktree is, whether or not it's there yet.
     path(pr: PrKey): Effect.Effect<string, WorktreeError>;
+    // Runs git in the Project's checkout at `root`, guarded as every git call on a PR's worktree
+    // is: for reading the Project's remote and the PR's fetched commits. The only way into git
+    // for the rest of Fern's Foreign PR code; `pnpm lint` refuses any other.
+    git(
+      root: string,
+      args: ReadonlyArray<string>,
+    ): Effect.Effect<string, WorktreeError>;
     // The PR's worktree, checked out detached at the commit: made from the Project's repo when
     // there's none yet, or moved to the commit. One with changes not committed is refused, as they
     // would mix into what's read.
@@ -285,6 +292,7 @@ export class PrWorktrees extends Context.Service<
 
       return PrWorktrees.of({
         path,
+        git: (root, args) => run(root, root, args),
         checkout,
         head,
         isDirty,

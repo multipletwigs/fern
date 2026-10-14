@@ -41,7 +41,7 @@ Give each ticket its **blocking edges**: the other tickets that must complete be
 
 ### 4. Quiz the user
 
-A one-ticket breakdown goes straight to step 5.
+A one-ticket breakdown goes straight to step 5. So does a Hosted Session (Fern's `phase_done` tool is available): publish, then put the breakdown, each ticket with its blocking edges, in the `phase_done` summary, so the Spec Checkpoint is the quiz.
 
 Present the proposed breakdown as a numbered list. For each ticket, show:
 

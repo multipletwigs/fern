@@ -12,22 +12,76 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { FIXTURE_SESSION, writeFixture } from "./fixture.ts";
+import { DEFAULT_FIXTURE, setUpGhShim } from "./gh-shim/setup.ts";
+import { cloneWorktree } from "./repo.ts";
 import { type SlotManifest, slotOf } from "./slot.ts";
 
 // Starts an isolated Fern from this worktree: its own ports, userData and CLAUDE_CONFIG_DIR,
-// seeded with the Subagent fixture, and writes the slot's manifest. Not `pnpm dev`: its readiness
-// check would pass on the developer's own page at 5173, and it can't pass `--user-data-dir`.
+// seeded with the Subagent fixture in a throwaway clone of the worktree, and writes the slot's
+// manifest. Not `pnpm dev`: its readiness check would pass on the developer's own page at 5173,
+// and it can't pass `--user-data-dir`.
+//
+// --gh-shim [fixture]  puts the fake `gh` in gh-shim/ first on the slot's PATH, serving the
+//                      fixture's PRs and Stacks (gh-shim/fixture.json by default).
+// --claude-auth        lets the slot's Claude Code use the developer's own login, from the
+//                      keychain, so Turns, Forks and Walkthroughs run, on real tokens.
 
-const slot = slotOf(process.argv[2]);
+const [slotArg, ...flags] = process.argv.slice(2);
+const slot = slotOf(slotArg);
 const root = resolve(import.meta.dirname, "../..");
 
-const free = (port: number) =>
+let ghShim: string | undefined;
+let claudeAuth = false;
+for (let i = 0; i < flags.length; i++) {
+  const flag = flags[i];
+  if (flag === "--claude-auth") claudeAuth = true;
+  else if (flag === "--gh-shim") {
+    const next = flags[i + 1];
+    // pnpm runs the script from the repo's root; a fixture is named from where it was run.
+    ghShim =
+      next === undefined || next.startsWith("--")
+        ? DEFAULT_FIXTURE
+        : resolve(process.env.INIT_CWD ?? process.cwd(), flags[++i] ?? "");
+  } else {
+    console.error(
+      `Unknown flag ${flag}. Usage: pnpm verify:up <slot 1-9> [--gh-shim [fixture]] [--claude-auth]`,
+    );
+    process.exit(1);
+  }
+}
+// Only whether the developer's login is there: its secret stays in the keychain.
+if (
+  claudeAuth &&
+  process.platform === "darwin" &&
+  spawnSync(
+    "security",
+    ["find-generic-password", "-s", "Claude Code-credentials"],
+    {
+      stdio: "ignore",
+    },
+  ).status !== 0
+) {
+  console.error(
+    "--claude-auth: no Claude Code login in the keychain. Run `claude` and /login first.",
+  );
+  process.exit(1);
+}
+if (ghShim !== undefined && !existsSync(ghShim)) {
+  console.error(`No gh shim fixture at ${ghShim}.`);
+  process.exit(1);
+}
+
+const freeOn = (port: number, host: string) =>
   new Promise<boolean>((done) => {
     const server = createServer()
       .once("error", () => done(false))
       .once("listening", () => server.close(() => done(true)))
-      .listen(port, "127.0.0.1");
+      .listen(port, host);
   });
+// On both loopbacks: Vite listens on `::1` for `localhost`, and the readiness check below would
+// pass on another worktree's Vite left there.
+const free = async (port: number) =>
+  (await freeOn(port, "127.0.0.1")) && (await freeOn(port, "::1"));
 
 for (const port of [slot.apiPort, slot.webPort])
   if (!(await free(port))) {
@@ -58,7 +112,20 @@ if (!existsSync(join(root, "node_modules")))
 // cleanup and archiving only touch Sessions recorded in its own database.
 rmSync(slot.dir, { recursive: true, force: true });
 mkdirSync(slot.dir, { recursive: true });
-writeFixture(slot.configDir, root);
+// The fixture Session runs in the clone, so the PR refs and worktrees Fern makes for it go into
+// the clone's `.git`, never the developer's.
+const origin = cloneWorktree(root, slot.repo);
+writeFixture(slot.configDir, slot.repo);
+const shim =
+  ghShim === undefined
+    ? undefined
+    : setUpGhShim({
+        fixturePath: ghShim,
+        origin,
+        clone: slot.repo,
+        remote: slot.remote,
+        served: slot.ghFixture,
+      });
 
 const desktop = join(root, "apps/desktop");
 const built = spawnSync("pnpm", ["exec", "tsdown"], {
@@ -67,11 +134,32 @@ const built = spawnSync("pnpm", ["exec", "tsdown"], {
 });
 if (built.status !== 0) process.exit(built.status ?? 1);
 
+// Claude Code's own login is in the keychain, under a name it takes from CLAUDE_CONFIG_DIR, so
+// the slot's config dir has none. CLAUDE_SECURESTORAGE_CONFIG_DIR, set empty, has it read and
+// refresh the developer's own instead, sharing their lock on it, while Sessions stay in the slot.
+// Without --claude-auth, no login the developer's environment holds reaches the slot.
+const inherited = { ...process.env };
+if (!claudeAuth)
+  for (const login of [
+    "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+  ])
+    delete inherited[login];
 const env = {
-  ...process.env,
+  ...inherited,
   FERN_API_PORT: String(slot.apiPort),
   FERN_WEB_PORT: String(slot.webPort),
   CLAUDE_CONFIG_DIR: slot.configDir,
+  ...(claudeAuth ? { CLAUDE_SECURESTORAGE_CONFIG_DIR: "" } : {}),
+  ...(shim === undefined
+    ? {}
+    : {
+        PATH: `${join(import.meta.dirname, "gh-shim", "bin")}:${process.env.PATH ?? ""}`,
+        FERN_GH_SHIM_FIXTURE: slot.ghFixture,
+        FERN_GH_SHIM_WRITES: slot.ghWrites,
+      }),
 };
 const start = (name: string, cwd: string, args: Array<string>) => {
   const log = openSync(join(slot.logs, `${name}.log`), "a");
@@ -103,7 +191,9 @@ const alive = (pid: number) => {
   }
 };
 const fail = (message: string, name: string, running: Array<number>) => {
-  console.error(`${message}; the end of ${slot.logs}/${name}.log:\n${tail(name)}`);
+  console.error(
+    `${message}; the end of ${slot.logs}/${name}.log:\n${tail(name)}`,
+  );
   for (const pid of running)
     try {
       process.kill(-pid, "SIGTERM");
@@ -169,8 +259,7 @@ const healthy = async () => {
 const loaded = () => tail("electron").includes("Fern window loaded");
 const deadline = Date.now() + 30_000;
 while (!(loaded() && (await healthy()))) {
-  if (!alive(pids.electron))
-    fail("Electron exited", "electron", [pids.vite]);
+  if (!alive(pids.electron)) fail("Electron exited", "electron", [pids.vite]);
   if (Date.now() > deadline)
     fail("Fern didn't come up", "electron", Object.values(pids));
   await sleep(500);
@@ -181,6 +270,9 @@ console.log(`Isolated Fern, slot ${slot.n}:
   page     ${manifest.pageUrl}
   browser  export AGENT_BROWSER_SESSION=${slot.browserSession}
   fixture  Session ${FIXTURE_SESSION} in ${slot.configDir}
+  repo     ${slot.repo} (a clone of this worktree, the fixture Session's cwd)
+  gh       ${shim === undefined ? "the real gh" : `the shim, ${shim.prs.length} PRs of ${shim.repo} from ${ghShim}; writes go to ${slot.ghWrites}`}
+  claude   ${claudeAuth ? "the developer's own login: Turns spend real tokens" : "signed out"}
   logs     ${slot.logs}
   manifest ${slot.manifest}
   stop     pnpm verify:down ${slot.n}`);
