@@ -25,6 +25,7 @@ import {
   CodeHost,
   CodeHostError,
   type HostPullRequestDetail,
+  type HostIssue,
   type HostStack,
   prBaseRef,
   prHeadRef,
@@ -132,6 +133,9 @@ const github = new Map<number, OnGitHub>();
 // The repo's Stacks on GitHub.
 let stacksOnGitHub: ReadonlyArray<HostStack> = [];
 const fetched: Array<{ readonly cwd: string; readonly number: number }> = [];
+// The PRs asked of GitHub one at a time, and the issues PRs say they close, by URL.
+const viewed: Array<number> = [];
+const issuesOnGitHub = new Map<string, HostIssue>();
 const prOf = (
   number: number,
   init: Partial<HostPullRequestDetail> = {},
@@ -147,7 +151,7 @@ const prOf = (
   state: "open",
   reviewers: [],
   body: "",
-  issue: undefined,
+  closes: undefined,
   ...init,
 });
 // Puts the PR on GitHub, at those commits.
@@ -185,6 +189,7 @@ const FakeCodeHost = Layer.succeed(
       ),
     pullRequest: (_cwd, number) =>
       Effect.suspend(() => {
+        viewed.push(number);
         const found = github.get(number);
         return found
           ? Effect.succeed(found.pr)
@@ -194,6 +199,7 @@ const FakeCodeHost = Layer.succeed(
               }),
             );
       }),
+    issue: (_cwd, url) => Effect.sync(() => issuesOnGitHub.get(url)),
     // As `git fetch` of `pull/N/head` would: hidden refs, and nothing else.
     fetchPullRequest: (cwd, { number }) =>
       Effect.sync(() => {
@@ -371,9 +377,14 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
           {
             title: "Bump a",
             body: "Bumps a to 2.",
-            issue: { number: 3, title: "a is too small", body: "Make it 2." },
+            closes: "https://github.com/acme/app/issues/3",
           },
         );
+        issuesOnGitHub.set("https://github.com/acme/app/issues/3", {
+          number: 3,
+          title: "a is too small",
+          body: "Make it 2.",
+        });
         yield* decided(root, "How big should a be?", "Two");
         const status = git(root, "status", "--porcelain");
         answers = (request) => [
@@ -940,11 +951,26 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
 
         gate = yield* Deferred.make<void>();
         const asked = explored.length;
+        viewed.length = 0;
         const run = yield* client.pullRequests.walkThroughStack({
           params: { id: 900 },
           payload: { root, state: "open" },
         });
         assert.deepStrictEqual([run.started, run.skipped], [[40, 42], [41]]);
+        // The list's PRs as it has them: GitHub is asked about each only for what writing it needs.
+        assert.deepStrictEqual(viewed, [40, 42]);
+
+        // Asked again while they're being written: none is asked of GitHub.
+        viewed.length = 0;
+        const again = yield* client.pullRequests.walkThroughStack({
+          params: { id: 900 },
+          payload: { root, state: "open" },
+        });
+        assert.deepStrictEqual(
+          [again.started, again.skipped],
+          [[], [40, 41, 42]],
+        );
+        assert.deepStrictEqual(viewed, []);
         // Both show as being written, but only the bottom one is: the top waits its turn.
         assert.deepStrictEqual(
           [

@@ -144,7 +144,7 @@ const opened = (
       state: "open",
       reviewers: [],
       body: "",
-      issue: undefined,
+      closes: undefined,
       ...init,
     },
     ...at,
@@ -205,6 +205,7 @@ const FakeCodeHost = Layer.succeed(
         git(cwd, "update-ref", prHeadRef(number), found.head);
         git(cwd, "update-ref", prBaseRef(number), found.base);
       }),
+    issue: () => Effect.die("unused"),
     commitsAhead: () => Effect.die("unused"),
     postReview: () => Effect.die("unused"),
   }),

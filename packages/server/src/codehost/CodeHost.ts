@@ -65,11 +65,12 @@ export interface HostIssue {
   readonly body: string;
 }
 
-// One PR, as GitHub has it: also its author's description of it, and the first issue it says it
-// closes, when it names one Fern can read.
+// One PR, as GitHub has it: also its author's description of it, and where the first issue it
+// says it closes is, when it names one Fern can read.
 export interface HostPullRequestDetail extends HostPullRequest {
   readonly body: string;
-  readonly issue: HostIssue | undefined;
+  // The issue's URL, for `issue`.
+  readonly closes: string | undefined;
 }
 
 // A review to post on a PR: on which of its commits, what it says of the PR, its body, and notes on
@@ -410,6 +411,8 @@ export class CodeHost extends Context.Service<
       cwd: string,
       pr: number,
     ): Effect.Effect<HostPullRequestDetail, CodeHostError>;
+    // The issue at the URL a PR `closes`. None where GitHub won't say.
+    issue(cwd: string, url: string): Effect.Effect<HostIssue | undefined>;
     // Fetches the PR's head, as GitHub keeps it for any PR, a fork's included, and the branch it's
     // based on, into `prHeadRef` and `prBaseRef`. Touches no branch, the index or the working tree.
     fetchPullRequest(
@@ -757,11 +760,11 @@ export class CodeHost extends Context.Service<
         return listed.map(hostPr);
       });
 
-      // The issue by its URL, as it may be on another repo; none where GitHub won't say.
-      const issueAt = (cwd: string, url: string) =>
+      // By its URL, which `pullRequest` only gives for an issue on the PR's own repo.
+      const issue = (cwd: string, url: string) =>
         ask(cwd, ["issue", "view", url, "--json", "number,title,body"]).pipe(
           read(ViewedIssue, "issue"),
-          Effect.map((issue): HostIssue | undefined => issue),
+          Effect.map((found): HostIssue | undefined => found),
           Effect.orElseSucceed(() => undefined),
         );
 
@@ -780,14 +783,14 @@ export class CodeHost extends Context.Service<
         // see, and what's read goes to the writer of a PR anyone could have opened.
         const issues = viewed.url.replace(/\/pull\/\d+$/u, "/issues/");
         const closes = viewed.closingIssuesReferences.find(
-          (issue) =>
-            issue.url.startsWith(issues) &&
-            issue.url.slice(issues.length) === String(issue.number),
+          (linked) =>
+            linked.url.startsWith(issues) &&
+            linked.url.slice(issues.length) === String(linked.number),
         );
         return {
           ...hostPr(viewed),
           body: viewed.body,
-          issue: closes ? yield* issueAt(cwd, closes.url) : undefined,
+          closes: closes?.url,
         };
       });
 
@@ -934,6 +937,7 @@ export class CodeHost extends Context.Service<
         pullRequests,
         stacks,
         pullRequest,
+        issue,
         fetchPullRequest,
         commitsAhead,
         postReview,

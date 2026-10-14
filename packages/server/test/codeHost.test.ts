@@ -360,7 +360,7 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
   );
 
   it.effect(
-    "one PR comes with its author's description and the issue it says it closes",
+    "one PR comes with its author's description and where the issue it says it closes is, which is read only when asked",
     () =>
       withStub(
         Effect.gen(function* () {
@@ -379,26 +379,32 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
             state: "open",
             reviewers: [],
             body: "Adds it.",
-            issue: { number: 70, title: "Themes", body: "We want themes." },
+            closes: "https://github.com/acme/app/issues/70",
           });
+          assert.lengthOf(calls(), 1);
           assert.match(calls()[0] ?? "", /^pr view 77 --json /);
-          assert.strictEqual(
-            calls()[1],
-            "issue view https://github.com/acme/app/issues/70 --json number,title,body",
+
+          writeFileSync(log, "");
+          assert.deepStrictEqual(
+            yield* host.issue("/", "https://github.com/acme/app/issues/70"),
+            { number: 70, title: "Themes", body: "We want themes." },
           );
+          assert.deepStrictEqual(calls(), [
+            "issue view https://github.com/acme/app/issues/70 --json number,title,body",
+          ]);
 
           writeFileSync(log, "");
           const unlinked = yield* host.pullRequest("/", 78);
           assert.deepStrictEqual(
-            [unlinked.state, unlinked.author, unlinked.issue],
+            [unlinked.state, unlinked.author, unlinked.closes],
             ["merged", "ghost", undefined],
           );
           assert.lengthOf(calls(), 1);
 
-          // An issue on another repo is never read, as it could be one only the developer sees.
+          // An issue on another repo is never offered, as it could be one only the developer sees.
           writeFileSync(log, "");
           const elsewhere = yield* host.pullRequest("/", 79);
-          assert.isUndefined(elsewhere.issue);
+          assert.isUndefined(elsewhere.closes);
           assert.lengthOf(calls(), 1);
         }),
       ),
