@@ -52,6 +52,10 @@ case "$1 $2" in
       *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
     esac
     exit 0 ;;
+  "api --paginate")
+    printf '%s\\n' '{"path":"src/moved.ts","patch":"@@ -3,3 +3,3 @@\\n three\\n-five\\n+FIVE"}'
+    printf '%s\\n' '{"path":"logo.png","patch":null}'
+    exit 0 ;;
   "api -X")
     : > "${input}"
     while IFS= read -r l || [ -n "$l" ]; do printf '%s\\n' "$l" >> "${input}"; done
@@ -464,6 +468,26 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
               { path: "src/a.ts", line: 3, side: "RIGHT", body: note },
             ],
           });
+        }),
+      ),
+  );
+
+  it.effect(
+    "a PR's diff is as GitHub shows it, every page of it, a file without a patch included",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          assert.deepStrictEqual(yield* host.pullRequestDiff("/", 77), [
+            {
+              path: "src/moved.ts",
+              patch: "@@ -3,3 +3,3 @@\n three\n-five\n+FIVE",
+            },
+            { path: "logo.png", patch: undefined },
+          ]);
+          assert.deepStrictEqual(calls(), [
+            "api --paginate repos/{owner}/{repo}/pulls/77/files?per_page=100 --jq .[] | {path: .filename, patch} | @json",
+          ]);
         }),
       ),
   );

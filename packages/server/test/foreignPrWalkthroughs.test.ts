@@ -200,6 +200,7 @@ const FakeCodeHost = Layer.succeed(
             );
       }),
     issue: (_cwd, url) => Effect.sync(() => issuesOnGitHub.get(url)),
+    pullRequestDiff: () => Effect.die("unused"),
     // As `git fetch` of `pull/N/head` would: hidden refs, and nothing else.
     fetchPullRequest: (cwd, { number }) =>
       Effect.sync(() => {

@@ -651,6 +651,12 @@ export class PullRequests extends Context.Service<
         const pr = yield* codeHost.pullRequest(root, number).pipe(refused);
         if (pr.state !== "open")
           return yield* new PrNotOpen({ number, state: pr.state });
+        // GitHub only shows the diff at the PR's head: once the PR has moved on from the
+        // Walkthrough's, its notes go in the body alone.
+        const diff =
+          pr.headCommit === found.head
+            ? yield* codeHost.pullRequestDiff(root, number).pipe(refused)
+            : undefined;
         return PrReview.make({
           walkthrough: walkthroughId,
           commit: found.head,
@@ -658,6 +664,7 @@ export class PullRequests extends Context.Service<
             walkthrough,
             pr.author.toLowerCase() === login.toLowerCase(),
             found.earlier,
+            diff,
           ),
         });
       });

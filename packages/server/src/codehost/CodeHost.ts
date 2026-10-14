@@ -87,6 +87,13 @@ export interface HostReview {
   }>;
 }
 
+// One file of a PR's diff, as GitHub shows it: by its path in the PR, a renamed file by its new
+// one, and the hunks of its patch, none where GitHub shows none, as for a binary or a large file.
+export interface HostPrFile {
+  readonly path: string;
+  readonly patch: string | undefined;
+}
+
 // A review that went up: where it is, and when GitHub took it, in milliseconds.
 export interface HostPostedReview {
   readonly url: string;
@@ -201,6 +208,13 @@ const StacksPage = Schema.fromJsonString(
       pull_requests: Schema.Array(Schema.Struct({ number: Schema.Int })),
     }),
   ),
+);
+// One of a PR's files, as Fern asks `gh api` to print each: on a line of its own.
+const PrFile = Schema.fromJsonString(
+  Schema.Struct({
+    path: Schema.String,
+    patch: Schema.optional(Schema.NullOr(Schema.String)),
+  }),
 );
 // A review GitHub took, as its REST API has it.
 const PostedPrReview = Schema.fromJsonString(
@@ -425,6 +439,11 @@ export class CodeHost extends Context.Service<
       cwd: string,
       commits: { readonly from: string; readonly to: string },
     ): Effect.Effect<number, CodeHostError>;
+    // The PR's diff as GitHub shows it at the PR's head, which a review's comments go on.
+    pullRequestDiff(
+      cwd: string,
+      pr: number,
+    ): Effect.Effect<ReadonlyArray<HostPrFile>, CodeHostError>;
     // Posts the review on the PR, in one call: its body and its line comments together, or none of
     // it. Fails with GitHub's reason, in plain words, as for a comment on a line the PR doesn't
     // change, or approving one's own PR.
@@ -820,6 +839,35 @@ export class CodeHost extends Context.Service<
         },
       );
 
+      // Every page of it, each file on a line of its own.
+      const pullRequestDiff = Effect.fn("CodeHost.pullRequestDiff")(function* (
+        cwd: string,
+        pr: number,
+      ) {
+        if (!Number.isInteger(pr) || pr <= 0)
+          return yield* new CodeHostError({
+            message: `#${pr} isn't a PR number.`,
+          });
+        const out = yield* ask(cwd, [
+          "api",
+          "--paginate",
+          `repos/{owner}/{repo}/pulls/${pr}/files?per_page=100`,
+          "--jq",
+          ".[] | {path: .filename, patch} | @json",
+        ]);
+        return yield* Effect.forEach(
+          out.split("\n").filter((line) => line.trim() !== ""),
+          (line) =>
+            Effect.succeed(line).pipe(
+              read(PrFile, "PR files"),
+              Effect.map((file): HostPrFile => ({
+                path: file.path,
+                patch: file.patch ?? undefined,
+              })),
+            ),
+        );
+      });
+
       // As JSON on stdin, so nothing the review says, the developer's notes and the writer's
       // Section titles included, ever reaches an argument.
       const postReview = Effect.fn("CodeHost.postReview")(function* (
@@ -940,6 +988,7 @@ export class CodeHost extends Context.Service<
         issue,
         fetchPullRequest,
         commitsAhead,
+        pullRequestDiff,
         postReview,
       });
     }),

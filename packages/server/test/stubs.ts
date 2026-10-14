@@ -153,6 +153,7 @@ export const NotListing = {
   fetchPullRequest: () => Effect.die("unused"),
   issue: () => Effect.die("unused"),
   commitsAhead: () => Effect.die("unused"),
+  pullRequestDiff: () => Effect.die("unused"),
   postReview: () => Effect.die("unused"),
 };
 
