@@ -2,6 +2,8 @@ import {
   ListedPullRequest,
   ListedStack,
   type PrNothingToReview,
+  PostedReview,
+  PrReview,
   PrStackPlace,
   type PrListState,
   type PrWalkthrough,
@@ -9,13 +11,26 @@ import {
   ProjectNotFound,
   PullRequestList,
   PullRequestNotForeign,
+  PullRequestNotOpen,
   PullRequestsAvailability,
   PullRequestsError,
   PullRequestsUnavailable,
+  ReviewPostedAlready,
   WalkthroughError,
+  WalkthroughNotFound,
+  WalkthroughNotReviewed,
   WorkspaceError,
 } from "@repo/api";
-import { Cache, Context, Effect, Layer, Option, Schema } from "effect";
+import {
+  Cache,
+  Context,
+  DateTime,
+  Effect,
+  Layer,
+  Option,
+  Schema,
+  Semaphore,
+} from "effect";
 import { SqlClient, SqlSchema } from "effect/sql";
 import {
   CodeHost,
@@ -29,6 +44,7 @@ import { Git } from "../git/Git";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Walkthroughs } from "../walkthrough/Walkthroughs";
 import { PrWorktrees } from "./PrWorktrees";
+import { reviewOf } from "./review";
 
 // How long Fern goes by what git and `gh` last said about a Project's repo: long enough that the
 // sidebar asks once for every Project, short enough that signing in or out of `gh` soon shows.
@@ -39,6 +55,17 @@ interface OnGitHub {
   readonly repo: string;
   readonly login: string;
 }
+
+// Why Fern won't show or post a Foreign PR's review.
+type ReviewRefusal =
+  | ProjectNotFound
+  | WorkspaceError
+  | PullRequestsUnavailable
+  | PullRequestsError
+  | WalkthroughNotFound
+  | PullRequestNotOpen
+  | WalkthroughNotReviewed
+  | ReviewPostedAlready;
 
 // The listed PRs that could be in a Stack with another listed PR: those based on another's head,
 // or whose head another is based on. Only these send Fern looking past GitHub's newest Stacks.
@@ -139,6 +166,18 @@ export class PullRequests extends Context.Service<
       | PrNothingToReview
       | WalkthroughError
     >;
+    // The review posting the Foreign PR's Walkthrough would put on the PR, without posting it.
+    review(
+      root: string,
+      number: number,
+      walkthroughId: string,
+    ): Effect.Effect<PrReview, ReviewRefusal>;
+    // Posts that review on GitHub, once: a refusal is kept on the Walkthrough with GitHub's reason.
+    postReview(
+      root: string,
+      number: number,
+      walkthroughId: string,
+    ): Effect.Effect<PostedReview, ReviewRefusal>;
   }
 >()("@repo/server/pullrequest/PullRequests") {
   static readonly layer = Layer.effect(
@@ -305,7 +344,72 @@ export class PullRequests extends Context.Service<
         );
       });
 
-      return PullRequests.of({ available, list, walkThrough });
+      // Asked of GitHub each time, as the PR may have closed, and only once nothing in Fern stands
+      // in the way, so a review that can't go up never costs a call.
+      const review = Effect.fn("PullRequests.review")(function* (
+        root: string,
+        number: number,
+        walkthroughId: string,
+      ) {
+        const { repo, login } = yield* reached(root);
+        const found = yield* walkthroughs.foreign(walkthroughId);
+        if (found.repo !== repo || found.number !== number)
+          return yield* new WalkthroughNotFound({ id: walkthroughId });
+        const { walkthrough } = found;
+        if (walkthrough.review !== undefined)
+          return yield* new ReviewPostedAlready({
+            id: walkthroughId,
+            url: walkthrough.review.url,
+          });
+        if (walkthrough.reviewedAt === undefined)
+          return yield* new WalkthroughNotReviewed({ id: walkthroughId });
+        const pr = yield* codeHost.pullRequest(root, number).pipe(refused);
+        if (pr.state !== "open")
+          return yield* new PullRequestNotOpen({ number });
+        return PrReview.make({
+          walkthrough: walkthroughId,
+          commit: found.head,
+          ...reviewOf(
+            walkthrough,
+            pr.author.toLowerCase() === login.toLowerCase(),
+          ),
+        });
+      });
+
+      // One post at a time, so a Walkthrough's review can only go up once.
+      const posting = yield* Semaphore.make(1);
+      const postReview = Effect.fn("PullRequests.postReview")(function* (
+        root: string,
+        number: number,
+        walkthroughId: string,
+      ) {
+        const { commit, event, body, comments } = yield* review(
+          root,
+          number,
+          walkthroughId,
+        );
+        const posted = yield* codeHost
+          .postReview(root, number, { commit, event, body, comments })
+          .pipe(
+            Effect.tapError((e) =>
+              walkthroughs.reviewRefused(walkthroughId, e.message),
+            ),
+            refused,
+          );
+        yield* walkthroughs.reviewPosted(walkthroughId, posted);
+        return PostedReview.make({
+          url: posted.url,
+          postedAt: DateTime.makeUnsafe(posted.postedAt),
+        });
+      }, posting.withPermits(1));
+
+      return PullRequests.of({
+        available,
+        list,
+        walkThrough,
+        review,
+        postReview,
+      });
     }),
   ).pipe(Layer.provide(Git.layer));
 }

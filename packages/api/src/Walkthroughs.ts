@@ -115,6 +115,12 @@ export class ForeignPr extends Schema.Class<ForeignPr>("ForeignPr")({
   number: Schema.Int,
 }) {}
 
+// The review on GitHub that took a Foreign PR's Walkthrough's verdicts to the PR's author.
+export class PostedReview extends Schema.Class<PostedReview>("PostedReview")({
+  url: Schema.String,
+  postedAt: Schema.DateTimeUtcFromMillis,
+}) {}
+
 // Exactly one of `sessionId` and `foreignPr` is set: a Walkthrough explains a Session's change or a
 // Foreign PR's.
 export class Walkthrough extends Schema.Class<Walkthrough>("Walkthrough")({
@@ -143,6 +149,10 @@ export class Walkthrough extends Schema.Class<Walkthrough>("Walkthrough")({
   redirectSentAt: Schema.optional(Schema.DateTimeUtcFromMillis),
   // Why sending them failed, when it did.
   redirectError: Schema.optional(Schema.String),
+  // On a Foreign PR's, the review the developer posted of it. There is at most one.
+  review: Schema.optional(PostedReview),
+  // Why GitHub refused the last try at posting it, when it did and none went up since.
+  reviewError: Schema.optional(Schema.String),
 }) {}
 
 // What the developer says about one Section or Unexplained change.

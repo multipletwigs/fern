@@ -192,6 +192,14 @@ export const PullRequestsHandlers = HttpApiBuilder.group(
       list: ({ query }) => pullRequests.list(query.root, query.state),
       walkThrough: ({ params, payload }) =>
         pullRequests.walkThrough(payload.root, params.number),
+      review: ({ params, query }) =>
+        pullRequests.review(query.root, params.number, query.walkthrough),
+      postReview: ({ params, payload }) =>
+        pullRequests.postReview(
+          payload.root,
+          params.number,
+          payload.walkthrough,
+        ),
     });
   }),
 );

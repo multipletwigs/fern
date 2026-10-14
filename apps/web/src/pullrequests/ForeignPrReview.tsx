@@ -69,7 +69,14 @@ export function ForeignPrReview({
               disabled={writing}
             />
           }
-          outcome={ForeignReviewOutcome}
+          renderOutcome={(walkthrough) => (
+            <ForeignReviewOutcome
+              walkthrough={walkthrough}
+              root={root}
+              number={number}
+              open={pr?.state === "open"}
+            />
+          )}
           retry={
             <WalkThroughButton
               root={root}

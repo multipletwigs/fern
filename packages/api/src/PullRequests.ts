@@ -1,8 +1,17 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { ProjectNotFound, WorkspaceError } from "./Projects";
-import { PrListState, PrState, PrWalkthroughState } from "./States";
-import { WalkthroughError } from "./Walkthroughs";
+import {
+  PrListState,
+  PrReviewEvent,
+  PrState,
+  PrWalkthroughState,
+} from "./States";
+import {
+  PostedReview,
+  WalkthroughError,
+  WalkthroughNotFound,
+} from "./Walkthroughs";
 
 // A Project's pull requests on GitHub, for its Pull requests page: every PR on the repo, whoever
 // wrote it, grouped into the GitHub Stacks they form. A PR one of Fern's Hosted Sessions holds on
@@ -129,6 +138,67 @@ export class PrNothingToReview extends Schema.TaggedError<PrNothingToReview>()(
   { httpApiStatus: 409 },
 ) {}
 
+// Which side of a PR's diff a review comment is on: the line as the PR leaves it, or, for a line it
+// removes, as it was.
+export const DiffSide = Schema.Literals(["RIGHT", "LEFT"]);
+export type DiffSide = typeof DiffSide.Type;
+
+// One Rejection note, as a review posts it on the line it's about.
+export class PrReviewComment extends Schema.Class<PrReviewComment>(
+  "PrReviewComment",
+)({
+  // Relative to the repository's root.
+  path: Schema.String,
+  // The line's number in the file on that `side`.
+  line: Schema.Int,
+  side: DiffSide,
+  body: Schema.String,
+}) {}
+
+// The review that Post review would put on a Foreign PR for one of its Reviewed Walkthroughs,
+// exactly as GitHub gets it: on the head commit the Walkthrough explains, approving or requesting
+// changes (a plain comment on the developer's own PR), its body listing every Rejection, and each
+// Section's Rejection note again on the Section's first changed line.
+export class PrReview extends Schema.Class<PrReview>("PrReview")({
+  walkthrough: Schema.String,
+  commit: Schema.String,
+  event: PrReviewEvent,
+  body: Schema.String,
+  comments: Schema.Array(PrReviewComment),
+}) {}
+
+// Only an open PR is reviewed.
+export class PullRequestNotOpen extends Schema.TaggedError<PullRequestNotOpen>()(
+  "PullRequestNotOpen",
+  { number: Schema.Int },
+  { httpApiStatus: 409 },
+) {}
+
+// The Walkthrough still waits on verdicts, or was never written: there's nothing to post yet.
+export class WalkthroughNotReviewed extends Schema.TaggedError<WalkthroughNotReviewed>()(
+  "WalkthroughNotReviewed",
+  { id: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
+// The Walkthrough's review is on GitHub already, at `url`: a Walkthrough is posted once.
+export class ReviewPostedAlready extends Schema.TaggedError<ReviewPostedAlready>()(
+  "ReviewPostedAlready",
+  { id: Schema.String, url: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
+const ReviewErrors = [
+  ProjectNotFound,
+  WorkspaceError,
+  PullRequestsUnavailable,
+  PullRequestsError,
+  WalkthroughNotFound,
+  PullRequestNotOpen,
+  WalkthroughNotReviewed,
+  ReviewPostedAlready,
+];
+
 // A PR number, as a path parameter: a positive whole number.
 const PrNumber = Schema.NumberFromString.check(
   Schema.isInt(),
@@ -177,6 +247,33 @@ export class PullRequestsApi extends HttpApiGroup.make("pullRequests")
         PrNothingToReview,
         WalkthroughError,
       ],
+    }),
+  )
+  .add(
+    // The review Post review would put on the PR for one of its Foreign PR Walkthroughs, for the
+    // developer to read before they confirm. Posts nothing.
+    HttpApiEndpoint.get("review", "/:number/review", {
+      params: { number: PrNumber },
+      query: {
+        root: Schema.NonEmptyString,
+        walkthrough: Schema.NonEmptyString,
+      },
+      success: PrReview,
+      error: ReviewErrors,
+    }),
+  )
+  .add(
+    // Posts the Walkthrough's review, as `review` shows it, on the PR on GitHub: only once the
+    // developer confirms, only for a Reviewed Walkthrough of an open PR, and only once. A refusal
+    // keeps GitHub's reason on the Walkthrough, and posting can be tried again.
+    HttpApiEndpoint.post("postReview", "/:number/review", {
+      params: { number: PrNumber },
+      payload: Schema.Struct({
+        root: Schema.NonEmptyString,
+        walkthrough: Schema.NonEmptyString,
+      }),
+      success: PostedReview,
+      error: ReviewErrors,
     }),
   )
   .prefix("/pull-requests") {}
