@@ -115,6 +115,12 @@ export const CodeHostReadyTimeout = Context.Reference<Duration.Input>(
 
 // How long one push or PR change may take before Fern gives up on it.
 const CALL_TIMEOUT = Duration.minutes(2);
+
+// How long posting a review may take before Fern stops waiting and asks GitHub whether it took it.
+export const CodeHostPostTimeout = Context.Reference<Duration.Input>(
+  "@repo/server/codehost/CodeHostPostTimeout",
+  { defaultValue: () => CALL_TIMEOUT },
+);
 // How long merging a Stack may take: GitHub merges it in the background while gh-stack waits.
 const MERGE_TIMEOUT = Duration.minutes(10);
 // The REST API version GitHub's Stacks are in.
@@ -216,6 +222,16 @@ const PrFile = Schema.fromJsonString(
     patch: Schema.optional(Schema.NullOr(Schema.String)),
   }),
 );
+// One of a PR's reviews, as Fern asks `gh api` to print each: on a line of its own.
+const ReviewOnPr = Schema.fromJsonString(
+  Schema.Struct({
+    login: Schema.NullOr(Schema.String),
+    commit: Schema.NullOr(Schema.String),
+    body: Schema.NullOr(Schema.String),
+    url: Schema.String,
+    at: Schema.NullOr(Schema.String),
+  }),
+);
 // A review GitHub took, as its REST API has it.
 const PostedPrReview = Schema.fromJsonString(
   Schema.Struct({ html_url: Schema.String, submitted_at: Schema.String }),
@@ -225,6 +241,7 @@ const PostedPrReview = Schema.fromJsonString(
 const RestRefusal = Schema.fromJsonString(
   Schema.Struct({
     message: Schema.String,
+    status: Schema.optional(Schema.Union([Schema.String, Schema.Finite])),
     errors: Schema.optional(
       Schema.Array(
         Schema.Union([
@@ -235,6 +252,14 @@ const RestRefusal = Schema.fromJsonString(
     ),
   }),
 );
+// Whether GitHub surely refused the call, saying so: not when it gave no answer Fern can read, or
+// failed on its side, which it may have done after taking it.
+const refusedSurely = (stdout: string) =>
+  Option.match(Schema.decodeOption(RestRefusal)(stdout.trim()), {
+    onNone: () => false,
+    onSome: (answer) => !String(answer.status ?? "").startsWith("5"),
+  });
+
 // GitHub's reason for refusing, in plain words: its particular errors when it gave some, else its
 // message, else what `gh` said.
 const refusalOf = (stdout: string, stderr: string, exitCode: number) => {
@@ -334,6 +359,12 @@ const read = <S extends Schema.Codec<unknown, string>>(
       ),
     ),
   );
+
+// A review that went up, at its URL, when GitHub says it took it, or now.
+const postedAs = (url: string, at: string | null): HostPostedReview => {
+  const postedAt = Date.parse(at ?? "");
+  return { url, postedAt: Number.isNaN(postedAt) ? Date.now() : postedAt };
+};
 
 // Gives up on a call to GitHub that takes longer than the duration.
 const late = (duration: Duration.Duration) =>
@@ -868,8 +899,42 @@ export class CodeHost extends Context.Service<
         );
       });
 
+      // The review the signed-in developer already has on the PR, on the commit and saying the
+      // same, when GitHub has one.
+      const postedAlready = Effect.fn("CodeHost.postedAlready")(function* (
+        cwd: string,
+        pr: number,
+        review: HostReview,
+      ) {
+        const me = (yield* login(cwd)).toLowerCase();
+        const out = yield* ask(cwd, [
+          "api",
+          "--paginate",
+          `repos/{owner}/{repo}/pulls/${pr}/reviews?per_page=100`,
+          "--jq",
+          ".[] | {login: .user.login, commit: .commit_id, body, url: .html_url, at: .submitted_at} | @json",
+        ]);
+        const said = (body: string | null) =>
+          (body ?? "").replaceAll("\r\n", "\n").trim() === review.body.trim();
+        for (const line of out.split("\n")) {
+          if (line.trim() === "") continue;
+          const found = yield* Effect.succeed(line).pipe(
+            read(ReviewOnPr, "reviews"),
+          );
+          if (
+            found.login?.toLowerCase() === me &&
+            found.commit === review.commit &&
+            said(found.body)
+          )
+            return Option.some(postedAs(found.url, found.at));
+        }
+        return Option.none<HostPostedReview>();
+      });
+
       // As JSON on stdin, so nothing the review says, the developer's notes and the writer's
-      // Section titles included, ever reaches an argument.
+      // Section titles included, ever reaches an argument. Once only: GitHub is asked first
+      // whether it has the review already, as when Fern stopped before hearing back, and again
+      // when the post ends without GitHub surely saying no, as when it took too long to answer.
       const postReview = Effect.fn("CodeHost.postReview")(function* (
         cwd: string,
         pr: number,
@@ -879,7 +944,10 @@ export class CodeHost extends Context.Service<
           return yield* new CodeHostError({
             message: `#${pr} isn't a PR number.`,
           });
-        const { stdout, stderr, exitCode } = yield* exec(
+        const before = yield* postedAlready(cwd, pr, review);
+        if (Option.isSome(before)) return before.value;
+        const timeout = yield* CodeHostPostTimeout;
+        const sent = yield* exec(
           cwd,
           "gh",
           [
@@ -901,20 +969,36 @@ export class CodeHost extends Context.Service<
               body: c.body,
             })),
           }),
-        );
-        if (exitCode !== 0)
-          return yield* new CodeHostError({
+        ).pipe(Effect.timeoutOption(timeout));
+        // GitHub may have taken it all the same.
+        const unsure = (error: CodeHostError) =>
+          postedAlready(cwd, pr, review).pipe(
+            Effect.orElseSucceed(() => Option.none<HostPostedReview>()),
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.fail(error),
+                onSome: Effect.succeed,
+              }),
+            ),
+          );
+        if (Option.isNone(sent))
+          return yield* unsure(
+            new CodeHostError({ message: "GitHub didn't answer in time" }),
+          );
+        const { stdout, stderr, exitCode } = sent.value;
+        if (exitCode !== 0) {
+          const refused = new CodeHostError({
             message: refusalOf(stdout, stderr, exitCode),
           });
+          return yield* refusedSurely(stdout)
+            ? Effect.fail(refused)
+            : unsure(refused);
+        }
         const posted = yield* Effect.succeed(stdout).pipe(
           read(PostedPrReview, "review"),
         );
-        const postedAt = Date.parse(posted.submitted_at);
-        return {
-          url: posted.html_url,
-          postedAt: Number.isNaN(postedAt) ? Date.now() : postedAt,
-        };
-      }, late(CALL_TIMEOUT));
+        return postedAs(posted.html_url, posted.submitted_at);
+      });
 
       // A page at a time, until each PR is found or a page comes back short of full. A repo
       // without Stacks answers 404.
