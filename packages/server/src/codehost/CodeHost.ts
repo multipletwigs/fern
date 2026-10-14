@@ -1,4 +1,4 @@
-import { GhPrState, type PrState } from "@repo/api";
+import { GhPrState, type PrListState, type PrState } from "@repo/api";
 import { Context, Duration, Effect, Layer, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -317,9 +317,11 @@ export class CodeHost extends Context.Service<
     ): Effect.Effect<{ readonly merged: boolean }, CodeHostError>;
     // The GitHub login `gh` is signed in as.
     login(cwd: string): Effect.Effect<string, CodeHostError>;
-    // The repo's open PRs, newest first. Fails with GitHub's reason, in plain words.
+    // The repo's PRs in one `state`, newest first: the open ones, or the closed ones with the merged
+    // ones. Fails with GitHub's reason, in plain words.
     pullRequests(
       cwd: string,
+      state: PrListState,
     ): Effect.Effect<ReadonlyArray<HostPullRequest>, CodeHostError>;
     // The repo's Stacks, newest first: as many of them as it takes to find each of the PRs, when
     // GitHub has a Stack holding it, up to a few hundred. None where the repo has no Stacks.
@@ -651,12 +653,13 @@ export class CodeHost extends Context.Service<
 
       const pullRequests = Effect.fn("CodeHost.pullRequests")(function* (
         cwd: string,
+        which: PrListState,
       ) {
         const listed = yield* ask(cwd, [
           "pr",
           "list",
           "--state",
-          "open",
+          which,
           "--limit",
           String(MAX_LISTED),
           "--json",

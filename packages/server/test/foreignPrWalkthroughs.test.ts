@@ -278,7 +278,9 @@ const only = (walkthroughs: ReadonlyArray<Walkthrough>) => {
 const listedAs = (root: string, number: number) =>
   Effect.gen(function* () {
     const client = yield* makeClient;
-    const list = yield* client.pullRequests.list({ query: { root } });
+    const list = yield* client.pullRequests.list({
+      query: { root, state: "open" },
+    });
     return [...list.lone, ...list.stacks.flatMap((s) => s.prs)].find(
       (pr) => pr.number === number,
     );

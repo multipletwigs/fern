@@ -48,6 +48,10 @@ case "$1 $2" in
     case "$PWD" in
       *-refused) echo "HTTP 403: API rate limit exceeded for user ID 1." >&2; exit 1 ;;
     esac
+    if [ "$4" = "closed" ]; then
+      echo '[{"number":190,"url":"https://github.com/acme/app/pull/190","title":"Landed","author":{"login":"hubot"},"headRefName":"landed","baseRefName":"main","headRefOid":"cccc","isDraft":false,"state":"MERGED","reviewRequests":[]},{"number":189,"url":"https://github.com/acme/app/pull/189","title":"Dropped","author":{"login":"monalisa"},"headRefName":"dropped","baseRefName":"main","headRefOid":"dddd","isDraft":true,"state":"CLOSED","reviewRequests":[]}]'
+      exit 0
+    fi
     echo '[{"number":202,"url":"https://github.com/acme/app/pull/202","title":"Toggle","author":{"login":"monalisa","is_bot":false},"headRefName":"toggle","baseRefName":"theme","headRefOid":"bbbb","isDraft":true,"state":"OPEN","reviewRequests":[{"__typename":"User","login":"octocat"},{"__typename":"Team","name":"Core","slug":"core"}]},{"number":201,"url":"https://github.com/acme/app/pull/201","title":"Theme","author":{"login":"hubot"},"headRefName":"theme","baseRefName":"main","headRefOid":"aaaa","isDraft":false,"state":"OPEN","reviewRequests":[]}]'
     exit 0 ;;
   "auth status") [ "$3 $4" = "--hostname github.com" ] && exit 0; exit 1 ;;
@@ -228,7 +232,7 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
       withStub(
         Effect.gen(function* () {
           const host = yield* CodeHost;
-          const prs = yield* host.pullRequests("/");
+          const prs = yield* host.pullRequests("/", "open");
 
           assert.deepStrictEqual(prs, [
             {
@@ -264,12 +268,36 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
       ),
   );
 
+  it.effect(
+    "asked for closed PRs, the repo's closed and merged PRs are listed in one call, each in its own state",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          const prs = yield* host.pullRequests("/", "closed");
+
+          assert.deepStrictEqual(
+            prs.map((listed) => [listed.number, listed.state]),
+            [
+              [190, "merged"],
+              [189, "closed"],
+            ],
+          );
+          assert.lengthOf(calls(), 1);
+          assert.match(
+            calls()[0] ?? "",
+            /^pr list --state closed --limit \d+ --json /,
+          );
+        }),
+      ),
+  );
+
   it.effect("GitHub refusing to list the PRs says why, in plain words", () =>
     withStub(
       Effect.gen(function* () {
         const host = yield* CodeHost;
         const failed = yield* host
-          .pullRequests(inFolder("-refused"))
+          .pullRequests(inFolder("-refused"), "open")
           .pipe(Effect.flip);
         assert.strictEqual(
           failed.message,

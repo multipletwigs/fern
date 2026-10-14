@@ -3,6 +3,7 @@ import {
   ListedStack,
   type PrNothingToReview,
   PrStackPlace,
+  type PrListState,
   type PrWalkthrough,
   PrWalkthroughInProgress,
   ProjectNotFound,
@@ -110,9 +111,10 @@ export class PullRequests extends Context.Service<
       PullRequestsAvailability,
       ProjectNotFound | WorkspaceError
     >;
-    // The Project's open PRs, grouped into their GitHub Stacks.
+    // The Project's PRs in one `state`, open or closed, grouped into their GitHub Stacks.
     list(
       root: string,
+      state: PrListState,
     ): Effect.Effect<
       PullRequestList,
       | ProjectNotFound
@@ -215,9 +217,12 @@ export class PullRequests extends Context.Service<
           new PullRequestsError({ message: e.message }),
       );
 
-      const list = Effect.fn("PullRequests.list")(function* (root: string) {
+      const list = Effect.fn("PullRequests.list")(function* (
+        root: string,
+        state: PrListState,
+      ) {
         const { repo, login } = yield* reached(root);
-        const prs = yield* codeHost.pullRequests(root).pipe(refused);
+        const prs = yield* codeHost.pullRequests(root, state).pipe(refused);
         const [stacks, sessions, states] = yield* Effect.all(
           [
             codeHost.stacks(root, chained(prs)).pipe(refused),

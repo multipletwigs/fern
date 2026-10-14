@@ -186,12 +186,18 @@ const FakeCodeHost = Layer.succeed(
           ? Effect.fail(new CodeHostError({ message: "Not signed in." }))
           : Effect.succeed("octocat"),
       ),
-    pullRequests: () =>
-      Effect.suspend(() =>
-        listRefused === undefined
-          ? Effect.succeed(listedPrs)
-          : Effect.fail(new CodeHostError({ message: listRefused })),
-      ),
+    // As `gh` lists them: the open PRs, or the closed ones with the merged ones.
+    pullRequests: (cwd, state) =>
+      Effect.suspend(() => {
+        asked.push({ cwd, call: "pullRequests", args: { state } });
+        return listRefused === undefined
+          ? Effect.succeed(
+              listedPrs.filter(
+                (pr) => (pr.state === "open") === (state === "open"),
+              ),
+            )
+          : Effect.fail(new CodeHostError({ message: listRefused }));
+      }),
     stacks: (cwd, prs) =>
       Effect.sync(() => {
         asked.push({ cwd, call: "stacks", args: { prs } });
@@ -1141,7 +1147,7 @@ layer(fern, { excludeTestServices: true })("Pull requests page", (it) => {
               { id: 900, number: 0, prs: [8, 9] },
             ],
           },
-          client.pullRequests.list({ query: { root } }),
+          client.pullRequests.list({ query: { root, state: "open" } }),
         );
 
         assert.strictEqual(list.repo, "acme/app");
@@ -1198,7 +1204,7 @@ layer(fern, { excludeTestServices: true })("Pull requests page", (it) => {
               listed(22, { reviewers: ["hubot"] }),
             ],
           },
-          client.pullRequests.list({ query: { root } }),
+          client.pullRequests.list({ query: { root, state: "open" } }),
         );
 
         const [first, second] = list.lone;
@@ -1248,12 +1254,55 @@ layer(fern, { excludeTestServices: true })("Pull requests page", (it) => {
               listed(31),
             ],
           },
-          client.pullRequests.list({ query: { root } }),
+          client.pullRequests.list({ query: { root, state: "open" } }),
         );
 
         assert.deepStrictEqual(
           askedFrom(root).filter((a) => a.call === "stacks"),
           [{ call: "stacks", args: { prs: [33, 32] } }],
+        );
+      }),
+  );
+
+  it.effect(
+    "asked for closed PRs, lists the closed and merged ones in their Stacks, asking GitHub for the PRs once",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const client = yield* makeClient;
+        const list = yield* onGitHub(
+          {
+            prs: [
+              listed(44, { state: "open" }),
+              listed(43, { headRef: "b", baseRef: "a", state: "closed" }),
+              listed(42, { headRef: "a", baseRef: "main", state: "merged" }),
+              listed(41, { state: "merged" }),
+            ],
+            stacks: [{ id: 910, number: 3, prs: [42, 43] }],
+          },
+          client.pullRequests.list({ query: { root, state: "closed" } }),
+        );
+
+        assert.deepStrictEqual(
+          {
+            stacks: list.stacks.map((s) =>
+              s.prs.map((pr) => [pr.number, pr.state]),
+            ),
+            lone: list.lone.map((pr) => [pr.number, pr.state]),
+          },
+          {
+            stacks: [
+              [
+                [42, "merged"],
+                [43, "closed"],
+              ],
+            ],
+            lone: [[41, "merged"]],
+          },
+        );
+        assert.deepStrictEqual(
+          askedFrom(root).filter((a) => a.call === "pullRequests"),
+          [{ call: "pullRequests", args: { state: "closed" } }],
         );
       }),
   );
@@ -1274,7 +1323,7 @@ layer(fern, { excludeTestServices: true })("Pull requests page", (it) => {
         const client = yield* makeClient;
         const list = yield* onGitHub(
           { prs: [listed(number), listed(number + 1000)] },
-          client.pullRequests.list({ query: { root } }),
+          client.pullRequests.list({ query: { root, state: "open" } }),
         );
 
         assert.deepStrictEqual(
@@ -1293,7 +1342,9 @@ layer(fern, { excludeTestServices: true })("Pull requests page", (it) => {
       const client = yield* makeClient;
       const failed = yield* onGitHub(
         { prs: [], refused: "API rate limit exceeded for user." },
-        client.pullRequests.list({ query: { root } }).pipe(Effect.flip),
+        client.pullRequests
+          .list({ query: { root, state: "open" } })
+          .pipe(Effect.flip),
       );
 
       assert.deepStrictEqual(
@@ -1323,7 +1374,7 @@ layer(fern, { excludeTestServices: true })("Pull requests page", (it) => {
         assert.isTrue(yield* available(onIt));
         assert.isFalse(yield* available(off));
         const unlisted = yield* client.pullRequests
-          .list({ query: { root: off } })
+          .list({ query: { root: off, state: "open" } })
           .pipe(Effect.flip);
         assert.strictEqual(unlisted._tag, "PullRequestsUnavailable");
 
@@ -1340,7 +1391,7 @@ layer(fern, { excludeTestServices: true })("Pull requests page", (it) => {
     Effect.gen(function* () {
       const client = yield* makeClient;
       const failed = yield* client.pullRequests
-        .list({ query: { root: "/nowhere/fern" } })
+        .list({ query: { root: "/nowhere/fern", state: "open" } })
         .pipe(Effect.flip);
       assert.strictEqual(failed._tag, "ProjectNotFound");
     }),

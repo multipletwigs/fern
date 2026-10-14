@@ -11,10 +11,12 @@ export function SessionPr({
   pr,
   session,
   sessionTitle,
+  dimmed,
 }: {
   pr: ListedPullRequest;
   session: string;
   sessionTitle: string | undefined;
+  dimmed: boolean;
 }) {
   const setSelected = useAtomSet(selectedSessionAtom);
   const setNew = useAtomSet(newSessionAtom);
@@ -27,7 +29,9 @@ export function SessionPr({
       url={pr.url}
       draft={pr.draft}
       reviewRequested={pr.reviewRequested}
+      state={pr.state}
       session={sessionTitle ?? "Hosted Session"}
+      dimmed={dimmed}
       onOpen={() => {
         showReview({ pr: pr.number });
         setSelected(session);
