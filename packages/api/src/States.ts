@@ -122,6 +122,31 @@ export const WalkthroughStatus = Schema.Literals([
 ]);
 export type WalkthroughStatus = typeof WalkthroughStatus.Type;
 
+// Where a Walkthrough's change starts: the previous Walkthrough, the snapshot Fern took when the
+// Session started, for a Session Fern never ran, the last commit, or, for a PR of the Session's
+// Stack, the PR below it (where the bottom one leaves `main`). For a Foreign PR, `pr` is the whole
+// PR, from where it leaves its base.
+export const WalkthroughSince = Schema.Literals([
+  "previous",
+  "start",
+  "head",
+  "pr",
+]);
+export type WalkthroughSince = typeof WalkthroughSince.Type;
+
+// Where a Foreign PR's Walkthrough starts: where the PR leaves its base, or the previous one.
+export const ForeignWalkthroughSince = WalkthroughSince.pick(["pr", "previous"]);
+export type ForeignWalkthroughSince = typeof ForeignWalkthroughSince.Type;
+
+// What a Session's changes in its Project are against: the snapshot Fern took when it started, or,
+// for a Session Fern never ran, the last commit.
+export const SessionChangesSince = WalkthroughSince.pick(["start", "head"]);
+export type SessionChangesSince = typeof SessionChangesSince.Type;
+
+// Which side of a hunk a line's code is on: as it was, or as the change leaves it.
+export const HunkSide = Schema.Literals(["before", "after"]);
+export type HunkSide = typeof HunkSide.Type;
+
 // The developer's call on a Section or an Unexplained change.
 export const VerdictKind = Schema.Literals(["approved", "rejected"]);
 export type VerdictKind = typeof VerdictKind.Type;
@@ -202,6 +227,11 @@ export const PrReviewEvent = Schema.Literals([
   "COMMENT",
 ]);
 export type PrReviewEvent = typeof PrReviewEvent.Type;
+
+// Which side of a PR's diff a review comment is on: the line as the PR leaves it, or, for a line it
+// removes, as it was.
+export const DiffSide = Schema.Literals(["RIGHT", "LEFT"]);
+export type DiffSide = typeof DiffSide.Type;
 
 // The developer's tools
 

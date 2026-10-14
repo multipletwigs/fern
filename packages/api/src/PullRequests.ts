@@ -3,6 +3,7 @@ import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { ProjectNotFound, WorkspaceError } from "./Projects";
 import { WorktreeError } from "./Sessions";
 import {
+  DiffSide,
   PrListState,
   PrReviewEvent,
   PrState,
@@ -172,11 +173,6 @@ export class PrStackWalkthrough extends Schema.Class<PrStackWalkthrough>(
   started: Schema.Array(Schema.Int),
   skipped: Schema.Array(Schema.Int),
 }) {}
-
-// Which side of a PR's diff a review comment is on: the line as the PR leaves it, or, for a line it
-// removes, as it was.
-export const DiffSide = Schema.Literals(["RIGHT", "LEFT"]);
-export type DiffSide = typeof DiffSide.Type;
 
 // One Rejection note, as a review posts it on the line it's about.
 export class PrReviewComment extends Schema.Class<PrReviewComment>(

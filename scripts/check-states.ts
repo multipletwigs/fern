@@ -3,13 +3,13 @@ import { join, relative } from "node:path";
 
 // Every state is declared once, in packages/api/src/States.ts, and imported everywhere else. This
 // flags a string-literal union, or a Schema.Literals, given to a state-like name anywhere else:
-// a status, state, verdict, mode, kind or outcome. Run by `pnpm lint`.
+// a status, state, verdict, mode, kind, outcome, since or side. Run by `pnpm lint`.
 
 const root = join(import.meta.dirname, "..");
 const HOME = "packages/api/src/States.ts";
 const SKIP = new Set(["node_modules", "dist", "release", ".turbo"]);
 
-const STATE_NAME = /(status|state|verdict|mode|kind|outcome)$/i;
+const STATE_NAME = /(status|state|verdict|mode|kind|outcome|since|side)$/i;
 // `status: "a" | "b"`, also across lines and with a leading `|`.
 const FIELD_UNION = /(\w+)\??\s*:\s*\|?\s*"[^"\n]*"\s*\|\s*"/g;
 // `type FooStatus = "a" | "b"`.

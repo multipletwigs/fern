@@ -2,6 +2,7 @@ import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import {
   CitedDecision,
   ForeignPr,
+  type ForeignWalkthroughSince,
   Hunk,
   NothingToReview,
   NotRewritable,
@@ -489,7 +490,7 @@ export interface ForeignChange {
   readonly project: string;
   readonly cwd: string;
   readonly pr: ForeignPrBrief;
-  readonly since: "pr" | "previous";
+  readonly since: ForeignWalkthroughSince;
   readonly from: string;
   readonly to: string;
   readonly mergeBase: string;

@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import type { HunkSide } from "@repo/api";
 import { highlight, type Line } from "./highlight";
-
-type Side = "before" | "after";
 
 // The code of a hunk's lines on one side of the change, past their +/- markers: context and
 // removed lines before it, context and added lines after.
-const sideOf = (lines: ReadonlyArray<string>, side: Side) =>
+const sideOf = (lines: ReadonlyArray<string>, side: HunkSide) =>
   lines
     .filter((line) =>
       side === "before"
