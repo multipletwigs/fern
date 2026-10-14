@@ -16,6 +16,7 @@ import { SubagentFiles } from "./subagent/SubagentFiles";
 import { Subagents } from "./subagent/Subagents";
 import { LiveHandlersNoDeps } from "./live";
 import { ProjectSettings } from "./project/ProjectSettings";
+import { PullRequests } from "./pullrequest/PullRequests";
 import { StackEligibility } from "./stack/StackEligibility";
 import { Stacks } from "./stack/Stacks";
 import { Rounds } from "./round/Rounds";
@@ -180,6 +181,18 @@ export const VerifySlotsHandlers = HttpApiBuilder.group(
   }),
 );
 
+export const PullRequestsHandlers = HttpApiBuilder.group(
+  FernApi,
+  "pullRequests",
+  Effect.fn(function* (handlers) {
+    const pullRequests = yield* PullRequests;
+    return handlers.handleAll({
+      available: ({ query }) => pullRequests.available(query.root),
+      list: ({ query }) => pullRequests.list(query.root),
+    });
+  }),
+);
+
 // Handlers with their services still required, so tests can swap implementations.
 export const HandlersNoDeps = Layer.mergeAll(
   SystemHandlers,
@@ -191,6 +204,7 @@ export const HandlersNoDeps = Layer.mergeAll(
   AutonomyHandlers,
   SubagentsHandlers,
   VerifySlotsHandlers,
+  PullRequestsHandlers,
 );
 
 // FernApi's handlers and the live streams', on one set of the real services, with a Walkthrough
@@ -217,6 +231,7 @@ export const handlersWith = (
       Rounds.layer,
       VerifySlots.layer,
       Tools.layer,
+      PullRequests.layer,
     ]),
     // The chat's Agent call rows show where each Subagent stands as its tab does.
     Layer.provideMerge(Subagents.layer),

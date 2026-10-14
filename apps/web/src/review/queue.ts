@@ -84,16 +84,18 @@ export const isWaiting = (item: ReviewQueueItem) =>
 export const waitingCount = (walkthroughs: ReadonlyArray<Walkthrough>) =>
   reviewQueue(walkthroughs).filter(isWaiting).length;
 
-// What the Review tab was asked to open: a Walkthrough, as the status above the composer asks, or
-// one item by its key.
+// What the Review tab was asked to open: a Walkthrough, as the status above the composer asks, a
+// PR of the Session's Stack by its number, as the Pull requests page asks, or one item by its key.
 export type ReviewTarget =
-  { readonly walkthrough: string } | { readonly item: string };
+  | { readonly walkthrough: string }
+  | { readonly pr: number }
+  | { readonly item: string };
 
 // An index `findIndex` found, or undefined for its -1.
 const found = (index: number) => (index >= 0 ? index : undefined);
 
-// Where the Review tab opens: the item asked for, or a Walkthrough's first item still waiting, else
-// its first item. With nothing asked for, or what was asked for gone, the first item waiting in the
+// Where the Review tab opens: the item asked for, or a Walkthrough's or a PR's first item still
+// waiting, else its first item. With nothing asked for, or what was asked for gone, the first item waiting in the
 // whole queue, else the newest. Undefined in an empty queue.
 export const openAt = (
   queue: ReadonlyArray<ReviewQueueItem>,
@@ -105,7 +107,9 @@ export const openAt = (
     if (index !== undefined) return index;
   } else if (target) {
     const own = (item: ReviewQueueItem) =>
-      item.walkthrough.id === target.walkthrough;
+      "pr" in target
+        ? item.walkthrough.pr?.number === target.pr
+        : item.walkthrough.id === target.walkthrough;
     const index =
       found(queue.findIndex((item) => own(item) && isWaiting(item))) ??
       found(queue.findIndex(own));

@@ -30,6 +30,7 @@ import {
   UnusedSubagents,
   UnusedVerifySlots,
   UnusedTools,
+  UnusedPullRequests,
   UnusedWorktrees,
 } from "./stubs";
 
@@ -420,6 +421,7 @@ const SessionsApi = Layer.mergeAll(
   UnusedSubagents,
   UnusedVerifySlots,
   UnusedTools,
+  UnusedPullRequests,
   TestTurns,
 );
 layer(

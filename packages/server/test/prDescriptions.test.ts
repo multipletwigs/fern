@@ -24,7 +24,7 @@ import {
   type WriteRequest,
 } from "../src/walkthrough/WalkthroughWriter";
 import { WorktreesDir } from "../src/worktree/Worktrees";
-import { FakeIssues } from "./stubs";
+import { FakeIssues, NotListing } from "./stubs";
 
 const git = (cwd: string, ...args: Array<string>) =>
   execFileSync(
@@ -104,6 +104,7 @@ let nextPr = 300;
 const FakeCodeHost = Layer.succeed(
   CodeHost,
   CodeHost.of({
+    ...NotListing,
     ready: () => Effect.succeed(true),
     defaultBranch: () => Effect.succeed("main"),
     push: () => Effect.void,

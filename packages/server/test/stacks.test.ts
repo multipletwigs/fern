@@ -9,7 +9,12 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { vi } from "vitest";
-import { CodeHost, CodeHostError } from "../src/codehost/CodeHost";
+import {
+  CodeHost,
+  CodeHostError,
+  type HostPullRequest,
+  type HostStack,
+} from "../src/codehost/CodeHost";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
 import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
@@ -132,6 +137,11 @@ const readyAsked: Array<string> = [];
 let signedOut = false;
 let defaultBranch: string | undefined = "main";
 let nextPr = 100;
+// What GitHub lists of the repo: its open PRs and its Stacks. While `listRefused` is set, GitHub
+// refuses to list the PRs, saying it.
+let listedPrs: ReadonlyArray<HostPullRequest> = [];
+let listedStacks: ReadonlyArray<HostStack> = [];
+let listRefused: string | undefined;
 const askedFrom = (cwd: string) =>
   asked.filter((a) => a.cwd === cwd).map(({ call, args }) => ({ call, args }));
 const FakeCodeHost = Layer.succeed(
@@ -170,6 +180,23 @@ const FakeCodeHost = Layer.succeed(
     markReady: () => Effect.void,
     merge: () => Effect.void,
     state: () => Effect.succeed({ merged: false }),
+    login: () =>
+      Effect.suspend(() =>
+        signedOut
+          ? Effect.fail(new CodeHostError({ message: "Not signed in." }))
+          : Effect.succeed("octocat"),
+      ),
+    pullRequests: () =>
+      Effect.suspend(() =>
+        listRefused === undefined
+          ? Effect.succeed(listedPrs)
+          : Effect.fail(new CodeHostError({ message: listRefused })),
+      ),
+    stacks: (cwd, prs) =>
+      Effect.sync(() => {
+        asked.push({ cwd, call: "stacks", args: { prs } });
+        return listedStacks;
+      }),
   }),
 );
 
@@ -253,6 +280,7 @@ const makeClient = HttpApiTest.groups(FernApi, [
   "projects",
   "flows",
   "walkthroughs",
+  "pullRequests",
 ]);
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
@@ -1043,3 +1071,275 @@ test.live(
     }),
   20_000,
 );
+
+// A PR as GitHub lists it: by number, from `head` into `base`, opened by `author`.
+const listed = (
+  number: number,
+  init: Partial<HostPullRequest> = {},
+): HostPullRequest => ({
+  number,
+  url: `https://github.com/acme/app/pull/${number}`,
+  title: `PR ${number}`,
+  author: "hubot",
+  headRef: `branch-${number}`,
+  baseRef: "main",
+  headCommit: `${number}`.padStart(40, "a"),
+  draft: false,
+  state: "open",
+  reviewers: [],
+  ...init,
+});
+
+// What GitHub lists of the repo, for the effect, then nothing again.
+const onGitHub = <A, E, R>(
+  github: {
+    readonly prs: ReadonlyArray<HostPullRequest>;
+    readonly stacks?: ReadonlyArray<HostStack>;
+    readonly refused?: string;
+  },
+  effect: Effect.Effect<A, E, R>,
+) =>
+  Effect.sync(() => {
+    listedPrs = github.prs;
+    listedStacks = github.stacks ?? [];
+    listRefused = github.refused;
+  }).pipe(
+    Effect.andThen(effect),
+    Effect.ensuring(
+      Effect.sync(() => {
+        listedPrs = [];
+        listedStacks = [];
+        listRefused = undefined;
+      }),
+    ),
+  );
+
+layer(fern, { excludeTestServices: true })("Pull requests page", (it) => {
+  it.effect(
+    "lists a Project's open PRs in their GitHub Stacks, bottom first, then the PRs in no Stack, each once",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const client = yield* makeClient;
+        const list = yield* onGitHub(
+          {
+            // Newest first, as GitHub lists them.
+            prs: [
+              listed(15, { headRef: "b", baseRef: "a" }),
+              listed(14, { headRef: "a", baseRef: "main" }),
+              listed(13),
+              listed(12, { headRef: "y", baseRef: "x" }),
+              listed(11, { headRef: "x", baseRef: "main" }),
+            ],
+            stacks: [
+              { id: 902, number: 2, prs: [14, 15] },
+              // Its bottom PR merged already; another Stack holds only PRs that closed.
+              { id: 901, number: 1, prs: [10, 11, 12] },
+              { id: 900, number: 0, prs: [8, 9] },
+            ],
+          },
+          client.pullRequests.list({ query: { root } }),
+        );
+
+        assert.strictEqual(list.repo, "acme/app");
+        assert.strictEqual(list.login, "octocat");
+        assert.deepStrictEqual(
+          list.stacks.map((s) => ({
+            id: s.id,
+            number: s.number,
+            prs: s.prs.map((pr) => [pr.number, pr.stack?.position]),
+          })),
+          [
+            {
+              id: 902,
+              number: 2,
+              prs: [
+                [14, 1],
+                [15, 2],
+              ],
+            },
+            {
+              id: 901,
+              number: 1,
+              prs: [
+                [11, 2],
+                [12, 3],
+              ],
+            },
+          ],
+        );
+        assert.deepStrictEqual(
+          list.lone.map((pr) => [pr.number, pr.stack]),
+          [[13, undefined]],
+        );
+      }),
+  );
+
+  it.effect(
+    "each PR carries what GitHub says of it, and whether the developer is asked to review it",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const client = yield* makeClient;
+        const list = yield* onGitHub(
+          {
+            prs: [
+              listed(21, {
+                title: "Add dark mode",
+                author: "monalisa",
+                headRef: "dark-mode",
+                baseRef: "main",
+                draft: true,
+                reviewers: ["hubot", "octocat"],
+              }),
+              listed(22, { reviewers: ["hubot"] }),
+            ],
+          },
+          client.pullRequests.list({ query: { root } }),
+        );
+
+        const [first, second] = list.lone;
+        assert.deepStrictEqual(
+          {
+            number: first?.number,
+            url: first?.url,
+            title: first?.title,
+            author: first?.author,
+            headRef: first?.headRef,
+            baseRef: first?.baseRef,
+            headCommit: first?.headCommit,
+            draft: first?.draft,
+            state: first?.state,
+            reviewRequested: first?.reviewRequested,
+            session: first?.session,
+          },
+          {
+            number: 21,
+            url: "https://github.com/acme/app/pull/21",
+            title: "Add dark mode",
+            author: "monalisa",
+            headRef: "dark-mode",
+            baseRef: "main",
+            headCommit: "21".padStart(40, "a"),
+            draft: true,
+            state: "open",
+            reviewRequested: true,
+            session: undefined,
+          },
+        );
+        assert.isFalse(second?.reviewRequested);
+      }),
+  );
+
+  it.effect(
+    "looks past GitHub's newest Stacks only for PRs chained to another listed PR",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const client = yield* makeClient;
+        yield* onGitHub(
+          {
+            prs: [
+              listed(33, { headRef: "c", baseRef: "b" }),
+              listed(32, { headRef: "b", baseRef: "main" }),
+              listed(31),
+            ],
+          },
+          client.pullRequests.list({ query: { root } }),
+        );
+
+        assert.deepStrictEqual(
+          askedFrom(root).filter((a) => a.call === "stacks"),
+          [{ call: "stacks", args: { prs: [33, 32] } }],
+        );
+      }),
+  );
+
+  it.effect(
+    "a PR on a Hosted Session's Stack carries that Session; every other PR is a Foreign PR",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const { id, turn, cwd } = yield* implementing(root);
+        const answer = yield* callTool(turn, "ticket_landed", {
+          ticket: 3,
+          commit: land(cwd, 3, { "theme.ts": "export const theme = 1;\n" }),
+        });
+        turn.finish();
+        const number = Number(/draft PR #(\d+)/.exec(textOf(answer))?.[1]);
+
+        const client = yield* makeClient;
+        const list = yield* onGitHub(
+          { prs: [listed(number), listed(number + 1000)] },
+          client.pullRequests.list({ query: { root } }),
+        );
+
+        assert.deepStrictEqual(
+          list.lone.map((pr) => [pr.number, pr.session]),
+          [
+            [number, id],
+            [number + 1000, undefined],
+          ],
+        );
+      }),
+  );
+
+  it.effect("GitHub refusing to list the PRs comes back with its reason", () =>
+    Effect.gen(function* () {
+      const root = project();
+      const client = yield* makeClient;
+      const failed = yield* onGitHub(
+        { prs: [], refused: "API rate limit exceeded for user." },
+        client.pullRequests.list({ query: { root } }).pipe(Effect.flip),
+      );
+
+      assert.deepStrictEqual(
+        {
+          tag: failed._tag,
+          message: "message" in failed ? failed.message : "",
+        },
+        {
+          tag: "PullRequestsError",
+          message: "API rate limit exceeded for user.",
+        },
+      );
+    }),
+  );
+
+  it.effect(
+    "a Project whose origin is off GitHub, or while gh is signed out, has no Pull requests page",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* makeClient;
+        const onIt = project();
+        const off = project({ offGitHub: true });
+        const available = (root: string) =>
+          client.pullRequests
+            .available({ query: { root } })
+            .pipe(Effect.map((a) => a.available));
+        assert.isTrue(yield* available(onIt));
+        assert.isFalse(yield* available(off));
+        const unlisted = yield* client.pullRequests
+          .list({ query: { root: off } })
+          .pipe(Effect.flip);
+        assert.strictEqual(unlisted._tag, "PullRequestsUnavailable");
+
+        const signedOutOf = project();
+        signedOut = true;
+        const whileSignedOut = yield* available(signedOutOf).pipe(
+          Effect.ensuring(Effect.sync(() => (signedOut = false))),
+        );
+        assert.isFalse(whileSignedOut);
+      }),
+  );
+
+  it.effect("a folder Fern doesn't know as a Project has no PRs to list", () =>
+    Effect.gen(function* () {
+      const client = yield* makeClient;
+      const failed = yield* client.pullRequests
+        .list({ query: { root: "/nowhere/fern" } })
+        .pipe(Effect.flip);
+      assert.strictEqual(failed._tag, "ProjectNotFound");
+    }),
+  );
+});

@@ -156,6 +156,16 @@ export type IssueState = typeof IssueState.Type;
 export const GhIssueState = Schema.Literals(["OPEN", "CLOSED"]);
 export type GhIssueState = typeof GhIssueState.Type;
 
+// Pull requests on the Project's repo
+
+// Whether a pull request is still open, was closed without merging, or merged.
+export const PrState = Schema.Literals(["open", "closed", "merged"]);
+export type PrState = typeof PrState.Type;
+
+// The same, as `gh` prints it: in capitals.
+export const GhPrState = Schema.Literals(["OPEN", "CLOSED", "MERGED"]);
+export type GhPrState = typeof GhPrState.Type;
+
 // The developer's tools
 
 // The tools Fern runs on that the developer installs and signs in to themselves: Claude Code, the

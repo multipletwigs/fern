@@ -8,17 +8,20 @@ import { type ReactNode, useState } from "react";
 import { NewSessionButton } from "./NewSessionButton";
 
 // An Arc-style section: a quiet, muted header opens and closes it, with its rows beneath. Shows
-// the first few rows until "Show more" is clicked. Hovering it reveals a button to start a new
-// Session in its folder.
+// the first few rows until "Show more" is clicked, after any entries above them, such as its
+// Pull requests page. Hovering it reveals a button to start a new Session in its folder.
 export function ProjectGroup({
   name,
   path,
+  entries,
   rows,
   collapsedCount = 5,
   onNew,
 }: {
   name: string;
   path: string;
+  // Shown above the rows, however many are collapsed.
+  entries?: ReactNode;
   rows: ReadonlyArray<ReactNode>;
   collapsedCount?: number;
   onNew: () => void;
@@ -45,6 +48,7 @@ export function ProjectGroup({
         />
       </div>
       <Collapsible.Panel className="mt-0.5 space-y-0.5">
+        {entries}
         {expanded ? rows : rows.slice(0, collapsedCount)}
         {hidden > 0 && (
           <button

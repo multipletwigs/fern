@@ -7,7 +7,7 @@ import {
   type WalkthroughStatus,
 } from "@repo/api";
 import { DateTime } from "effect";
-import { reviewQueue } from "../src/review/queue";
+import { openAt, reviewQueue } from "../src/review/queue";
 import { prStatus } from "../src/walkthrough/review";
 
 const at = DateTime.makeUnsafe(0);
@@ -112,5 +112,30 @@ it("says how a PR's review stands across its Walkthroughs", () => {
   assert.deepStrictEqual(
     prStatus([walkthrough(1, 1, { status: "failed", sections: [] })]),
     { status: "Failed", tone: "danger" },
+  );
+});
+
+it("opens a PR from the Pull requests page on its first item waiting, else its first item", () => {
+  const queue = reviewQueue([
+    walkthrough(1, 1, { sections: [section("a", approved)], reviewed: true }),
+    walkthrough(2, 2, { sections: [section("b", approved), section("c")] }),
+    walkthrough(3, 1, { sections: [section("d")] }),
+  ]);
+  const keyAt = (index: number | undefined) =>
+    index === undefined ? undefined : queue[index]?.key;
+  assert.strictEqual(keyAt(openAt(queue, { pr: 101 })), "w3:d");
+  assert.strictEqual(keyAt(openAt(queue, { pr: 102 })), "w2:c");
+
+  const reviewed = reviewQueue([
+    walkthrough(1, 1, { sections: [section("a", approved)], reviewed: true }),
+    walkthrough(2, 2, { sections: [section("b")] }),
+  ]);
+  assert.strictEqual(
+    reviewed[openAt(reviewed, { pr: 101 }) ?? -1]?.key,
+    "w1:a",
+  );
+  assert.strictEqual(
+    reviewed[openAt(reviewed, { pr: 999 }) ?? -1]?.key,
+    "w2:b",
   );
 });
