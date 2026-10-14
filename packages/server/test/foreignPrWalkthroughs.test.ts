@@ -25,6 +25,7 @@ import {
   CodeHost,
   CodeHostError,
   type HostPullRequestDetail,
+  type HostIssue,
   type HostStack,
   prBaseRef,
   prHeadRef,
@@ -114,6 +115,14 @@ const mergeOn = (repo: string, from: string, other: string) => {
   return commit;
 };
 
+// The Project's worktrees under Fern's worktrees folder for PRs, as its repo has them.
+const prWorktrees = (root: string) =>
+  git(root, "worktree", "list", "--porcelain")
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length))
+    .filter((path) => path.startsWith(`${join(dataDir, "prs")}/`));
+
 // What GitHub has of the repo: each PR, and the commits its head and base branch are at.
 interface OnGitHub {
   readonly pr: HostPullRequestDetail;
@@ -124,6 +133,9 @@ const github = new Map<number, OnGitHub>();
 // The repo's Stacks on GitHub.
 let stacksOnGitHub: ReadonlyArray<HostStack> = [];
 const fetched: Array<{ readonly cwd: string; readonly number: number }> = [];
+// The PRs asked of GitHub one at a time, and the issues PRs say they close, by URL.
+const viewed: Array<number> = [];
+const issuesOnGitHub = new Map<string, HostIssue>();
 const prOf = (
   number: number,
   init: Partial<HostPullRequestDetail> = {},
@@ -139,7 +151,7 @@ const prOf = (
   state: "open",
   reviewers: [],
   body: "",
-  issue: undefined,
+  closes: undefined,
   ...init,
 });
 // Puts the PR on GitHub, at those commits.
@@ -177,6 +189,7 @@ const FakeCodeHost = Layer.succeed(
       ),
     pullRequest: (_cwd, number) =>
       Effect.suspend(() => {
+        viewed.push(number);
         const found = github.get(number);
         return found
           ? Effect.succeed(found.pr)
@@ -186,6 +199,8 @@ const FakeCodeHost = Layer.succeed(
               }),
             );
       }),
+    issue: (_cwd, url) => Effect.sync(() => issuesOnGitHub.get(url)),
+    pullRequestDiff: () => Effect.die("unused"),
     // As `git fetch` of `pull/N/head` would: hidden refs, and nothing else.
     fetchPullRequest: (cwd, { number }) =>
       Effect.sync(() => {
@@ -363,9 +378,14 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
           {
             title: "Bump a",
             body: "Bumps a to 2.",
-            issue: { number: 3, title: "a is too small", body: "Make it 2." },
+            closes: "https://github.com/acme/app/issues/3",
           },
         );
+        issuesOnGitHub.set("https://github.com/acme/app/issues/3", {
+          number: 3,
+          title: "a is too small",
+          body: "Make it 2.",
+        });
         yield* decided(root, "How big should a be?", "Two");
         const status = git(root, "status", "--porcelain");
         answers = (request) => [
@@ -400,11 +420,9 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
           request.decisions.map((d) => [d.id, d.question, d.answer]),
           [["d1", "How big should a be?", "Two"]],
         );
-        // Read in the PR's own worktree, at its head, under Fern's worktrees.
-        assert.strictEqual(
-          request.cwd,
-          join(dataDir, "prs", "acme", "app", "7"),
-        );
+        // Read in the PR's own worktree of the Project, at its head, under Fern's worktrees.
+        assert.deepStrictEqual(prWorktrees(root), [request.cwd]);
+        assert.match(request.cwd, /\/acme\/app\/7$/u);
         assert.strictEqual(git(request.cwd, "rev-parse", "HEAD"), head);
         assert.strictEqual(
           readFileSync(join(request.cwd, "a.ts"), "utf8"),
@@ -604,6 +622,16 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
         });
         const again = only(yield* written(11));
         assert.deepStrictEqual([again.status, again.number], ["ready", 1]);
+        // The failed one's commit is no longer kept for it.
+        assert.deepStrictEqual(
+          git(
+            root,
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/fern/walkthroughs/",
+          ),
+          `refs/fern/walkthroughs/${again.id}`,
+        );
       }),
   );
 
@@ -642,10 +670,7 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
         assert.strictEqual(only(yield* written(14)).status, "ready");
         assert.isFalse(existsSync(marker));
         assert.strictEqual(
-          readFileSync(
-            join(dataDir, "prs", "acme", "app", "14", "a.ts"),
-            "utf8",
-          ),
+          readFileSync(join(explored.at(-1)?.cwd ?? "", "a.ts"), "utf8"),
           "export const a = 9;\n",
         );
       }),
@@ -701,7 +726,7 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
           },
           { tag: "PullRequestNotForeign", session: "hosted" },
         );
-        assert.isFalse(existsSync(join(dataDir, "prs", "acme", "app", "13")));
+        assert.deepStrictEqual(prWorktrees(root), []);
       }),
   );
 
@@ -927,11 +952,26 @@ layer(fern, { excludeTestServices: true })("Foreign PR Walkthroughs", (it) => {
 
         gate = yield* Deferred.make<void>();
         const asked = explored.length;
+        viewed.length = 0;
         const run = yield* client.pullRequests.walkThroughStack({
           params: { id: 900 },
           payload: { root, state: "open" },
         });
         assert.deepStrictEqual([run.started, run.skipped], [[40, 42], [41]]);
+        // The list's PRs as it has them: GitHub is asked about each only for what writing it needs.
+        assert.deepStrictEqual(viewed, [40, 42]);
+
+        // Asked again while they're being written: none is asked of GitHub.
+        viewed.length = 0;
+        const again = yield* client.pullRequests.walkThroughStack({
+          params: { id: 900 },
+          payload: { root, state: "open" },
+        });
+        assert.deepStrictEqual(
+          [again.started, again.skipped],
+          [[], [40, 41, 42]],
+        );
+        assert.deepStrictEqual(viewed, []);
         // Both show as being written, but only the bottom one is: the top waits its turn.
         assert.deepStrictEqual(
           [

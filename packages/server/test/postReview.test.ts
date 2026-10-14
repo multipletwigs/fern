@@ -5,7 +5,13 @@ import { HttpServer } from "effect/http";
 import { HttpApiTest } from "effect/http-api";
 import { RpcTest } from "effect/rpc";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -78,11 +84,13 @@ const commitOn = (
   repo: string,
   from: string,
   files: Record<string, string>,
+  removed: ReadonlyArray<string> = [],
 ) => {
   const elsewhere = join(mkdtempSync(join(tmpdir(), "fern-fork-")), "work");
   git(repo, "worktree", "add", "-q", "--detach", elsewhere, from);
   for (const [path, content] of Object.entries(files))
     writeFileSync(join(elsewhere, path), content);
+  for (const path of removed) rmSync(join(elsewhere, path));
   git(elsewhere, "add", "-A");
   git(elsewhere, "commit", "-q", "-m", "Someone's work");
   const commit = git(elsewhere, "rev-parse", "HEAD");
@@ -113,7 +121,7 @@ const opened = (
       state: "open",
       reviewers: [],
       body: "",
-      issue: undefined,
+      closes: undefined,
       ...init,
     },
     ...at,
@@ -127,6 +135,59 @@ const moved = (number: number, init: Partial<HostPullRequestDetail>) => {
 // Every review that reached GitHub, and, while `refusal` is set, GitHub refusing them so.
 const posted: Array<{ cwd: string; pr: number; review: HostReview }> = [];
 let refusal: string | undefined;
+
+// The PR's diff as GitHub shows it: from where the PR leaves its base, a renamed file under its new
+// name alone, with only the lines around its changes.
+const diffOnGitHub = (cwd: string, number: number) => {
+  const found = github.get(number);
+  if (!found) throw new Error(`No PR #${number}`);
+  const out = git(
+    cwd,
+    "diff",
+    "-M",
+    "--no-color",
+    "--no-ext-diff",
+    `${found.base}...${found.head}`,
+  );
+  return out
+    .split(/^diff --git /mu)
+    .slice(1)
+    .map((file) => {
+      const lines = file.split("\n");
+      const named = (prefix: string) =>
+        lines.find((l) => l.startsWith(prefix))?.slice(prefix.length);
+      const to = named("+++ b/");
+      const at = lines.findIndex((l) => l.startsWith("@@"));
+      return {
+        path: named("rename to ") ?? to ?? named("--- a/") ?? "",
+        patch: at === -1 ? undefined : lines.slice(at).join("\n"),
+      };
+    });
+};
+
+// Whether GitHub can put a comment on that line of the PR's diff.
+const onDiff = (
+  files: ReturnType<typeof diffOnGitHub>,
+  { path, line, side }: HostReview["comments"][number],
+) => {
+  const patch = files.find((f) => f.path === path)?.patch;
+  let [left, right] = [0, 0];
+  for (const text of patch?.split("\n") ?? []) {
+    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)/u.exec(text);
+    if (header) {
+      [left, right] = [Number(header[1]), Number(header[2])];
+      continue;
+    }
+    const removed = text.startsWith("-");
+    const added = text.startsWith("+");
+    if (!removed && !added && !text.startsWith(" ")) continue;
+    if (side === "LEFT" && !added && left === line) return true;
+    if (side === "RIGHT" && !removed && right === line) return true;
+    if (!added) left++;
+    if (!removed) right++;
+  }
+  return false;
+};
 
 const FakeCodeHost = Layer.succeed(
   CodeHost,
@@ -158,11 +219,19 @@ const FakeCodeHost = Layer.succeed(
         git(cwd, "update-ref", prHeadRef(number), found.head);
         git(cwd, "update-ref", prBaseRef(number), found.base);
       }),
+    issue: () => Effect.die("unused"),
     commitsAhead: () => Effect.die("unused"),
+    pullRequestDiff: (cwd, number) =>
+      Effect.sync(() => diffOnGitHub(cwd, number)),
     postReview: (cwd, pr, review) =>
       Effect.suspend(() => {
         if (refusal !== undefined)
           return Effect.fail(new CodeHostError({ message: refusal }));
+        const files = diffOnGitHub(cwd, pr);
+        if (!review.comments.every((comment) => onDiff(files, comment)))
+          return Effect.fail(
+            new CodeHostError({ message: "Path could not be resolved." }),
+          );
         posted.push({ cwd, pr, review });
         return Effect.succeed({
           url: `https://github.com/acme/app/pull/${pr}#pullrequestreview-${posted.length}`,
@@ -206,29 +275,46 @@ const makeClient = HttpApiTest.groups(FernApi, [
 ]);
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
-// The PR's one Walkthrough, once it's written and `ready` holds of it.
+// The PR's latest Walkthrough, once there are `count`, none being written, and `ready` holds of
+// it.
 const walkthroughOf = (
   number: number,
   ready: (walkthrough: Walkthrough) => boolean = () => true,
+  count = 1,
 ) =>
   Effect.gen(function* () {
     const live = yield* makeLive;
     const [walkthroughs] = yield* live
       .PullRequestWalkthroughs({ repo: "acme/app", number })
       .pipe(
-        Stream.filter(
-          (all) =>
-            all.length === 1 &&
-            all.every((w) => w.status !== "writing" && ready(w)),
-        ),
+        Stream.filter((all) => {
+          const latest = all.at(-1);
+          return (
+            all.length === count &&
+            all.every((w) => w.status !== "writing") &&
+            latest !== undefined &&
+            ready(latest)
+          );
+        }),
         Stream.take(1),
         Stream.runCollect,
         Effect.timeout("5 seconds"),
       );
-    const [walkthrough] = walkthroughs ?? [];
+    const walkthrough = walkthroughs?.at(-1);
     assert.isDefined(walkthrough);
     return walkthrough;
   });
+
+// Walks through the PR again, for its `count`th Walkthrough.
+const rewalked = (
+  client: Effect.Success<typeof makeClient>,
+  root: string,
+  number: number,
+  count: number,
+) =>
+  client.pullRequests
+    .walkThrough({ params: { number }, payload: { root } })
+    .pipe(Effect.andThen(walkthroughOf(number, () => true, count)));
 
 // A PR changing `a.ts` and adding `b.ts` and `c.ts`, walked through: one Section for each of the
 // first two, and `c.ts` left Unexplained.
@@ -284,6 +370,7 @@ const judged = (walkthrough: Walkthrough, notes: Record<string, string> = {}) =>
     return yield* walkthroughOf(
       walkthrough.foreignPr?.number ?? 0,
       (w) => w.reviewedAt !== undefined,
+      walkthrough.number,
     );
   });
 
@@ -607,6 +694,137 @@ layer(fern, { excludeTestServices: true })("Post review", (it) => {
         assert.lengthOf(
           posted.filter((p) => p.pr === 36),
           1,
+        );
+      }),
+  );
+
+  it.effect(
+    "a review of a Walkthrough of the PR's new commits still requests changes for Rejections in earlier ones never posted, unless a later Section fixes them",
+    () =>
+      Effect.gen(function* () {
+        const { root, head, walkthrough, client } = yield* walkedThrough(39);
+        yield* judged(walkthrough, {
+          s1: "five should stay quiet.",
+          s2: "Not yet.",
+        });
+
+        // The author answers the first Rejection, r1, and changes b again.
+        const answer = commitOn(root, head, {
+          "a.ts": "one\ntwo\nthree\nfour\nfive\nsix\nseven\n",
+          "b.ts": "export const b = 1;\n",
+        });
+        opened(39, { head: answer, base: git(root, "rev-parse", "main") });
+        answers = (request) => ({
+          sections: [
+            {
+              ...section("Quiet five", [hunkIn(request, "a.ts")]),
+              fixes: request.rejections[0]?.id,
+            },
+            section("Trim b", [hunkIn(request, "b.ts")]),
+          ],
+          notFromSession: [],
+        });
+        const second = yield* rewalked(client, root, 39, 2);
+        assert.strictEqual(second.since, "previous");
+        yield* judged(second);
+
+        const preview = yield* client.pullRequests.review({
+          params: { number: 39 },
+          query: { root, walkthrough: second.id },
+        });
+        assert.deepStrictEqual(
+          [preview.event, preview.body, preview.comments.length],
+          [
+            "REQUEST_CHANGES",
+            [
+              "Reviewed in Fern. Rejected:",
+              "",
+              "1. `Add b` (from Walkthrough 1)",
+              "",
+              "   Not yet.",
+            ].join("\n"),
+            0,
+          ],
+        );
+        yield* client.pullRequests.postReview({
+          params: { number: 39 },
+          payload: { root, walkthrough: second.id },
+        });
+
+        // Once a review went up with them, they're not posted again.
+        const third = commitOn(root, answer, { "c.ts": "gone\n" });
+        opened(39, { head: third, base: git(root, "rev-parse", "main") });
+        answers = (request) => ({
+          sections: [section("Tidy c", [hunkIn(request, "c.ts")])],
+          notFromSession: [],
+        });
+        const last = yield* rewalked(client, root, 39, 3);
+        yield* judged(last);
+        const approving = yield* client.pullRequests.review({
+          params: { number: 39 },
+          query: { root, walkthrough: last.id },
+        });
+        assert.strictEqual(approving.event, "APPROVE");
+      }),
+  );
+
+  it.effect(
+    "on a PR that renames a file, a note goes on a line only where GitHub's diff of the PR has it, and only in the body elsewhere",
+    () =>
+      Effect.gen(function* () {
+        const root = project();
+        const base = git(root, "rev-parse", "HEAD");
+        // GitHub shows `a.ts` renamed to `moved.ts` with `five` changed; Fern's own diff has
+        // `a.ts` removed and `moved.ts` added, every line of each.
+        const head = commitOn(
+          root,
+          base,
+          {
+            "moved.ts": "one\ntwo\nthree\nfour\nFIVE\nsix\nseven\n",
+            "b.ts": "export const b = 1;\n",
+          },
+          ["a.ts"],
+        );
+        opened(43, { head, base });
+        answers = (request) => ({
+          sections: [
+            section("Drop a", [hunkIn(request, "a.ts")]),
+            section("Add moved", [hunkIn(request, "moved.ts")]),
+            section("Add b", [hunkIn(request, "b.ts")]),
+          ],
+          notFromSession: [],
+        });
+        const client = yield* makeClient;
+        yield* client.pullRequests.walkThrough({
+          params: { number: 43 },
+          payload: { root },
+        });
+        const walkthrough = yield* walkthroughOf(43);
+        yield* judged(walkthrough, {
+          s1: "Keep a.",
+          s2: "Not here.",
+          s3: "Not yet.",
+        });
+
+        const preview = yield* client.pullRequests.review({
+          params: { number: 43 },
+          query: { root, walkthrough: walkthrough.id },
+        });
+        assert.deepStrictEqual(preview.comments.map(plain), [
+          { path: "b.ts", line: 1, side: "RIGHT", body: "Not yet." },
+        ]);
+        for (const note of ["Keep a.", "Not here.", "Not yet."])
+          assert.include(preview.body, note);
+
+        yield* client.pullRequests.postReview({
+          params: { number: 43 },
+          payload: { root, walkthrough: walkthrough.id },
+        });
+        assert.deepStrictEqual(
+          posted
+            .filter((p) => p.pr === 43)
+            .map((p) => p.review.comments.map(plain)),
+          [preview.comments.map(plain)],
         );
       }),
   );

@@ -24,10 +24,10 @@ export function PrTerminal({ root }: { root: string }) {
   if (pr?.worktree === undefined || pr.session !== undefined) return null;
   return (
     <TerminalDock
-      key={`${list.repo}#${open}`}
-      target={{ _tag: "PullRequest", repo: list.repo, number: open }}
+      key={`${root}:${list.repo}#${open}`}
+      target={{ _tag: "PullRequest", root, repo: list.repo, number: open }}
       // The worktree stays where it is as it moves from one head to the next.
-      folder={`${list.repo}#${open}`}
+      folder={`${root}:${list.repo}#${open}`}
     />
   );
 }

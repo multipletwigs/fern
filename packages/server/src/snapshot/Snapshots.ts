@@ -43,6 +43,8 @@ export class Snapshots extends Context.Service<
       ref: string,
       commit: string,
     ): Effect.Effect<void, GitError>;
+    // Stops keeping what the hidden ref keeps, removing it. Nothing to do when there's none.
+    unpin(repo: string, ref: string): Effect.Effect<void, GitError>;
     // The snapshot Fern took when a Session started, if it took one.
     start(
       repo: string,
@@ -127,6 +129,10 @@ export class Snapshots extends Context.Service<
       const pin = Effect.fn("Snapshots.pin")(
         (repo: string, ref: string, commit: string) =>
           git.run(repo, ["update-ref", ref, commit]).pipe(Effect.asVoid),
+      );
+
+      const unpin = Effect.fn("Snapshots.unpin")((repo: string, ref: string) =>
+        git.run(repo, ["update-ref", "-d", ref]).pipe(Effect.asVoid),
       );
 
       const start = Effect.fn("Snapshots.start")(function* (
@@ -218,6 +224,7 @@ export class Snapshots extends Context.Service<
         tree: workingTree,
         take,
         pin,
+        unpin,
         start,
         markStart,
         head: headTree,

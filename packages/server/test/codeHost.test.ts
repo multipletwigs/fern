@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CodeHost } from "../src/codehost/CodeHost";
+import { CodeHost, CodeHostPostTimeout } from "../src/codehost/CodeHost";
 
 // A stub `gh` that logs each call's arguments and answers as GitHub would for a Stack, number 7,
 // whose PRs need an approving review before they merge: `gh stack merge` refuses, `gh pr merge`
@@ -52,6 +52,22 @@ case "$1 $2" in
       *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
     esac
     exit 0 ;;
+  "api --paginate")
+    case "$3" in
+      *"/files?per_page=100")
+        printf '%s\\n' '{"path":"src/moved.ts","patch":"@@ -3,3 +3,3 @@\\n three\\n-five\\n+FIVE"}'
+        printf '%s\\n' '{"path":"logo.png","patch":null}' ;;
+      # The PR's reviews: in a folder ending -posted, or once a slow post went through, octocat's
+      # "Looks good." on cccc among others.
+      *"/reviews?per_page=100")
+        case "$PWD" in *-posted) : > "$PWD/accepted" ;; esac
+        if [ -e "$PWD/accepted" ]; then
+          printf '%s\\n' '{"login":"hubot","commit":"cccc","body":"Looks good.","url":"https://github.com/acme/app/pull/77#pullrequestreview-8","at":"2026-10-14T09:00:00Z"}'
+          printf '%s\\n' '{"login":"octocat","commit":"bbbb","body":"Looks good.","url":"https://github.com/acme/app/pull/77#pullrequestreview-9","at":"2026-10-14T09:10:00Z"}'
+          printf '%s\\n' '{"login":"octocat","commit":"cccc","body":"Looks good.\\r\\n","url":"https://github.com/acme/app/pull/77#pullrequestreview-10","at":"2026-10-14T09:20:00Z"}'
+        fi ;;
+    esac
+    exit 0 ;;
   "api -X")
     : > "${input}"
     while IFS= read -r l || [ -n "$l" ]; do printf '%s\\n' "$l" >> "${input}"; done
@@ -59,6 +75,18 @@ case "$1 $2" in
       *-refused)
         echo '{"message":"Unprocessable Entity","errors":["Line could not be resolved"],"documentation_url":"https://docs.github.com/rest","status":"422"}'
         echo "gh: Unprocessable Entity (HTTP 422)" >&2
+        exit 1 ;;
+      # GitHub takes it, but never answers.
+      *-slow)
+        : > "$PWD/accepted"
+        while :; do :; done ;;
+      # GitHub never takes it, nor answers.
+      *-slower)
+        while :; do :; done ;;
+      # The connection drops after GitHub took it.
+      *-dropped)
+        : > "$PWD/accepted"
+        echo "gh: Post \\"https://api.github.com/repos/acme/app/pulls/77/reviews\\": unexpected EOF" >&2
         exit 1 ;;
     esac
     echo '{"id":1,"html_url":"https://github.com/acme/app/pull/77#pullrequestreview-1","submitted_at":"2026-10-14T09:30:00Z","state":"CHANGES_REQUESTED"}'
@@ -132,6 +160,10 @@ const inFolder = (suffix: string) => {
   mkdirSync(path);
   return path;
 };
+
+// The call for PR #77's reviews.
+const REVIEWS =
+  "api --paginate repos/{owner}/{repo}/pulls/77/reviews?per_page=100 --jq .[] | {login: .user.login, commit: .commit_id, body, url: .html_url, at: .submitted_at} | @json";
 
 // The call for one page of the repo's Stacks.
 const page = (n: number) =>
@@ -360,7 +392,7 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
   );
 
   it.effect(
-    "one PR comes with its author's description and the issue it says it closes",
+    "one PR comes with its author's description and where the issue it says it closes is, which is read only when asked",
     () =>
       withStub(
         Effect.gen(function* () {
@@ -379,26 +411,32 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
             state: "open",
             reviewers: [],
             body: "Adds it.",
-            issue: { number: 70, title: "Themes", body: "We want themes." },
+            closes: "https://github.com/acme/app/issues/70",
           });
+          assert.lengthOf(calls(), 1);
           assert.match(calls()[0] ?? "", /^pr view 77 --json /);
-          assert.strictEqual(
-            calls()[1],
-            "issue view https://github.com/acme/app/issues/70 --json number,title,body",
+
+          writeFileSync(log, "");
+          assert.deepStrictEqual(
+            yield* host.issue("/", "https://github.com/acme/app/issues/70"),
+            { number: 70, title: "Themes", body: "We want themes." },
           );
+          assert.deepStrictEqual(calls(), [
+            "issue view https://github.com/acme/app/issues/70 --json number,title,body",
+          ]);
 
           writeFileSync(log, "");
           const unlinked = yield* host.pullRequest("/", 78);
           assert.deepStrictEqual(
-            [unlinked.state, unlinked.author, unlinked.issue],
+            [unlinked.state, unlinked.author, unlinked.closes],
             ["merged", "ghost", undefined],
           );
           assert.lengthOf(calls(), 1);
 
-          // An issue on another repo is never read, as it could be one only the developer sees.
+          // An issue on another repo is never offered, as it could be one only the developer sees.
           writeFileSync(log, "");
           const elsewhere = yield* host.pullRequest("/", 79);
-          assert.isUndefined(elsewhere.issue);
+          assert.isUndefined(elsewhere.closes);
           assert.lengthOf(calls(), 1);
         }),
       ),
@@ -447,7 +485,10 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
             url: "https://github.com/acme/app/pull/77#pullrequestreview-1",
             postedAt: Date.parse("2026-10-14T09:30:00Z"),
           });
+          // Only once GitHub is seen not to have it already.
           assert.deepStrictEqual(calls(), [
+            "api user --jq .login",
+            REVIEWS,
             "api -X POST repos/{owner}/{repo}/pulls/77/reviews --input -",
           ]);
           assert.deepStrictEqual(JSON.parse(readFileSync(input, "utf8")), {
@@ -458,6 +499,93 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
               { path: "src/a.ts", line: 3, side: "RIGHT", body: note },
             ],
           });
+        }),
+      ),
+  );
+
+  it.effect(
+    "a PR's diff is as GitHub shows it, every page of it, a file without a patch included",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          assert.deepStrictEqual(yield* host.pullRequestDiff("/", 77), [
+            {
+              path: "src/moved.ts",
+              patch: "@@ -3,3 +3,3 @@\n three\n-five\n+FIVE",
+            },
+            { path: "logo.png", patch: undefined },
+          ]);
+          assert.deepStrictEqual(calls(), [
+            "api --paginate repos/{owner}/{repo}/pulls/77/files?per_page=100 --jq .[] | {path: .filename, patch} | @json",
+          ]);
+        }),
+      ),
+  );
+
+  it.effect(
+    "a review GitHub already has from the developer, on that commit and saying the same, is never posted again, as after Fern stopped before hearing back",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          const posted = yield* host.postReview(inFolder("-posted"), 77, {
+            commit: "cccc",
+            event: "APPROVE",
+            body: "Looks good.",
+            comments: [],
+          });
+          assert.deepStrictEqual(posted, {
+            url: "https://github.com/acme/app/pull/77#pullrequestreview-10",
+            postedAt: Date.parse("2026-10-14T09:20:00Z"),
+          });
+          assert.deepStrictEqual(calls(), ["api user --jq .login", REVIEWS]);
+        }),
+      ),
+  );
+
+  it.effect(
+    "a review GitHub took without answering in time, or before the connection dropped, is found rather than failed, so trying again never posts it twice",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          for (const suffix of ["-slow", "-dropped"]) {
+            writeFileSync(log, "");
+            const posted = yield* host
+              .postReview(inFolder(suffix), 77, {
+                commit: "cccc",
+                event: "APPROVE",
+                body: "Looks good.",
+                comments: [],
+              })
+              .pipe(Effect.provideService(CodeHostPostTimeout, "300 millis"));
+            assert.strictEqual(
+              posted.url,
+              "https://github.com/acme/app/pull/77#pullrequestreview-10",
+            );
+            assert.deepStrictEqual(calls(), [
+              "api user --jq .login",
+              REVIEWS,
+              "api -X POST repos/{owner}/{repo}/pulls/77/reviews --input -",
+              "api user --jq .login",
+              REVIEWS,
+            ]);
+          }
+
+          // One GitHub never took fails, for the developer to try again.
+          const lost = yield* host
+            .postReview(inFolder("-slower"), 77, {
+              commit: "cccc",
+              event: "APPROVE",
+              body: "Looks good.",
+              comments: [],
+            })
+            .pipe(
+              Effect.provideService(CodeHostPostTimeout, "300 millis"),
+              Effect.flip,
+            );
+          assert.strictEqual(lost.message, "GitHub didn't answer in time");
         }),
       ),
   );

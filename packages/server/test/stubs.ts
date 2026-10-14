@@ -151,7 +151,9 @@ export const NotListing = {
   stacks: () => Effect.die("unused"),
   pullRequest: () => Effect.die("unused"),
   fetchPullRequest: () => Effect.die("unused"),
+  issue: () => Effect.die("unused"),
   commitsAhead: () => Effect.die("unused"),
+  pullRequestDiff: () => Effect.die("unused"),
   postReview: () => Effect.die("unused"),
 };
 
@@ -200,6 +202,7 @@ export const UnusedTerminals = Layer.succeed(
     write: () => Effect.die("unused"),
     resize: () => Effect.die("unused"),
     kill: () => Effect.die("unused"),
+    isRunning: () => Effect.die("unused"),
   }),
 );
 

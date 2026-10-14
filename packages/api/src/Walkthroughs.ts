@@ -1,7 +1,12 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { SessionBusy, SessionInUse, SessionNotFound } from "./Sessions";
-import { RiskLevel, VerdictKind, WalkthroughStatus } from "./States";
+import {
+  RiskLevel,
+  VerdictKind,
+  WalkthroughSince,
+  WalkthroughStatus,
+} from "./States";
 
 // A Walkthrough explains what a Session changed since its previous Walkthrough, or since it
 // started, or what one PR of its Stack changes, or what a Foreign PR changes, in Sections the
@@ -83,18 +88,6 @@ export class UnexplainedChange extends Schema.Class<UnexplainedChange>(
   hunk: Hunk,
   verdict: Schema.optional(Verdict),
 }) {}
-
-// Where a Walkthrough's change starts: the previous Walkthrough, the snapshot Fern took when the
-// Session started, for a Session Fern never ran, the last commit, or, for a PR of the Session's
-// Stack, the PR below it (where the bottom one leaves `main`). For a Foreign PR, `pr` is the whole
-// PR, from where it leaves its base.
-export const WalkthroughSince = Schema.Literals([
-  "previous",
-  "start",
-  "head",
-  "pr",
-]);
-export type WalkthroughSince = typeof WalkthroughSince.Type;
 
 // A draft PR on a Hosted Session's Stack, opened by Fern when a ticket landed on the Session's
 // branch (ADR 0009).

@@ -59,11 +59,13 @@ export const TerminalViewerBacklog = Context.Reference<number>(
   { defaultValue: () => 1000 },
 );
 
-// What a Foreign PR's terminal is kept by, apart from every Session's, which go by their ids.
+// What a Foreign PR's terminal is kept by, in its Project, apart from every Session's, which go by
+// their ids.
 export const prTerminalKey = (pr: {
+  readonly root: string;
   readonly repo: string;
   readonly number: number;
-}) => `pr:${pr.repo}#${pr.number}`;
+}) => `pr:${pr.root}:${pr.repo}#${pr.number}`;
 
 // How long a shell gets to exit on its hangup before it's killed outright.
 const HANGUP_GRACE = "1 second";
@@ -120,6 +122,8 @@ export class Terminals extends Context.Service<
     // Ends the terminal's shell, if it's still running, and forgets it, so the next `open` starts a
     // fresh one. Viewers see it exit. Fails when it has none, running or exited.
     readonly kill: (key: string) => Effect.Effect<void, TerminalError>;
+    // Whether the terminal's shell is still running: false once it has exited, or when it has none.
+    readonly isRunning: (key: string) => Effect.Effect<boolean>;
   }
 >()("@repo/server/terminal/Terminals") {
   static readonly layer = Layer.effect(
@@ -271,18 +275,15 @@ export class Terminals extends Context.Service<
       const open = (key: string, root: string, size: TerminalSize) =>
         Stream.callback<TerminalEvent, TerminalError>(
           (viewer) =>
-            Effect.acquireRelease(
-              attach(key, root, size, viewer),
-              (entry) => Effect.sync(() => entry.viewers.delete(viewer)),
+            Effect.acquireRelease(attach(key, root, size, viewer), (entry) =>
+              Effect.sync(() => entry.viewers.delete(viewer)),
             ),
           // Its backlog, then the shell's exit; never more.
           { bufferSize: backlog + 1, strategy: "sliding" },
         );
 
       // The terminal's shell, if it's still running.
-      const running = (
-        key: string,
-      ): Effect.Effect<pty.IPty, TerminalError> => {
+      const running = (key: string): Effect.Effect<pty.IPty, TerminalError> => {
         const term = shells.get(key)?.term;
         return term === undefined
           ? Effect.fail(
@@ -309,7 +310,10 @@ export class Terminals extends Context.Service<
         return yield* end(key);
       }, lock.withPermits(1));
 
-      return Terminals.of({ open, write, resize, kill });
+      const isRunning = (key: string) =>
+        Effect.sync(() => shells.get(key)?.term !== undefined);
+
+      return Terminals.of({ open, write, resize, kill, isRunning });
     }),
   );
 }

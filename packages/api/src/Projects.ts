@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+import { SessionChangesSince } from "./States";
 
 // A Project's code, read from the folder its Sessions ran in. Only folders a Session ran in can be
 // read, and only paths inside them.
@@ -53,7 +54,7 @@ export class ChangedFile extends Schema.Class<ChangedFile>("ChangedFile")({
 export class SessionChanges extends Schema.Class<SessionChanges>(
   "SessionChanges",
 )({
-  since: Schema.Literals(["start", "head"]),
+  since: SessionChangesSince,
   files: Schema.Array(ChangedFile),
 }) {}
 
