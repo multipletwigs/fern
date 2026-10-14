@@ -158,6 +158,7 @@ const FakeCodeHost = Layer.succeed(
         git(cwd, "update-ref", prHeadRef(number), found.head);
         git(cwd, "update-ref", prBaseRef(number), found.base);
       }),
+    commitsAhead: () => Effect.die("unused"),
     postReview: (cwd, pr, review) =>
       Effect.suspend(() => {
         if (refusal !== undefined)
@@ -492,6 +493,81 @@ layer(fern, { excludeTestServices: true })("Post review", (it) => {
           .pipe(Effect.flip);
         assert.strictEqual(elsewhere._tag, "WalkthroughNotFound");
         assert.strictEqual(posted.length, before);
+      }),
+  );
+
+  it.effect(
+    "a review of a Walkthrough of the PR's new commits puts each note on a line they add, never on one they remove",
+    () =>
+      Effect.gen(function* () {
+        const { root, head, walkthrough, client } = yield* walkedThrough(37);
+        yield* judged(walkthrough);
+
+        // The author answers with a commit that rewrites `six` and takes a line of `b.ts` back out.
+        const answer = commitOn(root, head, {
+          "a.ts": "one\ntwo\nthree\nfour\nFIVE\nSIX\nseven\n",
+          "b.ts": "export const b = 1;\n",
+        });
+        opened(37, { head: answer, base: git(root, "rev-parse", "main") });
+        yield* client.pullRequests.walkThrough({
+          params: { number: 37 },
+          payload: { root },
+        });
+        const live = yield* makeLive;
+        const [all] = yield* live
+          .PullRequestWalkthroughs({ repo: "acme/app", number: 37 })
+          .pipe(
+            Stream.filter(
+              (walkthroughs) =>
+                walkthroughs.length === 2 &&
+                walkthroughs.every((w) => w.status === "ready"),
+            ),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.timeout("5 seconds"),
+          );
+        const rerun = all?.[1];
+        assert.isDefined(rerun);
+        assert.strictEqual(rerun.since, "previous");
+        for (const [item, note] of [
+          ["s1", "Keep six quiet."],
+          ["s2", "Keep c."],
+        ] as const)
+          yield* client.walkthroughs.verdict({
+            params: { id: rerun.id, item },
+            payload: { kind: "rejected", note },
+          });
+
+        const preview = yield* client.pullRequests.review({
+          params: { number: 37 },
+          query: { root, walkthrough: rerun.id },
+        });
+        // `six` became `SIX`: the note goes on `SIX`, as the PR adds it. The line taken out of
+        // `b.ts` was never on the PR's base, so its note is only in the body.
+        assert.deepStrictEqual(
+          [
+            preview.commit,
+            preview.event,
+            preview.comments.map(plain),
+            preview.body.includes("Keep c."),
+          ],
+          [
+            answer,
+            "REQUEST_CHANGES",
+            [{ path: "a.ts", line: 6, side: "RIGHT", body: "Keep six quiet." }],
+            true,
+          ],
+        );
+        yield* client.pullRequests.postReview({
+          params: { number: 37 },
+          payload: { root, walkthrough: rerun.id },
+        });
+        assert.deepStrictEqual(
+          posted
+            .filter((p) => p.pr === 37)
+            .map((p) => [p.review.commit, p.review.comments.map(plain)]),
+          [[answer, preview.comments.map(plain)]],
+        );
       }),
   );
 

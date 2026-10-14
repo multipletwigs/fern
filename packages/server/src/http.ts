@@ -192,6 +192,8 @@ export const PullRequestsHandlers = HttpApiBuilder.group(
       list: ({ query }) => pullRequests.list(query.root, query.state),
       walkThrough: ({ params, payload }) =>
         pullRequests.walkThrough(payload.root, params.number),
+      walkThroughStack: ({ params, payload }) =>
+        pullRequests.walkThroughStack(payload.root, params.id, payload.state),
       review: ({ params, query }) =>
         pullRequests.review(query.root, params.number, query.walkthrough),
       postReview: ({ params, payload }) =>

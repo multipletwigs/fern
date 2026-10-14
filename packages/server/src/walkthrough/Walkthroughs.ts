@@ -480,24 +480,37 @@ export interface PrChange {
   readonly since?: WalkthroughSince;
 }
 
-// The change a Walkthrough of a Foreign PR covers: from `from`, where it leaves its base (the
-// merge-base, also kept, so a later Walkthrough can tell the base moved), to its head, `to`, which
-// the worktree `cwd` is checked out at.
+// The change a Walkthrough of a Foreign PR covers: from `from` to its head, `to`, which the worktree
+// `cwd` is checked out at. `from` is where it leaves its base, the merge-base, for the whole PR
+// (`pr`), or the previous Walkthrough's head, for what changed since (`previous`). The merge-base is
+// kept either way, so a later Walkthrough can tell the base moved.
 export interface ForeignChange {
   // The Project the PR is on, whose Decisions its Sections may cite.
   readonly project: string;
   readonly cwd: string;
   readonly pr: ForeignPrBrief;
+  readonly since: "pr" | "previous";
   readonly from: string;
   readonly to: string;
+  readonly mergeBase: string;
+  // What it waits its turn behind besides its own PR's, as a Stack's PRs are written one at a time.
+  readonly queue?: string;
+}
+
+// A Foreign PR's latest written Walkthrough: the head it explains, and the merge-base it was
+// written against.
+export interface ForeignWritten {
+  readonly head: string;
   readonly mergeBase: string;
 }
 
 // What a Walkthrough being written runs: its writer, then what follows once it's stored.
 interface Writing {
   readonly id: string;
-  // What it waits its turn by: its Session's, or its Foreign PR's.
+  // What it's counted by: its Session's, or its Foreign PR's.
   readonly key: string;
+  // What it waits its turn by, when not `key`.
+  readonly queue?: string;
   readonly fork: Effect.Effect<Fork, WalkthroughError, Scope.Scope>;
   readonly ids: ReadonlyArray<string>;
   readonly decisions: ReadonlyArray<DraftDecision>;
@@ -596,6 +609,11 @@ export class Walkthroughs extends Context.Service<
     >;
     // The latest Walkthrough of each of the repo's Foreign PRs that has one.
     foreignStates(repo: string): Effect.Effect<ReadonlyArray<PrWalkthroughOf>>;
+    // The Foreign PR's latest Walkthrough that was written, when it has one.
+    lastWritten(
+      repo: string,
+      number: number,
+    ): Effect.Effect<Option.Option<ForeignWritten>>;
     // The same, re-sent whenever a Walkthrough changes.
     liveForeignStates(
       repo: string,
@@ -806,6 +824,28 @@ export class Walkthroughs extends Context.Service<
             ),
           ),
         );
+      const lastWrittenOf = SqlSchema.findOneOption({
+        Request: Schema.Struct({ repo: Schema.String, number: Schema.Int }),
+        Result: Schema.Struct({
+          headCommit: Schema.String,
+          mergeBase: Schema.String,
+        }),
+        execute: ({ repo, number }) => sql`
+          SELECT head_commit, merge_base FROM walkthroughs
+          WHERE pr_repo = ${repo} AND pr_number = ${number} AND status = 'ready'
+            AND merge_base IS NOT NULL
+          ORDER BY number DESC LIMIT 1`,
+      });
+      const lastWritten = (repo: string, number: number) =>
+        lastWrittenOf({ repo, number }).pipe(
+          Effect.orDie,
+          Effect.map(
+            Option.map((row): ForeignWritten => ({
+              head: row.headCommit,
+              mergeBase: row.mergeBase,
+            })),
+          ),
+        );
       const liveForeignStates = (repo: string) =>
         SubscriptionRef.changes(version).pipe(
           Stream.mapEffect(() => foreignStates(repo)),
@@ -893,6 +933,7 @@ export class Walkthroughs extends Context.Service<
       const compose = ({
         id,
         key: queued,
+        queue: turn = queued,
         fork: writeWith,
         ids,
         decisions,
@@ -918,7 +959,7 @@ export class Walkthroughs extends Context.Service<
           }),
           Effect.catch((error) => fail(id, error.message)),
         );
-        return queueOf(queued).pipe(
+        return queueOf(turn).pipe(
           Effect.flatMap((queue) =>
             queue.withPermits(1)(write.pipe(Effect.andThen(after))),
           ),
@@ -1205,7 +1246,7 @@ export class Walkthroughs extends Context.Service<
               id,
               // The Project, for a Walkthrough with no Session's folder behind it.
               repo: change.project,
-              since: "pr",
+              since: change.since,
               prId: null,
               baseTree,
               headCommit: change.to,
@@ -1218,9 +1259,10 @@ export class Walkthroughs extends Context.Service<
           return {
             id,
             key: keyOf(owner),
+            queue: change.queue,
             fork: writer.explore({
               cwd: change.cwd,
-              since: "pr",
+              since: change.since,
               pr: change.pr,
               ...asked,
             }),
@@ -1567,6 +1609,7 @@ export class Walkthroughs extends Context.Service<
         listForeign,
         writeForeign,
         foreignStates,
+        lastWritten,
         liveForeignStates,
         foreign,
         reviewPosted,

@@ -76,6 +76,10 @@ export const walkThroughAtom = ApiClient.mutation(
   "walkThrough",
 );
 
+export const walkThroughStackAtom = ApiClient.mutation(
+  "pullRequests",
+  "walkThroughStack",
+);
 // The review Post review would put on a Foreign PR for one of its Walkthroughs, asked for as the
 // developer opens it to confirm, and posting it once they do.
 export const reviewPreviewAtom = ApiClient.mutation("pullRequests", "review");

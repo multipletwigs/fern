@@ -5,7 +5,7 @@ import { SessionPr } from "./SessionPr";
 
 // A PR on the Pull requests page. One a Hosted Session holds opens that Session's Review tab on
 // it; a Foreign PR opens its Walkthroughs on the page through `onOpen`, marked with where its latest
-// stands.
+// stands, as of the PR's head now.
 export function ListedPr({
   pr,
   sessionTitle,
@@ -31,7 +31,7 @@ export function ListedPr({
       draft={pr.draft}
       reviewRequested={pr.reviewRequested}
       state={pr.state}
-      walkthrough={walkthrough && walkthroughMark(walkthrough.state)}
+      walkthrough={walkthrough && walkthroughMark(walkthrough, pr.headCommit)}
       dimmed={dimmed}
       onOpen={onOpen}
     />
