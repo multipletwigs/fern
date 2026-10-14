@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  prTerminalKey,
   TerminalExitScrollback,
   TerminalScrollback,
   TerminalShell,
@@ -120,6 +121,31 @@ layer(TestTerminals, { excludeTestServices: true })(
         assert.notInclude(first.output(), two);
         assert.notInclude(second.output(), one);
       }),
+    );
+
+    test.effect(
+      "keeps a Foreign PR's terminal, by its key, apart from a Session's, and ending one leaves the other running",
+      () =>
+        Effect.gen(function* () {
+          const terminals = yield* Terminals;
+          const [session, worktree] = [folder(), folder()];
+          const pr = prTerminalKey({ repo: "acme/app", number: 7 });
+          const ofSession = yield* watch(terminals, "session-beside", session);
+          const ofPr = yield* watch(terminals, pr, worktree);
+          yield* terminals.write(pr, "echo $PWD\r");
+          yield* ofPr.until(`${worktree}\r`);
+          assert.notInclude(ofSession.output(), worktree);
+
+          const pid = yield* shellPid(terminals, ofSession);
+          yield* terminals.kill(pr);
+          assert.strictEqual((yield* exitOf(ofPr))._tag, "TerminalExit");
+          assert.isTrue(isAlive(pid));
+          // Another PR of the same repo has a key of its own.
+          assert.notStrictEqual(
+            prTerminalKey({ repo: "acme/app", number: 8 }),
+            pr,
+          );
+        }),
     );
 
     test.effect(

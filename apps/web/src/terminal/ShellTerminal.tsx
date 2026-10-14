@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { TerminalTarget } from "@repo/api";
 import { TerminalExited } from "@repo/ui/TerminalExited";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -44,22 +45,25 @@ const fernTheme = (): ITheme => {
   };
 };
 
-// A Session's terminal: its shell, in an xterm sized to fit the space it's given. Mounting it
-// opens the shell, or attaches to the one already running and shows what it printed; unmounting
-// detaches. Focused whenever it becomes `visible`. Once the shell exits, it says so and offers a
-// fresh one, which it ends the old one for before telling `onRestarted`, to be mounted afresh.
-export function SessionTerminal({
-  sessionId,
+// A terminal, a Session's or a Foreign PR's: its shell, in an xterm sized to fit the space it's
+// given. Mounting it opens the shell, or attaches to the one already running and shows what it
+// printed; unmounting detaches. Focused whenever it becomes `visible`. Once the shell exits, it
+// says so and offers a fresh one, which it ends the old one for before telling `onRestarted`, to
+// be mounted afresh.
+export function ShellTerminal({
+  target,
   visible,
   onRestarted,
 }: {
-  sessionId: string;
+  // Whose shell it is. Read once, on mounting: a new target is a new mount, by its `key`.
+  target: TerminalTarget;
   visible: boolean;
   onRestarted: () => void;
 }) {
   const runtime = useAtomValue(LiveClient.runtime);
   const context = AsyncResult.isSuccess(runtime) ? runtime.value : undefined;
   const host = useRef<HTMLDivElement>(null);
+  const [shell] = useState(target);
   const term = useRef<Terminal>(undefined);
   const shown = useRef(visible);
   const [exited, setExited] = useState<number>();
@@ -106,7 +110,7 @@ export function SessionTerminal({
       observer.observe(element);
       term.current = terminal;
       const fiber = Effect.runForkWith(context)(
-        runTerminal(terminal, sessionId, setExited),
+        runTerminal(terminal, shell, setExited),
       );
       if (shown.current) terminal.focus();
       unmount = () => {
@@ -127,13 +131,13 @@ export function SessionTerminal({
       cancelled = true;
       unmount?.();
     };
-  }, [context, sessionId]);
+  }, [context, shell]);
 
   const restart = () => {
     if (!context || restarting.current) return;
     restarting.current = true;
     void Effect.runPromiseWith(context)(
-      restartTerminal(sessionId).pipe(Effect.ignore),
+      restartTerminal(shell).pipe(Effect.ignore),
     ).then(onRestarted);
   };
 
