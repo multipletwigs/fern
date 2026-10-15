@@ -44,6 +44,7 @@ import { SqlClient, SqlSchema } from "effect/sql";
 import {
   CodeHost,
   type HostPullRequest,
+  type HostPullRequestDetail,
   type HostStack,
   prBaseRef,
   prHeadRef,
@@ -243,7 +244,7 @@ export class PullRequests extends Context.Service<
       | PrUncommittedChanges
       | WorktreeError
     >;
-    // The folder of the PR's worktree, for its Terminal, when it has one.
+    // The folder of the PR's worktree in the Project, for its Terminal, when it has one.
     worktree(pr: PrKey): Effect.Effect<Option.Option<string>>;
   }
 >()("@repo/server/pullrequest/PullRequests") {
@@ -343,15 +344,17 @@ export class PullRequests extends Context.Service<
           .pipe(Effect.catchTag("TerminalError", () => Effect.void));
 
       // Removes the worktree of a PR that's closed or merged, unless the developer has to say so
-      // first, as it has changes not committed, or a Walkthrough is being written in it. Whether
-      // it went.
-      const tidy = (root: string, pr: PrKey) =>
+      // first, as it has changes not committed, or it's in use: a Walkthrough is being written in
+      // it, or its Terminal's shell is still running, which a later refresh finds ended or
+      // dismissed. Whether it went.
+      const tidy = (pr: PrKey) =>
         worktrees.exclusive(pr)(
           Effect.gen(function* () {
             if (yield* beingWritten(pr.repo, pr.number)) return false;
+            if (yield* terminals.isRunning(prTerminalKey(pr))) return false;
             if (yield* worktrees.isDirty(pr)) return false;
             yield* endShell(pr);
-            yield* worktrees.remove(root, pr, { force: false });
+            yield* worktrees.remove(pr, { force: false });
             return true;
           }),
         );
@@ -375,8 +378,8 @@ export class PullRequests extends Context.Service<
         Effect.gen(function* () {
           const listed = new Map(prs.map((pr) => [pr.number, pr.state]));
           const found = new Map<number, PrWorktree>();
-          for (const number of yield* worktrees.checkedOut(repo)) {
-            const pr = { repo, number };
+          for (const number of yield* worktrees.checkedOut(root, repo)) {
+            const pr = { root, repo, number };
             const seen = listed.get(number);
             const closed =
               seen !== undefined
@@ -388,7 +391,7 @@ export class PullRequests extends Context.Service<
                   (yield* closedOnGitHub(root, number));
             const removed =
               closed &&
-              (yield* tidy(root, pr).pipe(
+              (yield* tidy(pr).pipe(
                 Effect.catch((error) =>
                   Effect.logWarning(
                     `Couldn't remove PR #${number}'s worktree`,
@@ -497,21 +500,21 @@ export class PullRequests extends Context.Service<
           Effect.orElseSucceed(() => false),
         );
 
-      // One at a time for each PR, so its worktree never moves while it's being read. After its
-      // first, a PR's Walkthrough covers only what came since the last one written, when that's
-      // honest: the PR's head grew from the last one's (no force-push), and the PR still leaves its
-      // base where it did (the base didn't move). Otherwise, the whole PR again.
-      const walkThroughIn = Effect.fn("PullRequests.walkThrough")(function* (
+      // Writes the Walkthrough of the PR as GitHub last said it stands, `pr`. Its description, from
+      // `described`, and the issue it says it closes are asked of GitHub only once it's to be
+      // written. One at a time for each PR, so its worktree never moves while it's being read.
+      // After its first, a PR's Walkthrough covers only what came since the last one written, when
+      // that's honest: the PR's head grew from the last one's (no force-push), and the PR still
+      // leaves its base where it did (the base didn't move). Otherwise, the whole PR again.
+      const walkThroughIn = Effect.fn("PullRequests.walkThroughIn")(function* (
         root: string,
-        number: number,
+        repo: string,
+        pr: Pick<HostPullRequest, "number" | "baseRef" | "headCommit">,
+        described: Effect.Effect<HostPullRequestDetail, PullRequestsError>,
         queue?: string,
       ) {
-        const { repo } = yield* reached(root);
-        const pr = yield* codeHost.pullRequest(root, number).pipe(refused);
-        const held = (yield* sessionsOf([pr.url])).get(pr.url);
-        if (held !== undefined)
-          return yield* new PullRequestNotForeign({ number, session: held });
-        const key = { repo, number };
+        const { number } = pr;
+        const key = { root, repo, number };
         return yield* worktrees.exclusive(key)(
           Effect.gen(function* () {
             const latest = (yield* walkthroughs.foreignStates(repo)).find(
@@ -524,6 +527,7 @@ export class PullRequests extends Context.Service<
             );
             if (previous?.head === pr.headCommit)
               return yield* new PrWalkthroughUpToDate({ number });
+            const about = yield* described;
             yield* codeHost
               .fetchPullRequest(root, { number, base: pr.baseRef })
               .pipe(refused);
@@ -550,18 +554,19 @@ export class PullRequests extends Context.Service<
               (yield* isAncestor(root, previous.head, head))
                 ? previous
                 : undefined;
-            const cwd = yield* worktrees
-              .checkout(root, key, head)
-              .pipe(gitFailed);
+            const cwd = yield* worktrees.checkout(key, head).pipe(gitFailed);
             return yield* walkthroughs.writeForeign({
               project: root,
               cwd,
               pr: {
                 repo,
                 number,
-                title: pr.title,
-                body: pr.body,
-                issue: pr.issue,
+                title: about.title,
+                body: about.body,
+                issue:
+                  about.closes === undefined
+                    ? undefined
+                    : yield* codeHost.issue(root, about.closes),
               },
               since: following === undefined ? "pr" : "previous",
               from: following?.head ?? mergeBase,
@@ -572,11 +577,22 @@ export class PullRequests extends Context.Service<
           }),
         );
       });
-      const walkThrough = (root: string, number: number) =>
-        walkThroughIn(root, number);
 
-      // Each of the Stack's PRs in turn, bottom first, behind the one below: those that can't be
-      // walked through as they stand are left alone, and anything else stops the run there.
+      const walkThrough = Effect.fn("PullRequests.walkThrough")(function* (
+        root: string,
+        number: number,
+      ) {
+        const { repo } = yield* reached(root);
+        const pr = yield* codeHost.pullRequest(root, number).pipe(refused);
+        const held = (yield* sessionsOf([pr.url])).get(pr.url);
+        if (held !== undefined)
+          return yield* new PullRequestNotForeign({ number, session: held });
+        return yield* walkThroughIn(root, repo, pr, Effect.succeed(pr));
+      });
+
+      // Each of the Stack's PRs in turn, bottom first, behind the one below, as the list has them:
+      // GitHub is asked only for the description of each one written. Those that can't be walked
+      // through as they stand are left alone, and anything else stops the run there.
       const walkThroughStack = Effect.fn("PullRequests.walkThroughStack")(
         function* (root: string, id: number, state: PrListState) {
           const listed = yield* list(root, state);
@@ -593,10 +609,15 @@ export class PullRequests extends Context.Service<
             const walked =
               pr.session !== undefined || upToDate
                 ? false
-                : yield* walkThroughIn(root, pr.number, queue).pipe(
+                : yield* walkThroughIn(
+                    root,
+                    listed.repo,
+                    pr,
+                    codeHost.pullRequest(root, pr.number).pipe(refused),
+                    queue,
+                  ).pipe(
                     Effect.as(true),
                     Effect.catchTags({
-                      PullRequestNotForeign: () => Effect.succeed(false),
                       PrWalkthroughInProgress: () => Effect.succeed(false),
                       PrWalkthroughUpToDate: () => Effect.succeed(false),
                       PrNothingToReview: () => Effect.succeed(false),
@@ -630,12 +651,20 @@ export class PullRequests extends Context.Service<
         const pr = yield* codeHost.pullRequest(root, number).pipe(refused);
         if (pr.state !== "open")
           return yield* new PrNotOpen({ number, state: pr.state });
+        // GitHub only shows the diff at the PR's head: once the PR has moved on from the
+        // Walkthrough's, its notes go in the body alone.
+        const diff =
+          pr.headCommit === found.head
+            ? yield* codeHost.pullRequestDiff(root, number).pipe(refused)
+            : undefined;
         return PrReview.make({
           walkthrough: walkthroughId,
           commit: found.head,
           ...reviewOf(
             walkthrough,
             pr.author.toLowerCase() === login.toLowerCase(),
+            found.earlier,
+            diff,
           ),
         });
       });
@@ -677,7 +706,7 @@ export class PullRequests extends Context.Service<
           return yield* new PullRequestNotForeign({ number, session: held });
         if (pr.state !== "open")
           return yield* new PrNotOpen({ number, state: pr.state });
-        const key = { repo, number };
+        const key = { root, repo, number };
         return yield* worktrees.exclusive(key)(
           Effect.gen(function* () {
             yield* codeHost
@@ -695,7 +724,7 @@ export class PullRequests extends Context.Service<
               return yield* new PrWalkthroughInProgress({ number });
             if (yield* worktrees.isDirty(key))
               return yield* new PrUncommittedChanges({ number });
-            yield* worktrees.checkout(root, key, head);
+            yield* worktrees.checkout(key, head);
             return new PrWorktree({ head });
           }),
         );
@@ -707,7 +736,7 @@ export class PullRequests extends Context.Service<
         { discard }: { readonly discard: boolean },
       ) {
         const { repo } = yield* reached(root);
-        const key = { repo, number };
+        const key = { root, repo, number };
         return yield* worktrees.exclusive(key)(
           Effect.gen(function* () {
             if (yield* beingWritten(repo, number))
@@ -715,13 +744,15 @@ export class PullRequests extends Context.Service<
             if (!discard && (yield* worktrees.isDirty(key)))
               return yield* new PrUncommittedChanges({ number });
             yield* endShell(key);
-            return yield* worktrees.remove(root, key, { force: discard });
+            return yield* worktrees.remove(key, { force: discard });
           }),
         );
       });
 
+      // Only of a folder Fern knows as a Project.
       const worktree = (pr: PrKey) =>
-        worktrees.head(pr).pipe(
+        known(pr.root).pipe(
+          Effect.andThen(worktrees.head(pr)),
           Effect.flatMap(
             Option.match({
               onNone: () => Effect.succeedNone,

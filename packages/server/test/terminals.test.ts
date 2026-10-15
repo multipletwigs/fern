@@ -129,7 +129,7 @@ layer(TestTerminals, { excludeTestServices: true })(
         Effect.gen(function* () {
           const terminals = yield* Terminals;
           const [session, worktree] = [folder(), folder()];
-          const pr = prTerminalKey({ repo: "acme/app", number: 7 });
+          const pr = prTerminalKey({ root: "/a", repo: "acme/app", number: 7 });
           const ofSession = yield* watch(terminals, "session-beside", session);
           const ofPr = yield* watch(terminals, pr, worktree);
           yield* terminals.write(pr, "echo $PWD\r");
@@ -140,9 +140,14 @@ layer(TestTerminals, { excludeTestServices: true })(
           yield* terminals.kill(pr);
           assert.strictEqual((yield* exitOf(ofPr))._tag, "TerminalExit");
           assert.isTrue(isAlive(pid));
-          // Another PR of the same repo has a key of its own.
+          // Another PR of the same repo has a key of its own, as does the same PR in another
+          // Project.
           assert.notStrictEqual(
-            prTerminalKey({ repo: "acme/app", number: 8 }),
+            prTerminalKey({ root: "/a", repo: "acme/app", number: 8 }),
+            pr,
+          );
+          assert.notStrictEqual(
+            prTerminalKey({ root: "/b", repo: "acme/app", number: 7 }),
             pr,
           );
         }),

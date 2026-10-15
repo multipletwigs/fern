@@ -6,7 +6,12 @@ import {
   type SDKResultMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { RiskLevel, WalkthroughError, type WalkthroughSince } from "@repo/api";
+import {
+  type ForeignWalkthroughSince,
+  RiskLevel,
+  WalkthroughError,
+  type WalkthroughSince,
+} from "@repo/api";
 import { Context, Effect, Layer, Predicate, Schema, type Scope } from "effect";
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
@@ -133,7 +138,7 @@ export interface ForeignPrBrief {
 // it, the developer's open Rejections, and the Project's Decisions it may cite.
 export interface ForeignWriteRequest {
   readonly cwd: string;
-  readonly since: WalkthroughSince;
+  readonly since: ForeignWalkthroughSince;
   readonly pr: ForeignPrBrief;
   readonly hunks: ReadonlyArray<DraftHunk>;
   readonly rejections: ReadonlyArray<OpenRejection>;

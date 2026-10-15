@@ -5,10 +5,13 @@ import {
   type PrReviewEvent,
   type Walkthrough,
 } from "@repo/api";
+import type { HostPrFile } from "../codehost/CodeHost";
+import type { EarlierRejection } from "../walkthrough/Walkthroughs";
 
 // The review a Foreign PR's Reviewed Walkthrough posts on GitHub: each Rejection listed in its
-// body, and each Section's note again on the Section's first changed line. Approved items post
-// nothing.
+// body, those of the earlier Walkthroughs it follows on from that never went up included, and each
+// of its own Sections' notes again on the Section's first changed line, where GitHub's diff of the
+// PR has it. Approved items post nothing.
 
 // Control characters, but for line breaks and tabs: nothing anyone typed on purpose.
 // oxlint-disable-next-line no-control-regex
@@ -62,16 +65,60 @@ const firstChange = (
   return undefined;
 };
 
+// A line of a file, on one side of a PR's diff.
+const at = (path: string, side: DiffSide, line: number) =>
+  `${side}:${line}:${path}`;
+
+// The lines of GitHub's diff of the PR a comment can go on, by `at`: every line of each hunk, on
+// the side or sides it's on.
+const linesOf = (files: ReadonlyArray<HostPrFile>) => {
+  const lines = new Set<string>();
+  for (const { path, patch } of files) {
+    let left = 0;
+    let right = 0;
+    for (const text of patch?.split("\n") ?? []) {
+      const header = HEADER.exec(text);
+      if (header) {
+        left = Number(header[1]);
+        right = Number(header[2]);
+        continue;
+      }
+      const removed = text.startsWith("-");
+      const added = text.startsWith("+");
+      if (!removed && !added && !text.startsWith(" ")) continue;
+      if (!added) lines.add(at(path, "LEFT", left++));
+      if (!removed) lines.add(at(path, "RIGHT", right++));
+    }
+  }
+  return lines;
+};
+
 const indented = (text: string) =>
   text
     .split("\n")
     .map((line) => (line === "" ? "" : `   ${line}`))
     .join("\n");
 
+// What an earlier Walkthrough's Rejection is called in the body.
+const earlierTitle = (rejection: EarlierRejection) =>
+  `${
+    rejection.path === undefined
+      ? code(rejection.title ?? "")
+      : `Unexplained change in ${code(rejection.path)}`
+  } (from Walkthrough ${rejection.walkthrough})`;
+
 export const reviewOf = (
   walkthrough: Walkthrough,
   // The PR is the developer's own, which GitHub won't let them approve or request changes on.
   own: boolean,
+  // The Rejections it carries from the earlier Walkthroughs it follows on from: in the body only,
+  // as their lines may have moved since.
+  earlier: ReadonlyArray<EarlierRejection>,
+  // GitHub's diff of the PR, at the commit the Walkthrough explains. A note goes on a line only
+  // where it has that line, as GitHub refuses the whole review over one it doesn't, such as one
+  // of a file the PR renames, which Fern's diff has under its old name. Without it, no note goes
+  // on a line.
+  diff: ReadonlyArray<HostPrFile> | undefined,
 ): {
   readonly event: PrReviewEvent;
   readonly body: string;
@@ -92,18 +139,22 @@ export const reviewOf = (
       title: `Unexplained change in ${code(u.hunk.path)}`,
       note: noteText(u.verdict?.note),
     })),
+    ...earlier.map((r) => ({ title: earlierTitle(r), note: noteText(r.note) })),
   ];
   // A Walkthrough of the PR's newest commits alone numbers the lines it removes as they were
   // before those commits, not as the PR's base has them, so its notes go only on lines it adds.
   const addedOnly = walkthrough.since === "previous";
+  const commentable = linesOf(diff ?? []);
   const comments = sections.flatMap((s) => {
     const [hunk] = s.hunks;
-    const at = hunk && firstChange(hunk, addedOnly);
-    return hunk && at
+    const first = hunk && firstChange(hunk, addedOnly);
+    return hunk &&
+      first &&
+      commentable.has(at(hunk.path, first.side, first.line))
       ? [
           PrReviewComment.make({
             path: hunk.path,
-            ...at,
+            ...first,
             body: noteText(s.verdict?.note),
           }),
         ]

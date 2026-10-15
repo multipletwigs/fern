@@ -1,31 +1,37 @@
 import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { SubagentSummary } from "@repo/api";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { roundsAtom } from "../grill/atoms";
 import { reviewSeenAtom, reviewShownAtom } from "../review/atoms";
 import { waitingCount } from "../review/queue";
 import { walkthroughsAtom } from "../walkthrough/atoms";
 import { closeSubagentAtom, reopenSubagentAtom, subagentsAtom } from "./atoms";
 
-// A tab on the Session's chat column: the Grill, the chat, the Review tab, or one of its Subagents
-// by agent id.
-export type SessionTab = "grill" | "chat" | "review" | `agent:${string}`;
+import {
+  agentOf,
+  preferredTab,
+  type SessionTab,
+  subagentTab,
+} from "./sessionTab";
 
-export const subagentTab = (agentId: string): SessionTab => `agent:${agentId}`;
-
-// The Subagent a tab shows, if it shows one.
-export const agentOf = (tab: SessionTab) =>
-  tab.startsWith("agent:") ? tab.slice("agent:".length) : undefined;
+export { agentOf, type SessionTab, subagentTab };
 
 const NO_SUBAGENTS: ReadonlyArray<SubagentSummary> = [];
 
 // Which tab of the Session shows: the Grill while a Round is open, the chat otherwise, unless the
 // developer switched. Their switch holds until a Round opens or closes. Opening the Review tab from
 // outside it, as from the status above the composer or the Pull requests page, switches to it
-// until they pick a tab, even when the Session is drawn only afterwards. A new Subagent never takes
-// the selection. A Subagent tab the developer closed stays out of the bar, for the Session, until
-// they open it again from its row in the chat.
+// until they pick a tab or a Round opens or closes, even when the Session is drawn only
+// afterwards. A new Subagent never takes the selection. A Subagent tab the developer closed stays
+// out of the bar, for the Session, until they open it again from its row in the chat.
 export function useSessionTab(sessionId: string) {
   const result = useAtomValue(roundsAtom(sessionId));
   const rounds = AsyncResult.isSuccess(result) ? result.value : undefined;
@@ -41,19 +47,29 @@ export function useSessionTab(sessionId: string) {
     round: string | undefined;
     tab: SessionTab;
   }>();
+  const round = open?.id;
   // Asked for from outside since the developer last picked a tab, whether or not the Session
-  // was drawn then.
+  // was drawn then, and the Round open when this tab first saw the ask, once its Rounds are in.
   const shown = useAtomValue(reviewShownAtom(sessionId));
   const [seen, setSeen] = useAtom(reviewSeenAtom(sessionId));
-  const reviewAsked = shown !== seen;
-  const preferred: SessionTab = reviewAsked
-    ? "review"
-    : chosen && chosen.round === open?.id
-      ? chosen.tab
-      : open
-        ? "grill"
-        : "chat";
-  const round = open?.id;
+  const [askedAt, setAskedAt] = useState<{
+    shown: number;
+    round: string | undefined;
+  }>();
+  const pending = shown !== seen;
+  if (pending && rounds !== undefined && askedAt?.shown !== shown)
+    setAskedAt({ shown, round });
+  const asking = pending && askedAt?.shown === shown;
+  const askedRound = askedAt?.round;
+  // A Round opening or closing since spends the ask, as it does the developer's own pick.
+  useEffect(() => {
+    if (asking && askedRound !== round) setSeen(shown);
+  }, [asking, askedRound, round, setSeen, shown]);
+  const preferred = preferredTab({
+    open: round,
+    chosen,
+    asked: asking ? { round: askedRound } : undefined,
+  });
   const select = useCallback(
     (next: SessionTab) => {
       setSeen(shown);

@@ -20,7 +20,12 @@ export function PrTryOut({
   // Told when the worktree is checked out or removed, for the list to show it.
   onChanged: () => void;
 }) {
-  const key = terminalKeyOf({ _tag: "PullRequest", repo, number: pr.number });
+  const key = terminalKeyOf({
+    _tag: "PullRequest",
+    root,
+    repo,
+    number: pr.number,
+  });
   const [open, setOpen] = useAtom(terminalOpenAtom(key));
   return (
     <>

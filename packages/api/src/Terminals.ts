@@ -2,10 +2,12 @@ import { Schema } from "effect";
 import { GitHubRepoName } from "./PullRequests";
 
 // Whose terminal it is: a Session's, in its folder, or a Foreign PR's, in the worktree Try it
-// checked it out in. The server finds the folder from its own records, never from the page.
+// checked it out in for the Project at `root`. The server finds the folder from its own records,
+// never from the page.
 export const TerminalTarget = Schema.Union([
   Schema.TaggedStruct("Session", { sessionId: Schema.NonEmptyString }),
   Schema.TaggedStruct("PullRequest", {
+    root: Schema.NonEmptyString,
     repo: GitHubRepoName,
     number: Schema.Int.check(Schema.isGreaterThan(0)),
   }),

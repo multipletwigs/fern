@@ -1,12 +1,12 @@
 import type { TerminalTarget } from "@repo/api";
 import { Atom } from "effect/reactivity";
 
-// What a terminal's panel is kept by: a Session's id, or `pr:<repo>#<n>` for a Foreign PR's, as
-// the server keeps their shells.
+// What a terminal's panel is kept by: a Session's id, or `pr:<root>:<repo>#<n>` for a Foreign PR's
+// in the Project at `root`, as the server keeps their shells.
 export const terminalKeyOf = (target: TerminalTarget) =>
   target._tag === "Session"
     ? target.sessionId
-    : `pr:${target.repo}#${target.number}`;
+    : `pr:${target.root}:${target.repo}#${target.number}`;
 
 // Whether a terminal's panel shows, by `terminalKeyOf`, for as long as the page is open.
 export const terminalOpenAtom = Atom.family((_key: string) =>
