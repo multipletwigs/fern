@@ -37,11 +37,14 @@ export function SessionComposer({
   header,
   now,
   lastTurnId,
+  reviewing,
 }: {
   header: SessionHeader;
   now: number;
   // The transcript's latest developer turn, which a sent message will follow.
   lastTurnId: string | undefined;
+  // The Review tab is open, so what it already shows stays out of the space above the box.
+  reviewing: boolean;
 }) {
   const send = useAtomSet(sendMessageAtom, { mode: "promiseExit" });
   const interrupt = useAtomSet(interruptAtom);
@@ -79,8 +82,8 @@ export function SessionComposer({
       above={
         <>
           <SessionMilestones sessionId={header.id} />
-          <SessionCheckpoint sessionId={header.id} />
-          <SessionWalkthrough sessionId={header.id} />
+          <SessionCheckpoint sessionId={header.id} reviewing={reviewing} />
+          {!reviewing && <SessionWalkthrough sessionId={header.id} />}
           <QueuedMessages
             items={queued}
             onRemove={(item) => unqueue({ params: { id: header.id, item } })}

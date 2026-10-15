@@ -2,6 +2,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { isWorking, type SessionHeader } from "@repo/api";
 import { Empty } from "@repo/ui/Empty";
 import { Glow } from "@repo/ui/Glow";
+import { ReviewLayoutFoot } from "@repo/ui/ReviewLayoutFoot";
 import { ThinkingLine } from "@repo/ui/ThinkingLine";
 import { TopBar } from "@repo/ui/TopBar";
 import { TranscriptRow } from "@repo/ui/TranscriptRow";
@@ -22,6 +23,7 @@ import { SessionChecklist } from "../flow/SessionChecklist";
 import { type PendingPrompt, pendingPromptAtom, transcriptAtom } from "./atoms";
 import { GrillView } from "../grill/GrillView";
 import { ItemView } from "./ItemView";
+import { reviewQueue } from "../review/queue";
 import { ReviewView } from "../review/ReviewView";
 import { type Row, toRows } from "./rows";
 import { SessionComposer } from "./SessionComposer";
@@ -30,6 +32,7 @@ import { SessionWorktree } from "./SessionWorktree";
 import { SessionTerminalToggle } from "../terminal/SessionTerminalToggle";
 import { SubagentView } from "./SubagentView";
 import { useNow } from "./time";
+import { walkthroughsAtom } from "../walkthrough/atoms";
 import { ToolRun } from "./ToolRun";
 import { agentOf, useSessionTab } from "./useSessionTab";
 
@@ -102,6 +105,14 @@ export function Session({
   const header = transcript?.header;
   const items = transcript?.items;
   const recorded = useMemo(() => (items ? toRows(items) : []), [items]);
+  const walkthroughs = useAtomValue(walkthroughsAtom(id));
+  // An open Round in the Grill tab, and the Review tab, list their items down the left, and that
+  // column runs on beside the composer.
+  const listed =
+    (tabs.tab === "grill" && tabs.rounds?.open !== undefined) ||
+    (tabs.tab === "review" &&
+      AsyncResult.isSuccess(walkthroughs) &&
+      reviewQueue(walkthroughs.value).length > 0);
   // A message just sent stands at the end until Claude Code records it.
   const pending = useAtomValue(pendingPromptAtom(id));
   const setPending = useAtomSet(pendingPromptAtom(id));
@@ -409,7 +420,14 @@ export function Session({
       {/* A Subagent's tab is read-only; the composer keeps its draft out of sight meanwhile. */}
       {header && (
         <div hidden={agent !== undefined}>
-          <SessionComposer header={header} now={now} lastTurnId={lastTurnId} />
+          <ReviewLayoutFoot listed={listed}>
+            <SessionComposer
+              header={header}
+              now={now}
+              lastTurnId={lastTurnId}
+              reviewing={tabs.tab === "review"}
+            />
+          </ReviewLayoutFoot>
         </div>
       )}
     </div>

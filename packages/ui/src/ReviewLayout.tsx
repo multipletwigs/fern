@@ -24,6 +24,10 @@ const isEditable = (target: EventTarget | null) =>
     target.tagName === "TEXTAREA" ||
     target.tagName === "SELECT");
 
+// The list's column on the left, which a `ReviewLayoutFoot` carries on under the layout.
+export const listColumn =
+  "w-12 shrink-0 border-r border-hairline bg-side-panel @3xl:w-[272px]";
+
 const reducedMotion = () =>
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -111,7 +115,7 @@ export function ReviewLayout({
       }}
       className="@container flex h-full min-h-0 outline-none"
     >
-      <nav className="flex w-12 shrink-0 flex-col border-r border-hairline bg-side-panel @3xl:w-[272px]">
+      <nav className={`flex flex-col ${listColumn}`}>
         {header && (
           <div className="hidden shrink-0 px-4 pt-5 pb-3 @3xl:block">
             {header}

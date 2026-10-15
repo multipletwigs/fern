@@ -16,8 +16,14 @@ import { CHECKPOINT_QUESTIONS, PHASE_TITLES } from "./phases";
 import { RetroFindings } from "./RetroFindings";
 
 // The Checkpoint the Session is waiting at, if any, above its composer; before its Land
-// Checkpoint opens, what the Stack still waits on.
-export function SessionCheckpoint({ sessionId }: { sessionId: string }) {
+// Checkpoint opens, what the Stack still waits on, unless the Review tab is open and lists it.
+export function SessionCheckpoint({
+  sessionId,
+  reviewing,
+}: {
+  sessionId: string;
+  reviewing: boolean;
+}) {
   const result = useAtomValue(flowAtom(sessionId));
   const approve = useAtomSet(approveCheckpointAtom, { mode: "promiseExit" });
   const decline = useAtomSet(declineCheckpointAtom, { mode: "promiseExit" });
@@ -26,7 +32,7 @@ export function SessionCheckpoint({ sessionId }: { sessionId: string }) {
   const flow = AsyncResult.isSuccess(result) ? result.value : null;
   const checkpoint = flow?.checkpoint;
   if (!checkpoint)
-    return flow?.landWaitsOn ? (
+    return flow?.landWaitsOn && !reviewing ? (
       <LandWaitingCard waiting={flow.landWaitsOn} />
     ) : null;
   if (checkpoint.land)
