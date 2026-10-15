@@ -1,6 +1,7 @@
 import { Effect, Layer, Option, Stream } from "effect";
 import { Autonomy } from "../src/autonomy/Autonomy";
 import { CodeHost } from "../src/codehost/CodeHost";
+import { PullRequests } from "../src/pullrequest/PullRequests";
 import { Commands } from "../src/commands/Commands";
 import { Flows } from "../src/flow/Flows";
 import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
@@ -132,6 +133,13 @@ export const NoStacks = Layer.succeed(
   }),
 );
 
+// A code host never asked for a repo's PRs, as no test using it opens a Pull requests page.
+export const NotListing = {
+  login: () => Effect.die("unused"),
+  pullRequests: () => Effect.die("unused"),
+  stacks: () => Effect.die("unused"),
+};
+
 // A code host Fern never asks, where no Session's work lands as a Stack.
 export const UnusedCodeHost = Layer.succeed(
   CodeHost,
@@ -145,6 +153,7 @@ export const UnusedCodeHost = Layer.succeed(
     markReady: () => Effect.die("unused"),
     merge: () => Effect.die("unused"),
     state: () => Effect.die("unused"),
+    ...NotListing,
   }),
 );
 
@@ -176,6 +185,14 @@ export const UnusedTerminals = Layer.succeed(
     write: () => Effect.die("unused"),
     resize: () => Effect.die("unused"),
     kill: () => Effect.die("unused"),
+  }),
+);
+
+export const UnusedPullRequests = Layer.succeed(
+  PullRequests,
+  PullRequests.of({
+    available: () => Effect.die("unused"),
+    list: () => Effect.die("unused"),
   }),
 );
 

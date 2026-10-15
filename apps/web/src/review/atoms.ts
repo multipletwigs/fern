@@ -13,7 +13,13 @@ export const reviewShownAtom = Atom.family((_sessionId: string) =>
   Atom.make(0).pipe(Atom.keepAlive),
 );
 
-// Opens a Session's Review tab on a Walkthrough or an item, from outside it, as the status above
+// How many of those asks the Session's tabs have acted on, so a Session drawn only after the ask, as
+// when the Pull requests page opens one of its PRs, still switches to the tab, once.
+export const reviewSeenAtom = Atom.family((_sessionId: string) =>
+  Atom.make(0).pipe(Atom.keepAlive),
+);
+
+// Opens a Session's Review tab on a Walkthrough, a PR or an item, from outside it, as the status above
 // the composer does.
 export const showReviewAtom = Atom.family((sessionId: string) =>
   Atom.writable(

@@ -1,3 +1,4 @@
+import { GhPrState, type PrState } from "@repo/api";
 import { Context, Duration, Effect, Layer, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -27,6 +28,29 @@ export interface OpenedPullRequest {
   readonly url: string;
 }
 
+// A PR on the repo, as GitHub lists it.
+export interface HostPullRequest {
+  readonly number: number;
+  readonly url: string;
+  readonly title: string;
+  // The login of whoever opened it.
+  readonly author: string;
+  readonly headRef: string;
+  readonly baseRef: string;
+  readonly headCommit: string;
+  readonly draft: boolean;
+  readonly state: PrState;
+  // The logins of the people asked to review it. Teams asked are left out.
+  readonly reviewers: ReadonlyArray<string>;
+}
+
+// A Stack on the repo, as GitHub has it: its PRs' numbers, bottom first, open or not.
+export interface HostStack {
+  readonly id: number;
+  readonly number: number;
+  readonly prs: ReadonlyArray<number>;
+}
+
 // How long Fern waits on `gh` to say whether it's ready, as `gh auth status` asks GitHub.
 export const CodeHostReadyTimeout = Context.Reference<Duration.Input>(
   "@repo/server/codehost/CodeHostReadyTimeout",
@@ -40,6 +64,14 @@ const MERGE_TIMEOUT = Duration.minutes(10);
 // The REST API version GitHub's Stacks are in.
 const STACKS_API = "X-GitHub-Api-Version: 2026-03-10";
 
+// How long listing the repo's PRs or Stacks may take: the Pull requests page waits on it.
+const LIST_TIMEOUT = Duration.seconds(30);
+// The most open PRs Fern lists of a repo.
+const MAX_LISTED = 200;
+// How many Stacks GitHub sends a page, at most, and how many pages Fern reads looking for a PR's.
+const STACKS_PER_PAGE = 100;
+const MAX_STACK_PAGES = 5;
+
 // The PR's number at the end of the URL `gh pr create` prints, e.g. ".../pull/123".
 const PR_URL = /https:\/\/\S+\/pull\/(\d+)/;
 
@@ -50,6 +82,46 @@ const StacksOfPr = Schema.fromJsonString(
     Schema.Struct({ number: Schema.Int.check(Schema.isGreaterThan(0)) }),
   ),
 );
+// The repo's open PRs, as `gh pr list` has them. A reviewer asked is a person, with a login, or a
+// team, without one.
+const PR_FIELDS =
+  "number,url,title,author,headRefName,baseRefName,headRefOid,isDraft,state,reviewRequests";
+const ListedPrs = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Struct({
+      number: Schema.Int,
+      url: Schema.String,
+      title: Schema.String,
+      author: Schema.NullOr(Schema.Struct({ login: Schema.String })),
+      headRefName: Schema.String,
+      baseRefName: Schema.String,
+      headRefOid: Schema.String,
+      isDraft: Schema.Boolean,
+      state: GhPrState,
+      reviewRequests: Schema.Array(
+        Schema.Struct({ login: Schema.optional(Schema.String) }),
+      ),
+    }),
+  ),
+);
+const PR_STATE: Record<GhPrState, PrState> = {
+  OPEN: "open",
+  CLOSED: "closed",
+  MERGED: "merged",
+};
+// One page of the repo's Stacks, as GitHub's REST API has them.
+const StacksPage = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.Int,
+      number: Schema.Int,
+      pull_requests: Schema.Array(Schema.Struct({ number: Schema.Int })),
+    }),
+  ),
+);
+// A GitHub login, as `gh api user` prints it.
+const Login = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9[\]-]{1,64}$/));
+
 // The repo's default branch, as `gh repo view` has it.
 const RepoView = Schema.fromJsonString(
   Schema.Struct({ defaultBranchRef: Schema.Struct({ name: BranchName }) }),
@@ -108,6 +180,22 @@ const blockersOf = (
         ]
       : []),
 ];
+
+// What `gh` printed, read as the schema says, or why Fern can't.
+const read = <S extends Schema.Codec<unknown, string>>(
+  schema: S,
+  what: string,
+) =>
+  Effect.flatMap((out: string) =>
+    Schema.decodeEffect(schema)(out).pipe(
+      Effect.mapError(
+        () =>
+          new CodeHostError({
+            message: `GitHub's ${what} aren't as Fern expects.`,
+          }),
+      ),
+    ),
+  );
 
 // Gives up on a call to GitHub that takes longer than the duration.
 const late = (duration: Duration.Duration) =>
@@ -179,6 +267,18 @@ export class CodeHost extends Context.Service<
       cwd: string,
       prs: ReadonlyArray<OpenedPullRequest>,
     ): Effect.Effect<{ readonly merged: boolean }, CodeHostError>;
+    // The GitHub login `gh` is signed in as.
+    login(cwd: string): Effect.Effect<string, CodeHostError>;
+    // The repo's open PRs, newest first. Fails with GitHub's reason, in plain words.
+    pullRequests(
+      cwd: string,
+    ): Effect.Effect<ReadonlyArray<HostPullRequest>, CodeHostError>;
+    // The repo's Stacks, newest first: as many of them as it takes to find each of the PRs, when
+    // GitHub has a Stack holding it, up to a few hundred. None where the repo has no Stacks.
+    stacks(
+      cwd: string,
+      prs: ReadonlyArray<number>,
+    ): Effect.Effect<ReadonlyArray<HostStack>, CodeHostError>;
   }
 >()("@repo/server/codehost/CodeHost") {
   static readonly layer = Layer.effect(
@@ -240,6 +340,20 @@ export class CodeHost extends Context.Service<
           });
         return stdout;
       }, late(CALL_TIMEOUT));
+
+      // Asks `gh`, returning what it printed; fails with what it said, in plain words, when it
+      // refuses.
+      const ask = Effect.fn("CodeHost.ask")(function* (
+        cwd: string,
+        args: ReadonlyArray<string>,
+      ) {
+        const { stdout, stderr, exitCode } = yield* exec(cwd, "gh", args);
+        if (exitCode !== 0)
+          return yield* new CodeHostError({
+            message: plainly(stderr) || `GitHub refused (gh exit ${exitCode}).`,
+          });
+        return stdout;
+      }, late(LIST_TIMEOUT));
 
       const ready = Effect.fn("CodeHost.ready")(function* (cwd: string) {
         const timeout = yield* CodeHostReadyTimeout;
@@ -463,6 +577,82 @@ export class CodeHost extends Context.Service<
         };
       });
 
+      const login = Effect.fn("CodeHost.login")(function* (cwd: string) {
+        const out = yield* ask(cwd, ["api", "user", "--jq", ".login"]);
+        return yield* Schema.decodeEffect(Login)(out.trim()).pipe(
+          Effect.mapError(
+            () =>
+              new CodeHostError({
+                message: "GitHub's login isn't one Fern can read.",
+              }),
+          ),
+        );
+      });
+
+      const pullRequests = Effect.fn("CodeHost.pullRequests")(function* (
+        cwd: string,
+      ) {
+        const listed = yield* ask(cwd, [
+          "pr",
+          "list",
+          "--state",
+          "open",
+          "--limit",
+          String(MAX_LISTED),
+          "--json",
+          PR_FIELDS,
+        ]).pipe(read(ListedPrs, "PRs"));
+        return listed.map((pr): HostPullRequest => ({
+          number: pr.number,
+          url: pr.url,
+          title: pr.title,
+          author: pr.author?.login ?? "ghost",
+          headRef: pr.headRefName,
+          baseRef: pr.baseRefName,
+          headCommit: pr.headRefOid,
+          draft: pr.isDraft,
+          state: PR_STATE[pr.state],
+          reviewers: pr.reviewRequests.flatMap((r) =>
+            r.login === undefined ? [] : [r.login],
+          ),
+        }));
+      });
+
+      // A page at a time, until each PR is found or a page comes back short of full. A repo
+      // without Stacks answers 404.
+      const stacks = Effect.fn("CodeHost.stacks")(function* (
+        cwd: string,
+        prs: ReadonlyArray<number>,
+      ) {
+        const missing = new Set(prs);
+        const found: Array<HostStack> = [];
+        for (let page = 1; page <= MAX_STACK_PAGES; page++) {
+          const { stdout, stderr, exitCode } = yield* exec(cwd, "gh", [
+            "api",
+            "-H",
+            STACKS_API,
+            `repos/{owner}/{repo}/stacks?per_page=${STACKS_PER_PAGE}&page=${page}`,
+          ]);
+          if (exitCode !== 0) {
+            if (/HTTP 404/u.test(stderr)) return [];
+            return yield* new CodeHostError({
+              message:
+                plainly(stderr) || `GitHub refused (gh exit ${exitCode}).`,
+            });
+          }
+          const listed = yield* Effect.succeed(stdout).pipe(
+            read(StacksPage, "Stacks"),
+          );
+          for (const stack of listed) {
+            const numbers = stack.pull_requests.map((pr) => pr.number);
+            for (const number of numbers) missing.delete(number);
+            found.push({ id: stack.id, number: stack.number, prs: numbers });
+          }
+          if (missing.size === 0 || listed.length < STACKS_PER_PAGE) break;
+        }
+        return found;
+      }, late(LIST_TIMEOUT));
+
       return CodeHost.of({
         ready,
         defaultBranch,
@@ -473,6 +663,9 @@ export class CodeHost extends Context.Service<
         markReady,
         merge,
         state,
+        login,
+        pullRequests,
+        stacks,
       });
     }),
   );

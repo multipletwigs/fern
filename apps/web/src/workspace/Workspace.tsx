@@ -7,13 +7,14 @@ import {
   activeSessionIdAtom,
   currentSessionAtom,
 } from "../session/atoms";
+import { PullRequestsPage } from "../pullrequests/PullRequestsPage";
 import { NewSession } from "../session/NewSession";
 import { Settings } from "../settings/Settings";
 import { SessionWorkbench } from "./SessionWorkbench";
 import { showingAtom } from "./showing";
 
-// Everything right of the sidebar: Settings, the Session on screen, a new one being started, or
-// why there isn't one.
+// Everything right of the sidebar: Settings, a Project's Pull requests page, the Session on screen,
+// a new one being started, or why there isn't one.
 export function Workspace() {
   const sessionId = useAtomValue(activeSessionIdAtom);
   const root = useAtomValue(activeCodeRootAtom);
@@ -21,6 +22,14 @@ export function Workspace() {
   const showing = useAtomValue(showingAtom);
   if (showing._tag === "Settings")
     return <Workbench chat={<Settings />} code={undefined} animate={false} />;
+  if (showing._tag === "PullRequests")
+    return (
+      <Workbench
+        chat={<PullRequestsPage key={showing.root} root={showing.root} />}
+        code={undefined}
+        animate={false}
+      />
+    );
   if (showing._tag === "NewSession")
     return (
       <Workbench

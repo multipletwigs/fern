@@ -1,9 +1,9 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { SubagentSummary } from "@repo/api";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { roundsAtom } from "../grill/atoms";
-import { reviewShownAtom } from "../review/atoms";
+import { reviewSeenAtom, reviewShownAtom } from "../review/atoms";
 import { waitingCount } from "../review/queue";
 import { walkthroughsAtom } from "../walkthrough/atoms";
 import { closeSubagentAtom, reopenSubagentAtom, subagentsAtom } from "./atoms";
@@ -22,7 +22,8 @@ const NO_SUBAGENTS: ReadonlyArray<SubagentSummary> = [];
 
 // Which tab of the Session shows: the Grill while a Round is open, the chat otherwise, unless the
 // developer switched. Their switch holds until a Round opens or closes. Opening the Review tab from
-// outside it, as from the status above the composer, switches to it. A new Subagent never takes
+// outside it, as from the status above the composer or the Pull requests page, switches to it
+// until they pick a tab, even when the Session is drawn only afterwards. A new Subagent never takes
 // the selection. A Subagent tab the developer closed stays out of the bar, for the Session, until
 // they open it again from its row in the chat.
 export function useSessionTab(sessionId: string) {
@@ -40,19 +41,26 @@ export function useSessionTab(sessionId: string) {
     round: string | undefined;
     tab: SessionTab;
   }>();
-  const preferred: SessionTab =
-    chosen && chosen.round === open?.id ? chosen.tab : open ? "grill" : "chat";
+  // Asked for from outside since the developer last picked a tab, whether or not the Session
+  // was drawn then.
+  const shown = useAtomValue(reviewShownAtom(sessionId));
+  const [seen, setSeen] = useAtom(reviewSeenAtom(sessionId));
+  const reviewAsked = shown !== seen;
+  const preferred: SessionTab = reviewAsked
+    ? "review"
+    : chosen && chosen.round === open?.id
+      ? chosen.tab
+      : open
+        ? "grill"
+        : "chat";
   const round = open?.id;
   const select = useCallback(
-    (next: SessionTab) => setChosen({ round, tab: next }),
-    [round],
+    (next: SessionTab) => {
+      setSeen(shown);
+      setChosen({ round, tab: next });
+    },
+    [round, setSeen, shown],
   );
-  const shown = useAtomValue(reviewShownAtom(sessionId));
-  const [seenShown, setSeenShown] = useState(shown);
-  if (shown !== seenShown) {
-    setSeenShown(shown);
-    setChosen({ round, tab: "review" });
-  }
   const walkthroughs = useAtomValue(walkthroughsAtom(sessionId));
   const reviewWaiting = AsyncResult.isSuccess(walkthroughs)
     ? waitingCount(walkthroughs.value)

@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { AtomRegistry } from "effect/reactivity";
 import {
   newSessionAtom,
+  pullRequestsPageAtom,
   settingsOpenAtom,
   showingAtom,
 } from "../src/workspace/showing";
@@ -46,4 +47,27 @@ it("goes back from Settings to the new Session it was opened over", () => {
     _tag: "NewSession",
     root: "/work/app",
   });
+});
+
+it("shows a Project's Pull requests page in place of the Session, and goes back to it from Settings", () => {
+  const registry = AtomRegistry.make();
+  registry.set(pullRequestsPageAtom, "/work/app");
+  assert.deepStrictEqual(registry.get(showingAtom), {
+    _tag: "PullRequests",
+    root: "/work/app",
+  });
+  registry.set(settingsOpenAtom, true);
+  assert.strictEqual(registry.get(pullRequestsPageAtom), "/work/app");
+  registry.set(settingsOpenAtom, false);
+  assert.strictEqual(registry.get(pullRequestsPageAtom), "/work/app");
+});
+
+it("leaves the Pull requests page for a Session picked, or a new one", () => {
+  const registry = AtomRegistry.make();
+  registry.set(pullRequestsPageAtom, "/work/app");
+  registry.set(newSessionAtom, undefined);
+  assert.deepStrictEqual(registry.get(showingAtom), { _tag: "Session" });
+  registry.set(pullRequestsPageAtom, "/work/app");
+  registry.set(newSessionAtom, "/work/app");
+  assert.strictEqual(registry.get(pullRequestsPageAtom), undefined);
 });

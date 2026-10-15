@@ -1,7 +1,13 @@
 import { assert, layer } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodeHost } from "../src/codehost/CodeHost";
@@ -20,10 +26,29 @@ echo "$@" >> "${log}"
 case "$1 $2" in
   "pr ready"|"pr merge") exit 0 ;;
   "api -H")
+    case "$PWD" in
+      *-nostacks) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+    esac
     case "$4" in
       *pull_request=103) echo '[{"number":-7}]' ;;
+      *"stacks?per_page=100&page=1")
+        printf '[{"id":902,"number":2,"pull_requests":[{"number":201},{"number":202}]},{"id":901,"number":1,"pull_requests":[{"number":200}]}'
+        i=0
+        while [ $i -lt 98 ]; do
+          printf ',{"id":%d,"number":%d,"pull_requests":[]}' $((1000 + i)) $((10 + i))
+          i=$((i + 1))
+        done
+        echo ']' ;;
+      *"stacks?per_page=100&page=2") echo '[{"id":900,"number":0,"pull_requests":[{"number":203}]}]' ;;
       *) echo '[{"number":7}]' ;;
     esac
+    exit 0 ;;
+  "api user") echo "octocat"; exit 0 ;;
+  "pr list")
+    case "$PWD" in
+      *-refused) echo "HTTP 403: API rate limit exceeded for user ID 1." >&2; exit 1 ;;
+    esac
+    echo '[{"number":202,"url":"https://github.com/acme/app/pull/202","title":"Toggle","author":{"login":"monalisa","is_bot":false},"headRefName":"toggle","baseRefName":"theme","headRefOid":"bbbb","isDraft":true,"state":"OPEN","reviewRequests":[{"__typename":"User","login":"octocat"},{"__typename":"Team","name":"Core","slug":"core"}]},{"number":201,"url":"https://github.com/acme/app/pull/201","title":"Theme","author":{"login":"hubot"},"headRefName":"theme","baseRefName":"main","headRefOid":"aaaa","isDraft":false,"state":"OPEN","reviewRequests":[]}]'
     exit 0 ;;
   "auth status") [ "$3 $4" = "--hostname github.com" ] && exit 0; exit 1 ;;
   "stack --version") exit 0 ;;
@@ -62,6 +87,17 @@ const withStub = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         process.env.PATH = path;
       }),
   );
+
+// A folder of its own for the code host to run in, named so the stub answers differently there.
+const inFolder = (suffix: string) => {
+  const path = `${mkdtempSync(join(tmpdir(), "fern-gh-cwd-"))}${suffix}`;
+  mkdirSync(path);
+  return path;
+};
+
+// The call for one page of the repo's Stacks.
+const page = (n: number) =>
+  `api -H X-GitHub-Api-Version: 2026-03-10 repos/{owner}/{repo}/stacks?per_page=100&page=${n}`;
 
 const pr = (number: number) => ({
   number,
@@ -159,6 +195,116 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
       Effect.gen(function* () {
         const host = yield* CodeHost;
         assert.strictEqual(yield* host.defaultBranch("/"), "trunk");
+      }),
+    ),
+  );
+
+  it.effect("the login is the one gh is signed in as", () =>
+    withStub(
+      Effect.gen(function* () {
+        const host = yield* CodeHost;
+        assert.strictEqual(yield* host.login("/"), "octocat");
+      }),
+    ),
+  );
+
+  it.effect(
+    "the repo's open PRs are listed with what GitHub says of each, and the people asked to review them",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          const prs = yield* host.pullRequests("/");
+
+          assert.deepStrictEqual(prs, [
+            {
+              number: 202,
+              url: "https://github.com/acme/app/pull/202",
+              title: "Toggle",
+              author: "monalisa",
+              headRef: "toggle",
+              baseRef: "theme",
+              headCommit: "bbbb",
+              draft: true,
+              state: "open",
+              reviewers: ["octocat"],
+            },
+            {
+              number: 201,
+              url: "https://github.com/acme/app/pull/201",
+              title: "Theme",
+              author: "hubot",
+              headRef: "theme",
+              baseRef: "main",
+              headCommit: "aaaa",
+              draft: false,
+              state: "open",
+              reviewers: [],
+            },
+          ]);
+          assert.match(
+            calls()[0] ?? "",
+            /^pr list --state open --limit \d+ --json /,
+          );
+        }),
+      ),
+  );
+
+  it.effect("GitHub refusing to list the PRs says why, in plain words", () =>
+    withStub(
+      Effect.gen(function* () {
+        const host = yield* CodeHost;
+        const failed = yield* host
+          .pullRequests(inFolder("-refused"))
+          .pipe(Effect.flip);
+        assert.strictEqual(
+          failed.message,
+          "API rate limit exceeded for user ID 1.",
+        );
+      }),
+    ),
+  );
+
+  it.effect(
+    "Stacks are read a page at a time, newest first, only until every PR asked about is found",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+
+          const newest = yield* host.stacks("/", [201]);
+          assert.deepStrictEqual(newest.slice(0, 2), [
+            { id: 902, number: 2, prs: [201, 202] },
+            { id: 901, number: 1, prs: [200] },
+          ]);
+          assert.lengthOf(newest, 100);
+          assert.deepStrictEqual(calls(), [page(1)]);
+
+          writeFileSync(log, "");
+          const older = yield* host.stacks("/", [202, 203]);
+          assert.deepStrictEqual(older.at(-1), {
+            id: 900,
+            number: 0,
+            prs: [203],
+          });
+          assert.deepStrictEqual(calls(), [page(1), page(2)]);
+
+          // A page short of a hundred is the last.
+          writeFileSync(log, "");
+          yield* host.stacks("/", [999]);
+          assert.deepStrictEqual(calls(), [page(1), page(2)]);
+        }),
+      ),
+  );
+
+  it.effect("a repo without Stacks has none", () =>
+    withStub(
+      Effect.gen(function* () {
+        const host = yield* CodeHost;
+        assert.deepStrictEqual(
+          yield* host.stacks(inFolder("-nostacks"), [1]),
+          [],
+        );
       }),
     ),
   );

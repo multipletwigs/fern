@@ -11,6 +11,7 @@ import {
   UnusedAutonomy,
   UnusedCommands,
   UnusedProjectSettings,
+  UnusedPullRequests,
   UnusedFlows,
   UnusedRounds,
   UnusedSubagents,
@@ -44,6 +45,7 @@ const Unused = Layer.mergeAll(
   UnusedVerifySlots,
   UnusedTools,
   UnusedTerminals,
+  UnusedPullRequests,
 );
 
 const Server = HttpRouter.serve(

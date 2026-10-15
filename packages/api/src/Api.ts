@@ -2,6 +2,7 @@ import { HttpApi, OpenApi } from "effect/http-api";
 import { AutonomyApi } from "./Autonomy";
 import { FlowsApi } from "./Flows";
 import { ProjectsApi } from "./Projects";
+import { PullRequestsApi } from "./PullRequests";
 import { RoundsApi } from "./Rounds";
 import { SessionsApi } from "./Sessions";
 import { SubagentsApi } from "./Subagents";
@@ -21,5 +22,6 @@ export class FernApi extends HttpApi.make("fern")
   .add(AutonomyApi)
   .add(SubagentsApi)
   .add(VerifySlotsApi)
+  .add(PullRequestsApi)
   .prefix("/api")
   .annotateMerge(OpenApi.annotations({ title: "Fern API" })) {}
