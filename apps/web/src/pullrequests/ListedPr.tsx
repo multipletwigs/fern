@@ -7,10 +7,13 @@ import { SessionPr } from "./SessionPr";
 export function ListedPr({
   pr,
   sessionTitle,
+  dimmed,
 }: {
   pr: ListedPullRequest;
   // What the sidebar calls the Session holding it, when one does.
   sessionTitle: string | undefined;
+  // Shown only for the Stack it's in, as the filters leave it out.
+  dimmed: boolean;
 }) {
   return pr.session === undefined ? (
     <PullRequestItem
@@ -20,8 +23,15 @@ export function ListedPr({
       url={pr.url}
       draft={pr.draft}
       reviewRequested={pr.reviewRequested}
+      state={pr.state}
+      dimmed={dimmed}
     />
   ) : (
-    <SessionPr pr={pr} session={pr.session} sessionTitle={sessionTitle} />
+    <SessionPr
+      pr={pr}
+      session={pr.session}
+      sessionTitle={sessionTitle}
+      dimmed={dimmed}
+    />
   );
 }

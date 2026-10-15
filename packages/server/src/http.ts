@@ -188,7 +188,7 @@ export const PullRequestsHandlers = HttpApiBuilder.group(
     const pullRequests = yield* PullRequests;
     return handlers.handleAll({
       available: ({ query }) => pullRequests.available(query.root),
-      list: ({ query }) => pullRequests.list(query.root),
+      list: ({ query }) => pullRequests.list(query.root, query.state),
     });
   }),
 );
