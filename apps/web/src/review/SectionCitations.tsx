@@ -9,8 +9,9 @@ export function SectionCitations({
   sessionId,
 }: {
   section: Section;
-  // The Session the Walkthrough is of, to tell its own Decisions from earlier Sessions'.
-  sessionId: string;
+  // The Session the Walkthrough is of, to tell its own Decisions from earlier Sessions'. A Foreign
+  // PR's has none, and marks none of its Decisions as earlier.
+  sessionId: string | undefined;
 }) {
   if (!section.unplanned && section.decisions.length === 0) return null;
   return (
@@ -23,7 +24,7 @@ export function SectionCitations({
           recommendation={decision.recommendation}
           choice={decision.choice}
           freeText={decision.freeText}
-          earlier={decision.sessionId !== sessionId}
+          earlier={sessionId !== undefined && decision.sessionId !== sessionId}
         />
       ))}
     </div>

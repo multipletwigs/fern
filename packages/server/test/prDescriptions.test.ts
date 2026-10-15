@@ -135,6 +135,7 @@ let answer: (request: WriteRequest) => Draft = () => ({
 const Writer = Layer.succeed(
   WalkthroughWriter,
   WalkthroughWriter.of({
+    explore: () => Effect.die("unused"),
     write: (request) =>
       Effect.gen(function* () {
         requests.push(request);

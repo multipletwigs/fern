@@ -16,6 +16,7 @@ import { SubagentFiles } from "./subagent/SubagentFiles";
 import { Subagents } from "./subagent/Subagents";
 import { LiveHandlersNoDeps } from "./live";
 import { ProjectSettings } from "./project/ProjectSettings";
+import { PrWorktrees } from "./pullrequest/PrWorktrees";
 import { PullRequests } from "./pullrequest/PullRequests";
 import { StackEligibility } from "./stack/StackEligibility";
 import { Stacks } from "./stack/Stacks";
@@ -189,6 +190,8 @@ export const PullRequestsHandlers = HttpApiBuilder.group(
     return handlers.handleAll({
       available: ({ query }) => pullRequests.available(query.root),
       list: ({ query }) => pullRequests.list(query.root, query.state),
+      walkThrough: ({ params, payload }) =>
+        pullRequests.walkThrough(payload.root, params.number),
     });
   }),
 );
@@ -257,6 +260,7 @@ export const handlersWith = (
       HostedSessions.layer,
       FernTools.layer,
       Worktrees.layer,
+      PrWorktrees.layer,
       writer,
       issues,
       codeHost,

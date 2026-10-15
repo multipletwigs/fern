@@ -14,9 +14,10 @@ const GO =
   "size-3 shrink-0 text-faint opacity-0 transition-opacity group-hover:opacity-100";
 
 // One pull request on the Pull requests page, on one line: its number, title and author, marked
-// when it's a draft, closed or merged, when the developer is asked to review it, and when one of the developer's
-// Hosted Sessions holds it. A Session's PR opens in the Session through `onOpen`; any other opens
-// on GitHub at `url`. Dimmed when it's shown only for the Stack it's in, still there to open.
+// when it's a draft, closed or merged, when the developer is asked to review it, where its
+// Walkthrough stands, and when one of the developer's Hosted Sessions holds it. A PR opens through
+// `onOpen`, in its Session or in its Walkthroughs; one without opens on GitHub at `url`. Dimmed
+// when it's shown only for the Stack it's in, still there to open.
 export function PullRequestItem({
   number,
   title,
@@ -26,6 +27,7 @@ export function PullRequestItem({
   reviewRequested,
   state,
   session,
+  walkthrough,
   dimmed = false,
   onOpen,
 }: {
@@ -38,6 +40,9 @@ export function PullRequestItem({
   state: PrState;
   // What to call the Hosted Session holding it, when one does.
   session?: string | undefined;
+  // Where its Walkthrough stands, as a mark: amber when it waits on the developer.
+  walkthrough?:
+    { readonly label: string; readonly tone: "amber" | "muted" } | undefined;
   dimmed?: boolean | undefined;
   onOpen?: (() => void) | undefined;
 }) {
@@ -58,6 +63,11 @@ export function PullRequestItem({
       )}
       {state === "closed" && (
         <PullRequestMark tone="muted">Closed</PullRequestMark>
+      )}
+      {walkthrough !== undefined && (
+        <PullRequestMark tone={walkthrough.tone}>
+          {walkthrough.label}
+        </PullRequestMark>
       )}
       {session !== undefined && (
         <span

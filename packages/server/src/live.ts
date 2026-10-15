@@ -32,6 +32,10 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
       Changes: ({ root, session }) =>
         Stream.unwrap(workspace.changes(root, session)),
       Walkthroughs: ({ session }) => walkthroughs.list(session),
+      PullRequestWalkthroughs: ({ repo, number }) =>
+        walkthroughs.listForeign(repo, number),
+      PullRequestWalkthroughStates: ({ repo }) =>
+        walkthroughs.liveForeignStates(repo),
       Flow: ({ session }) => flows.flow(session),
       Checkpoints: () => flows.checkpoints,
       SessionPhases: () => flows.phases,

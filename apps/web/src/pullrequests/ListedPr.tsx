@@ -1,19 +1,26 @@
-import type { ListedPullRequest } from "@repo/api";
+import type { ListedPullRequest, PrWalkthrough } from "@repo/api";
 import { PullRequestItem } from "@repo/ui/PullRequestItem";
+import { walkthroughMark } from "./prWalkthroughs";
 import { SessionPr } from "./SessionPr";
 
 // A PR on the Pull requests page. One a Hosted Session holds opens that Session's Review tab on
-// it; a Foreign PR opens on GitHub, until Fern writes Walkthroughs of its own.
+// it; a Foreign PR opens its Walkthroughs on the page through `onOpen`, marked with where its latest
+// stands.
 export function ListedPr({
   pr,
   sessionTitle,
   dimmed,
+  walkthrough,
+  onOpen,
 }: {
   pr: ListedPullRequest;
   // What the sidebar calls the Session holding it, when one does.
   sessionTitle: string | undefined;
   // Shown only for the Stack it's in, as the filters leave it out.
   dimmed: boolean;
+  // A Foreign PR's latest Walkthrough, as it stands now.
+  walkthrough: PrWalkthrough | undefined;
+  onOpen: () => void;
 }) {
   return pr.session === undefined ? (
     <PullRequestItem
@@ -24,7 +31,9 @@ export function ListedPr({
       draft={pr.draft}
       reviewRequested={pr.reviewRequested}
       state={pr.state}
+      walkthrough={walkthrough && walkthroughMark(walkthrough.state)}
       dimmed={dimmed}
+      onOpen={onOpen}
     />
   ) : (
     <SessionPr

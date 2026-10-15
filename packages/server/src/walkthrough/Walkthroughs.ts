@@ -1,9 +1,14 @@
 import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import {
   CitedDecision,
+  ForeignPr,
   Hunk,
   NothingToReview,
   NotRewritable,
+  PrNothingToReview,
+  PrWalkthrough,
+  PrWalkthroughInProgress,
+  PrWalkthroughOf,
   PullRequest,
   ReviewClosed,
   ReviewItemNotFound,
@@ -36,6 +41,7 @@ import {
   Option,
   Predicate,
   Schema,
+  type Scope,
   Semaphore,
   Stream,
   SubscriptionRef,
@@ -58,6 +64,8 @@ import { settle, unclaimedHunks } from "./coverage";
 import { prDescription } from "./prDescription";
 import {
   type DraftDecision,
+  type ForeignPrBrief,
+  type Fork,
   type OpenRejection,
   WalkthroughWriter,
 } from "./WalkthroughWriter";
@@ -66,14 +74,30 @@ import {
 const MAX_HUNK_LINES = 400;
 const WRITE_TIMEOUT = Duration.minutes(10);
 
+// Whose change Walkthroughs explain: a Session's, or a Foreign PR's, by its repo on GitHub, as
+// "owner/name", and its number.
+const Owner = Schema.Union([
+  Schema.Struct({ session: Schema.String }),
+  Schema.Struct({ repo: Schema.String, number: Schema.Int }),
+]);
+type Owner = typeof Owner.Type;
+
+// What Walkthroughs being written are counted and queued by: the Session, or the Foreign PR.
+const keyOf = (owner: Owner) =>
+  "session" in owner ? owner.session : `pr:${owner.repo}#${owner.number}`;
+
+// Exactly one of `sessionId` and the Foreign PR, `prRepo` with `prNumber`, is set.
 const WalkthroughRow = Schema.Struct({
   id: Schema.String,
-  sessionId: Schema.String,
+  sessionId: Schema.NullOr(Schema.String),
+  prRepo: Schema.NullOr(Schema.String),
+  prNumber: Schema.NullOr(Schema.Int),
   number: Schema.Int,
   status: WalkthroughStatus,
   error: Schema.NullOr(Schema.String),
   since: WalkthroughSince,
   prId: Schema.NullOr(Schema.String),
+  headCommit: Schema.String,
   headTree: Schema.String,
   overlapping: Schema.fromJsonString(Schema.Array(Schema.String)),
   createdAt: Schema.Finite,
@@ -226,7 +250,11 @@ const assemble = (rows: SessionRows): ReadonlyArray<Walkthrough> => {
     const ready = w.status === "ready";
     return Walkthrough.make({
       id: w.id,
-      sessionId: w.sessionId,
+      sessionId: w.sessionId ?? undefined,
+      foreignPr:
+        w.prRepo !== null && w.prNumber !== null
+          ? ForeignPr.make({ repo: w.prRepo, number: w.prNumber })
+          : undefined,
       number: w.number,
       status: w.status,
       error: w.error ?? undefined,
@@ -256,7 +284,11 @@ const assemble = (rows: SessionRows): ReadonlyArray<Walkthrough> => {
             decisions: (s.decisions ?? []).flatMap(
               (id) => decisions.get(id) ?? [],
             ),
-            unplanned: s.decisions !== null && s.decisions.length === 0,
+            // Only a Session's agent can change what the developer never agreed to.
+            unplanned:
+              w.sessionId !== null &&
+              s.decisions !== null &&
+              s.decisions.length === 0,
             risk:
               s.risk === null
                 ? undefined
@@ -359,10 +391,7 @@ export const redirectMessage = (
 
 // What the Fork is asked to explain, numbered, the Rejections it may say it fixes, and the
 // Project's Decisions it may cite.
-const requestOf = (
-  sessionId: string,
-  cwd: string,
-  since: WalkthroughSince,
+const askingOf = (
   patch: ReadonlyArray<PatchHunk>,
   rows: SessionRows,
   decisions: ReadonlyArray<DecisionRow>,
@@ -375,10 +404,7 @@ const requestOf = (
   return {
     hunks,
     rejections,
-    request: {
-      sessionId,
-      cwd,
-      since,
+    asked: {
       hunks,
       rejections: rejections.map((r) => ({
         id: r.id,
@@ -392,6 +418,22 @@ const requestOf = (
         answer: answerOf(d),
       })),
     },
+  };
+};
+
+const requestOf = (
+  sessionId: string,
+  cwd: string,
+  since: WalkthroughSince,
+  patch: ReadonlyArray<PatchHunk>,
+  rows: SessionRows,
+  decisions: ReadonlyArray<DecisionRow>,
+) => {
+  const { hunks, rejections, asked } = askingOf(patch, rows, decisions);
+  return {
+    hunks,
+    rejections,
+    request: { sessionId, cwd, since, ...asked },
   };
 };
 
@@ -425,6 +467,50 @@ export interface PrChange {
   readonly to: string;
   readonly since?: WalkthroughSince;
 }
+
+// The change a Walkthrough of a Foreign PR covers: from `from`, where it leaves its base (the
+// merge-base, also kept, so a later Walkthrough can tell the base moved), to its head, `to`, which
+// the worktree `cwd` is checked out at.
+export interface ForeignChange {
+  // The Project the PR is on, whose Decisions its Sections may cite.
+  readonly project: string;
+  readonly cwd: string;
+  readonly pr: ForeignPrBrief;
+  readonly from: string;
+  readonly to: string;
+  readonly mergeBase: string;
+}
+
+// What a Walkthrough being written runs: its writer, then what follows once it's stored.
+interface Writing {
+  readonly id: string;
+  // What it waits its turn by: its Session's, or its Foreign PR's.
+  readonly key: string;
+  readonly fork: Effect.Effect<Fork, WalkthroughError, Scope.Scope>;
+  readonly ids: ReadonlyArray<string>;
+  readonly decisions: ReadonlyArray<DraftDecision>;
+  readonly rejections: ReadonlyArray<
+    OpenRejection & { walkthroughId: string; itemId: string }
+  >;
+  readonly after: Effect.Effect<void>;
+  // What to say when the writer takes too long.
+  readonly late: string;
+}
+
+// Where a Foreign PR's latest Walkthrough stands.
+const prStateOf = (row: {
+  readonly status: WalkthroughStatus;
+  readonly reviewedAt: number | null;
+}) =>
+  row.status !== "ready"
+    ? row.status
+    : row.reviewedAt === null
+      ? "unreviewed"
+      : "reviewed";
+
+// What a Walkthrough Fern was writing when it stopped says, once it's started again.
+const STOPPED =
+  "Fern stopped before this Walkthrough was written. Walk through the PR again to write it.";
 
 // Writes, stores, and reviews Walkthroughs (ADR 0003, stored per ADR 0004).
 export class Walkthroughs extends Context.Service<
@@ -474,6 +560,25 @@ export class Walkthroughs extends Context.Service<
     rewrite(
       walkthroughId: string,
     ): Effect.Effect<void, WalkthroughNotFound | NotRewritable>;
+    // A Foreign PR's Walkthroughs, oldest first, re-sent whenever one changes.
+    listForeign(
+      repo: string,
+      number: number,
+    ): Stream.Stream<ReadonlyArray<Walkthrough>>;
+    // Starts writing a Walkthrough of a Foreign PR's change (ADR 0010). Its Sections are never
+    // Unplanned, and its verdicts go nowhere. One that failed before it is replaced.
+    writeForeign(
+      change: ForeignChange,
+    ): Effect.Effect<
+      void,
+      PrNothingToReview | PrWalkthroughInProgress | WalkthroughError
+    >;
+    // The latest Walkthrough of each of the repo's Foreign PRs that has one.
+    foreignStates(repo: string): Effect.Effect<ReadonlyArray<PrWalkthroughOf>>;
+    // The same, re-sent whenever a Walkthrough changes.
+    liveForeignStates(
+      repo: string,
+    ): Stream.Stream<ReadonlyArray<PrWalkthroughOf>>;
     // The Session's Rejections no later Section says it fixes: each with the Walkthrough it's in
     // and what was rejected.
     openRejections(sessionId: string): Effect.Effect<
@@ -527,42 +632,55 @@ export class Walkthroughs extends Context.Service<
       // Verdicts one at a time, so the last one sends the Redirect exactly once.
       const reviewing = yield* Semaphore.make(1);
 
+      const ownedBy = (owner: Owner) =>
+        "session" in owner
+          ? sql`w.session_id = ${owner.session}`
+          : sql`w.pr_repo = ${owner.repo} AND w.pr_number = ${owner.number}`;
       const walkthroughsOf = SqlSchema.findAll({
-        Request: Schema.String,
+        Request: Owner,
         Result: WalkthroughRow,
-        execute: (sessionId) =>
-          sql`SELECT * FROM walkthroughs WHERE session_id = ${sessionId} ORDER BY number`,
+        execute: (owner) =>
+          sql`SELECT w.* FROM walkthroughs w WHERE ${ownedBy(owner)} ORDER BY w.number`,
       });
       const sectionsOf = SqlSchema.findAll({
-        Request: Schema.String,
+        Request: Owner,
         Result: SectionRow,
-        execute: (sessionId) => sql`
+        execute: (owner) => sql`
           SELECT s.* FROM walkthrough_sections s
           JOIN walkthroughs w ON w.id = s.walkthrough_id
-          WHERE w.session_id = ${sessionId}
+          WHERE ${ownedBy(owner)}
           ORDER BY s.position`,
       });
       const hunksOf = SqlSchema.findAll({
-        Request: Schema.String,
+        Request: Owner,
         Result: HunkRow,
-        execute: (sessionId) => sql`
+        execute: (owner) => sql`
           SELECT h.* FROM walkthrough_hunks h
           JOIN walkthroughs w ON w.id = h.walkthrough_id
-          WHERE w.session_id = ${sessionId}
+          WHERE ${ownedBy(owner)}
           ORDER BY h.position`,
       });
-      const prsOf = SqlSchema.findAll({
+      const sessionPrs = SqlSchema.findAll({
         Request: Schema.String,
         Result: PrRow,
         execute: (sessionId) => sql`
           SELECT id, number, url, title, position, ticket, kind FROM stack_prs
           WHERE session_id = ${sessionId} ORDER BY position`,
       });
-      const sessionOf = SqlSchema.findOneOption({
+      // A Foreign PR is on no Stack of Fern's.
+      const prsOf = (owner: Owner) =>
+        "session" in owner
+          ? sessionPrs(owner.session)
+          : Effect.succeed<ReadonlyArray<PrRow>>([]);
+      const ownerRow = SqlSchema.findOneOption({
         Request: Schema.String,
-        Result: Schema.Struct({ sessionId: Schema.String }),
+        Result: Schema.Struct({
+          sessionId: Schema.NullOr(Schema.String),
+          prRepo: Schema.NullOr(Schema.String),
+          prNumber: Schema.NullOr(Schema.Int),
+        }),
         execute: (id) =>
-          sql`SELECT session_id FROM walkthroughs WHERE id = ${id}`,
+          sql`SELECT session_id, pr_repo, pr_number FROM walkthroughs WHERE id = ${id}`,
       });
 
       const decisionsById = SqlSchema.findAll({
@@ -594,13 +712,13 @@ export class Walkthroughs extends Context.Service<
             ),
           );
 
-      const load = (sessionId: string) =>
+      const load = (owner: Owner) =>
         Effect.gen(function* () {
           const rows = yield* Effect.all({
-            walkthroughs: walkthroughsOf(sessionId),
-            sections: sectionsOf(sessionId),
-            hunks: hunksOf(sessionId),
-            prs: prsOf(sessionId),
+            walkthroughs: walkthroughsOf(owner),
+            sections: sectionsOf(owner),
+            hunks: hunksOf(owner),
+            prs: prsOf(owner),
           });
           const cited = [
             ...new Set(rows.sections.flatMap((s) => s.decisions ?? [])),
@@ -610,11 +728,54 @@ export class Walkthroughs extends Context.Service<
           return { ...rows, decisions };
         }).pipe(Effect.orDie);
 
-      const list = (sessionId: string) =>
+      const listOf = (owner: Owner) =>
         SubscriptionRef.changes(version).pipe(
-          Stream.mapEffect(() => load(sessionId)),
+          Stream.mapEffect(() => load(owner)),
           Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
           Stream.map(assemble),
+        );
+      const list = (sessionId: string) => listOf({ session: sessionId });
+      const listForeign = (repo: string, number: number) =>
+        listOf({ repo, number });
+
+      // Each Foreign PR's latest Walkthrough.
+      const latestOfPrs = SqlSchema.findAll({
+        Request: Schema.String,
+        Result: Schema.Struct({
+          prNumber: Schema.Int,
+          status: WalkthroughStatus,
+          headCommit: Schema.String,
+          error: Schema.NullOr(Schema.String),
+          reviewedAt: Schema.NullOr(Schema.Finite),
+        }),
+        execute: (repo) => sql`
+          SELECT w.pr_number, w.status, w.head_commit, w.error, w.reviewed_at
+          FROM walkthroughs w
+          WHERE w.pr_repo = ${repo} AND w.number = (
+            SELECT MAX(v.number) FROM walkthroughs v
+            WHERE v.pr_repo = w.pr_repo AND v.pr_number = w.pr_number)
+          ORDER BY w.pr_number`,
+      });
+      const foreignStates = (repo: string) =>
+        latestOfPrs(repo).pipe(
+          Effect.orDie,
+          Effect.map((rows) =>
+            rows.map((row) =>
+              PrWalkthroughOf.make({
+                number: row.prNumber,
+                walkthrough: PrWalkthrough.make({
+                  state: prStateOf(row),
+                  head: row.headCommit,
+                  error: row.error ?? undefined,
+                }),
+              }),
+            ),
+          ),
+        );
+      const liveForeignStates = (repo: string) =>
+        SubscriptionRef.changes(version).pipe(
+          Stream.mapEffect(() => foreignStates(repo)),
+          Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
         );
 
       const finish = Effect.fn("Walkthroughs.finish")(function* (
@@ -674,7 +835,7 @@ export class Walkthroughs extends Context.Service<
         cwd: string,
       ) =>
         Effect.gen(function* () {
-          const all = assemble(yield* load(sessionId));
+          const all = assemble(yield* load({ session: sessionId }));
           const walkthrough = all.find((w) => w.id === walkthroughId);
           if (walkthrough?.status !== "ready" || walkthrough.pr === undefined)
             return;
@@ -694,17 +855,19 @@ export class Walkthroughs extends Context.Service<
             );
         });
 
-      // Runs the Fork and stores what it wrote, giving it one retry to claim what it left out.
-      const compose = (
-        walkthroughId: string,
-        request: Parameters<typeof writer.write>[0],
-        rejections: ReadonlyArray<
-          OpenRejection & { walkthroughId: string; itemId: string }
-        >,
-      ) => {
-        const ids = request.hunks.map((hunk) => hunk.id);
+      // Runs the writer and stores what it wrote, giving it one retry to claim what it left out.
+      const compose = ({
+        id,
+        key: queued,
+        fork: writeWith,
+        ids,
+        decisions,
+        rejections,
+        after,
+        late,
+      }: Writing) => {
         const write = Effect.gen(function* () {
-          const fork = yield* writer.write(request);
+          const fork = yield* writeWith;
           let draft = fork.draft;
           const unclaimed = unclaimedHunks(draft, ids);
           if (unclaimed.length > 0)
@@ -712,43 +875,50 @@ export class Walkthroughs extends Context.Service<
               // A failed retry still leaves the first draft; what it missed shows as unexplained.
               Effect.orElseSucceed(() => draft),
             );
-          yield* finish(
-            walkthroughId,
-            ids,
-            draft,
-            rejections,
-            request.decisions,
-          );
+          yield* finish(id, ids, draft, rejections, decisions);
         }).pipe(
           Effect.scoped,
           Effect.timeoutOrElse({
             duration: WRITE_TIMEOUT,
-            orElse: () =>
-              Effect.fail(
-                new WalkthroughError({ message: "The Fork took too long." }),
-              ),
+            orElse: () => Effect.fail(new WalkthroughError({ message: late })),
           }),
-          Effect.catch((error) => fail(walkthroughId, error.message)),
+          Effect.catch((error) => fail(id, error.message)),
         );
-        return queueOf(request.sessionId).pipe(
+        return queueOf(queued).pipe(
           Effect.flatMap((queue) =>
-            queue.withPermits(1)(
-              write.pipe(
-                Effect.andThen(
-                  describe(walkthroughId, request.sessionId, request.cwd),
-                ),
-              ),
-            ),
+            queue.withPermits(1)(write.pipe(Effect.andThen(after))),
           ),
-          Effect.ensuring(done(request.sessionId).pipe(Effect.andThen(bump))),
+          Effect.ensuring(done(queued).pipe(Effect.andThen(bump))),
         );
       };
 
-      // Stores the Walkthrough's row and its hunks, being written.
+      // A Session's Walkthrough is written by its Fork, and becomes its PR's description.
+      const forkWriting = (prepared: {
+        readonly id: string;
+        readonly request: Parameters<typeof writer.write>[0];
+        readonly rejections: ReturnType<typeof openRejections>;
+      }): Writing => ({
+        id: prepared.id,
+        key: prepared.request.sessionId,
+        fork: writer.write(prepared.request),
+        ids: prepared.request.hunks.map((hunk) => hunk.id),
+        decisions: prepared.request.decisions,
+        rejections: prepared.rejections,
+        after: describe(
+          prepared.id,
+          prepared.request.sessionId,
+          prepared.request.cwd,
+        ),
+        late: "The Fork took too long.",
+      });
+
+      // Stores the Walkthrough's row and its hunks, being written, numbered after its Session's or
+      // its Foreign PR's latest. A Foreign PR's that failed is replaced: nothing in it was
+      // reviewed, and walking through the PR again is how it's written.
       const insert = (
+        owner: Owner,
         walkthrough: {
           readonly id: string;
-          readonly sessionId: string;
           readonly repo: string;
           readonly since: WalkthroughSince;
           readonly prId: string | null;
@@ -756,6 +926,7 @@ export class Walkthroughs extends Context.Service<
           readonly headCommit: string;
           readonly headTree: string;
           readonly overlapping: ReadonlyArray<string>;
+          readonly mergeBase: string | null;
         },
         hunks: ReadonlyArray<PatchHunk & { readonly id: string }>,
       ) =>
@@ -764,11 +935,20 @@ export class Walkthroughs extends Context.Service<
           yield* sql
             .withTransaction(
               Effect.gen(function* () {
+                if (!("session" in owner)) {
+                  const failed = sql`SELECT w.id FROM walkthroughs w
+                    WHERE ${ownedBy(owner)} AND w.status = 'failed'`;
+                  yield* sql`DELETE FROM walkthrough_hunks WHERE walkthrough_id IN (${failed})`;
+                  yield* sql`DELETE FROM walkthroughs WHERE id IN (${failed})`;
+                }
                 const [last] = yield* sql<{ number: number }>`
-                  SELECT MAX(number) AS number FROM walkthroughs
-                  WHERE session_id = ${walkthrough.sessionId}`;
+                  SELECT MAX(w.number) AS number FROM walkthroughs w
+                  WHERE ${ownedBy(owner)}`;
                 yield* sql`INSERT INTO walkthroughs ${sql.insert({
                   ...walkthrough,
+                  ...("session" in owner
+                    ? { sessionId: owner.session }
+                    : { prRepo: owner.repo, prNumber: owner.number }),
                   number: (last?.number ?? 0) + 1,
                   status: "writing",
                   overlapping: JSON.stringify(walkthrough.overlapping),
@@ -810,7 +990,7 @@ export class Walkthroughs extends Context.Service<
         const repo = yield* snapshots
           .repo(cwd)
           .pipe(Effect.mapError(gitFailed));
-        const rows = yield* load(sessionId);
+        const rows = yield* load({ session: sessionId });
         const previous = rows.walkthroughs.findLast(
           (w) => w.status === "ready",
         );
@@ -869,9 +1049,9 @@ export class Walkthroughs extends Context.Service<
           yield* citable(sessionId, repo),
         );
         yield* insert(
+          { session: sessionId },
           {
             id,
-            sessionId,
             repo,
             since: base.since,
             prId: null,
@@ -879,28 +1059,21 @@ export class Walkthroughs extends Context.Service<
             headCommit: head.commit,
             headTree: head.tree,
             overlapping,
+            mergeBase: null,
           },
           prepared.hunks,
         );
         return { id, ...prepared };
       });
 
-      // Starts the Fork on what `prepare` stored, behind any of the Session's being written.
-      const start = (prepared: {
-        readonly id: string;
-        readonly request: Parameters<typeof writer.write>[0];
-        readonly rejections: ReturnType<typeof openRejections>;
-      }) =>
+      // Starts the writer on what was stored, behind any of its Session's or PR's being written.
+      const begin = (job: Writing) =>
         bump.pipe(
-          Effect.andThen(
-            FiberMap.run(
-              forks,
-              prepared.id,
-              compose(prepared.id, prepared.request, prepared.rejections),
-            ),
-          ),
+          Effect.andThen(FiberMap.run(forks, job.id, compose(job))),
           Effect.asVoid,
         );
+      const start = (prepared: Parameters<typeof forkWriting>[0]) =>
+        begin(forkWriting(prepared));
 
       const write = Effect.fn("Walkthroughs.write")(function* (
         sessionId: string,
@@ -937,7 +1110,7 @@ export class Walkthroughs extends Context.Service<
         yield* snapshots
           .pin(repo, walkthroughRef(id), pr.to)
           .pipe(Effect.mapError(gitFailed));
-        const rows = yield* load(sessionId);
+        const rows = yield* load({ session: sessionId });
         const prepared = requestOf(
           sessionId,
           pr.cwd,
@@ -947,9 +1120,9 @@ export class Walkthroughs extends Context.Service<
           yield* citable(sessionId, repo),
         );
         yield* insert(
+          { session: sessionId },
           {
             id,
-            sessionId,
             repo,
             since,
             prId: pr.id,
@@ -957,10 +1130,91 @@ export class Walkthroughs extends Context.Service<
             headCommit: pr.to,
             headTree,
             overlapping: [],
+            mergeBase: null,
           },
           prepared.hunks,
         );
         return { id, ...prepared };
+      });
+
+      // A Foreign PR's change is between two commits of the PR's own worktree, read by a fresh
+      // writer in it. Its Sections may cite the Project's Decisions, and its Rejections are the
+      // developer's own notes on its earlier Walkthroughs.
+      const prepareForeign = Effect.fn("Walkthroughs.prepareForeign")(
+        function* (change: ForeignChange) {
+          const owner = { repo: change.pr.repo, number: change.pr.number };
+          const repo = yield* snapshots
+            .repo(change.cwd)
+            .pipe(Effect.mapError(gitFailed));
+          const [baseTree, headTree] = yield* Effect.all([
+            snapshots.treeOf(repo, change.from),
+            snapshots.treeOf(repo, change.to),
+          ]).pipe(Effect.mapError(gitFailed));
+          const patch = yield* snapshots
+            .diff(repo, change.from, change.to)
+            .pipe(Effect.mapError(gitFailed));
+          if (patch.length === 0)
+            return yield* new PrNothingToReview({ number: change.pr.number });
+          const id = crypto.randomUUID();
+          yield* snapshots
+            .pin(repo, walkthroughRef(id), change.to)
+            .pipe(Effect.mapError(gitFailed));
+          const rows = yield* load(owner);
+          const { hunks, rejections, asked } = askingOf(
+            patch,
+            rows,
+            yield* decisionsOfProject(change.project).pipe(Effect.orDie),
+          );
+          yield* insert(
+            owner,
+            {
+              id,
+              // The Project, for a Walkthrough with no Session's folder behind it.
+              repo: change.project,
+              since: "pr",
+              prId: null,
+              baseTree,
+              headCommit: change.to,
+              headTree,
+              overlapping: [],
+              mergeBase: change.mergeBase,
+            },
+            hunks,
+          );
+          return {
+            id,
+            key: keyOf(owner),
+            fork: writer.explore({
+              cwd: change.cwd,
+              since: "pr",
+              pr: change.pr,
+              ...asked,
+            }),
+            ids: hunks.map((hunk) => hunk.id),
+            decisions: asked.decisions,
+            rejections,
+            after: Effect.void,
+            late: "The writer took too long.",
+          } satisfies Writing;
+        },
+      );
+
+      const writeForeign = Effect.fn("Walkthroughs.writeForeign")(function* (
+        change: ForeignChange,
+      ) {
+        const queued = keyOf({
+          repo: change.pr.repo,
+          number: change.pr.number,
+        });
+        if (writing.has(queued))
+          return yield* new PrWalkthroughInProgress({
+            number: change.pr.number,
+          });
+        yield* started(queued);
+        const prepared = yield* prepareForeign(change).pipe(
+          Effect.onError(() => done(queued)),
+        );
+        return yield* begin(prepared);
       });
 
       const writePr = Effect.fn("Walkthroughs.writePr")(function* (
@@ -979,7 +1233,7 @@ export class Walkthroughs extends Context.Service<
         walkthroughId: string,
         sessionId: string,
       ) {
-        const rows = yield* load(sessionId);
+        const rows = yield* load({ session: sessionId });
         const walkthrough = rows.walkthroughs.find(
           (w) => w.id === walkthroughId,
         );
@@ -1010,14 +1264,26 @@ export class Walkthroughs extends Context.Service<
         );
       });
 
-      const findSession = (walkthroughId: string) =>
-        sessionOf(walkthroughId).pipe(
+      // Whose change the Walkthrough explains.
+      const findOwner = (walkthroughId: string) =>
+        ownerRow(walkthroughId).pipe(
           Effect.orDie,
           Effect.flatMap(
             Option.match({
               onNone: () =>
                 Effect.fail(new WalkthroughNotFound({ id: walkthroughId })),
-              onSome: ({ sessionId }) => Effect.succeed(sessionId),
+              onSome: ({
+                sessionId,
+                prRepo,
+                prNumber,
+              }): Effect.Effect<Owner> =>
+                sessionId !== null
+                  ? Effect.succeed({ session: sessionId })
+                  : prRepo !== null && prNumber !== null
+                    ? Effect.succeed({ repo: prRepo, number: prNumber })
+                    : Effect.die(
+                        `Walkthrough ${walkthroughId} has neither a Session nor a PR`,
+                      ),
             }),
           ),
         );
@@ -1027,10 +1293,10 @@ export class Walkthroughs extends Context.Service<
         item: string,
         input: VerdictInput,
       ) {
-        const sessionId = yield* findSession(walkthroughId);
+        const owner = yield* findOwner(walkthroughId);
         const reviewed = yield* reviewing.withPermits(1)(
           Effect.gen(function* () {
-            const rows = yield* load(sessionId);
+            const rows = yield* load(owner);
             const walkthrough = rows.walkthroughs.find(
               (w) => w.id === walkthroughId,
             );
@@ -1061,7 +1327,7 @@ export class Walkthroughs extends Context.Service<
             yield* sql`UPDATE ${table} SET verdict = ${input.kind}, note = ${note},
               decided_at = ${now} WHERE walkthrough_id = ${walkthroughId} AND id = ${item}`;
 
-            const after = yield* load(sessionId);
+            const after = yield* load(owner);
             const open =
               after.sections.some(
                 (s) => s.walkthroughId === walkthroughId && s.verdict === null,
@@ -1078,22 +1344,27 @@ export class Walkthroughs extends Context.Service<
             return !open;
           }).pipe(Effect.catchTag("SqlError", Effect.die)),
         );
-        // A failed send is recorded on the Walkthrough for the developer to retry; the verdict stands.
-        if (reviewed)
-          yield* sendRedirect(walkthroughId, sessionId).pipe(Effect.ignore);
+        // A failed send is recorded on the Walkthrough for the developer to retry; the verdict
+        // stands. A Foreign PR's Rejections go nowhere until the developer posts a review.
+        if (reviewed && "session" in owner)
+          yield* sendRedirect(walkthroughId, owner.session).pipe(Effect.ignore);
       });
 
+      // A Foreign PR's Walkthrough has no Session to send its Rejections to, so it's never open
+      // for this.
       const redirect = Effect.fn("Walkthroughs.redirect")(function* (
         walkthroughId: string,
       ) {
-        const sessionId = yield* findSession(walkthroughId);
-        const rows = yield* load(sessionId);
+        const owner = yield* findOwner(walkthroughId);
+        if (!("session" in owner))
+          return yield* new ReviewClosed({ id: walkthroughId });
+        const rows = yield* load(owner);
         const walkthrough = rows.walkthroughs.find(
           (w) => w.id === walkthroughId,
         );
         if (walkthrough?.reviewedAt === null || walkthrough === undefined)
           return yield* new ReviewClosed({ id: walkthroughId });
-        return yield* sendRedirect(walkthroughId, sessionId);
+        return yield* sendRedirect(walkthroughId, owner.session);
       });
 
       // A PR's Walkthrough Fern was writing when it stopped is written now, as its change is
@@ -1108,7 +1379,8 @@ export class Walkthroughs extends Context.Service<
         }),
         execute: () => sql`
           SELECT id, session_id, repo, since FROM walkthroughs
-          WHERE status = 'writing' AND pr_id IS NOT NULL ORDER BY created_at, number`,
+          WHERE status = 'writing' AND pr_id IS NOT NULL AND session_id IS NOT NULL
+          ORDER BY created_at, number`,
       });
       const resume = Effect.fn("Walkthroughs.resume")(function* (walkthrough: {
         readonly id: string;
@@ -1120,7 +1392,7 @@ export class Walkthroughs extends Context.Service<
         const info = yield* sdk("getSessionInfo", () =>
           getSessionInfo(sessionId),
         ).pipe(Effect.orElseSucceed(() => undefined));
-        const rows = yield* load(sessionId);
+        const rows = yield* load({ session: sessionId });
         // Stored in the order they were numbered, so they number the same again.
         const stored = rows.hunks.filter((h) => h.walkthroughId === id);
         const prepared = requestOf(
@@ -1134,6 +1406,10 @@ export class Walkthroughs extends Context.Service<
         yield* started(sessionId);
         yield* start({ id, ...prepared });
       });
+      // A Foreign PR's Walkthrough Fern was writing when it stopped fails instead: its PR may have
+      // moved on since, and the developer walks through it again when they want it.
+      yield* sql`UPDATE walkthroughs SET status = 'failed', error = ${STOPPED}
+        WHERE status = 'writing' AND pr_number IS NOT NULL`.pipe(Effect.orDie);
       yield* unfinished().pipe(
         Effect.orDie,
         Effect.flatMap((rows) => Effect.forEach(rows, resume)),
@@ -1143,7 +1419,7 @@ export class Walkthroughs extends Context.Service<
         Request: Schema.String,
         Result: Schema.Struct({
           id: Schema.String,
-          sessionId: Schema.String,
+          sessionId: Schema.NullOr(Schema.String),
           repo: Schema.String,
           since: WalkthroughSince,
           status: WalkthroughStatus,
@@ -1153,22 +1429,24 @@ export class Walkthroughs extends Context.Service<
           sql`SELECT id, session_id, repo, since, status, pr_id FROM walkthroughs WHERE id = ${id}`,
       });
       // Its change is stored with it, so it's written again the way Fern resumes one after a
-      // restart. A snapshot Walkthrough isn't: the next one covers what it missed.
+      // restart. A snapshot Walkthrough isn't: the next one covers what it missed. Nor is a
+      // Foreign PR's: walking through the PR again replaces it.
       const rewrite = Effect.fn("Walkthroughs.rewrite")(function* (
         walkthroughId: string,
       ) {
         const found = yield* walkthroughRow(walkthroughId).pipe(Effect.orDie);
         if (Option.isNone(found))
           return yield* new WalkthroughNotFound({ id: walkthroughId });
-        if (found.value.status !== "failed" || found.value.prId === null)
+        const { status, prId, sessionId } = found.value;
+        if (status !== "failed" || prId === null || sessionId === null)
           return yield* new NotRewritable({ id: walkthroughId });
         yield* sql`UPDATE walkthroughs SET status = 'writing', error = NULL
           WHERE id = ${walkthroughId}`.pipe(Effect.orDie);
-        return yield* resume(found.value);
+        return yield* resume({ ...found.value, sessionId });
       }, reviewing.withPermits(1));
 
       const rejectionsOf = (sessionId: string) =>
-        load(sessionId).pipe(
+        load({ session: sessionId }).pipe(
           Effect.map((rows) =>
             openRejections(rows).map(({ walkthroughId, title }) => ({
               walkthroughId,
@@ -1223,6 +1501,10 @@ export class Walkthroughs extends Context.Service<
         verdict,
         redirect,
         rewrite,
+        listForeign,
+        writeForeign,
+        foreignStates,
+        liveForeignStates,
         openRejections: rejectionsOf,
       });
     }),

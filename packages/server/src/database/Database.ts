@@ -4,7 +4,7 @@ import { SqlClient } from "effect/sql";
 
 // Fern's records in one local SQLite file (ADR 0004). Migrations only run up, at startup, in id
 // order; add new ones at the end and never edit one that has shipped.
-const migrations = {
+export const migrations = {
   "0001_walkthroughs": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`
@@ -292,6 +292,109 @@ const migrations = {
     yield* sql`ALTER TABLE checkpoints ADD COLUMN kind TEXT NOT NULL DEFAULT 'phase'`;
     yield* sql`ALTER TABLE checkpoints ADD COLUMN refusal TEXT`;
     yield* sql`ALTER TABLE checkpoints ADD COLUMN refusal_sent_at INTEGER`;
+  }),
+  // A Walkthrough explains a Session's change or a Foreign PR's (ADR 0010): `session_id` is NULL on
+  // a Foreign PR's, which names the PR instead, as GitHub's "owner/name" and its number, and keeps
+  // the merge-base its change was taken from. Exactly one of the two is set, and each numbers its
+  // Walkthroughs from 1. SQLite can't loosen NOT NULL in place, and the Migrator runs in one
+  // transaction, where foreign keys can't be turned off, so the table is rebuilt together with the
+  // two that reference it, every column named, and the copies renamed into place.
+  "0018_foreign_pr_walkthroughs": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE walkthroughs_new (
+        id TEXT PRIMARY KEY,
+        session_id TEXT,
+        repo TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        error TEXT,
+        since TEXT NOT NULL,
+        base_tree TEXT NOT NULL,
+        head_commit TEXT NOT NULL,
+        head_tree TEXT NOT NULL,
+        overlapping TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        reviewed_at INTEGER,
+        redirect_sent_at INTEGER,
+        redirect_error TEXT,
+        pr_id TEXT REFERENCES stack_prs (id),
+        pr_repo TEXT,
+        pr_number INTEGER,
+        merge_base TEXT,
+        UNIQUE (session_id, number),
+        UNIQUE (pr_repo, pr_number, number),
+        CHECK ((session_id IS NULL) <> (pr_number IS NULL)),
+        CHECK ((pr_repo IS NULL) = (pr_number IS NULL))
+      )
+    `;
+    yield* sql`
+      INSERT INTO walkthroughs_new (id, session_id, repo, number, status, error, since, base_tree,
+        head_commit, head_tree, overlapping, created_at, reviewed_at, redirect_sent_at,
+        redirect_error, pr_id)
+      SELECT id, session_id, repo, number, status, error, since, base_tree, head_commit, head_tree,
+        overlapping, created_at, reviewed_at, redirect_sent_at, redirect_error, pr_id
+      FROM walkthroughs
+    `;
+    yield* sql`
+      CREATE TABLE walkthrough_sections_new (
+        walkthrough_id TEXT NOT NULL REFERENCES walkthroughs_new (id),
+        id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        explanation TEXT NOT NULL,
+        dropped TEXT,
+        fixes_walkthrough_id TEXT,
+        fixes_item_id TEXT,
+        verdict TEXT,
+        note TEXT,
+        decided_at INTEGER,
+        decisions TEXT,
+        risk TEXT,
+        risk_reason TEXT,
+        PRIMARY KEY (walkthrough_id, id)
+      )
+    `;
+    yield* sql`
+      INSERT INTO walkthrough_sections_new (walkthrough_id, id, position, title, explanation,
+        dropped, fixes_walkthrough_id, fixes_item_id, verdict, note, decided_at, decisions, risk,
+        risk_reason)
+      SELECT walkthrough_id, id, position, title, explanation, dropped, fixes_walkthrough_id,
+        fixes_item_id, verdict, note, decided_at, decisions, risk, risk_reason
+      FROM walkthrough_sections
+    `;
+    yield* sql`
+      CREATE TABLE walkthrough_hunks_new (
+        walkthrough_id TEXT NOT NULL REFERENCES walkthroughs_new (id),
+        id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        header TEXT NOT NULL,
+        lines TEXT NOT NULL,
+        added INTEGER NOT NULL,
+        removed INTEGER NOT NULL,
+        section_id TEXT,
+        not_from_session INTEGER NOT NULL DEFAULT 0,
+        verdict TEXT,
+        note TEXT,
+        decided_at INTEGER,
+        PRIMARY KEY (walkthrough_id, id)
+      )
+    `;
+    yield* sql`
+      INSERT INTO walkthrough_hunks_new (walkthrough_id, id, position, path, header, lines, added,
+        removed, section_id, not_from_session, verdict, note, decided_at)
+      SELECT walkthrough_id, id, position, path, header, lines, added, removed, section_id,
+        not_from_session, verdict, note, decided_at
+      FROM walkthrough_hunks
+    `;
+    yield* sql`DROP TABLE walkthrough_sections`;
+    yield* sql`DROP TABLE walkthrough_hunks`;
+    yield* sql`DROP TABLE walkthroughs`;
+    // Renaming the parent rewrites the children's references to it.
+    yield* sql`ALTER TABLE walkthroughs_new RENAME TO walkthroughs`;
+    yield* sql`ALTER TABLE walkthrough_sections_new RENAME TO walkthrough_sections`;
+    yield* sql`ALTER TABLE walkthrough_hunks_new RENAME TO walkthrough_hunks`;
   }),
 };
 

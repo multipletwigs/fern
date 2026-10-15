@@ -203,6 +203,8 @@ const FakeCodeHost = Layer.succeed(
         asked.push({ cwd, call: "stacks", args: { prs } });
         return listedStacks;
       }),
+    pullRequest: () => Effect.die("unused"),
+    fetchPullRequest: () => Effect.die("unused"),
   }),
 );
 
@@ -213,6 +215,7 @@ let gate: Deferred.Deferred<void> | undefined;
 const Writer = Layer.succeed(
   WalkthroughWriter,
   WalkthroughWriter.of({
+    explore: () => Effect.die("unused"),
     write: (request) =>
       Effect.gen(function* () {
         requests.push(request);

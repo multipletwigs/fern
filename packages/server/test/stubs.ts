@@ -25,7 +25,10 @@ import { Worktrees, WorktreesDir } from "../src/worktree/Worktrees";
 
 export const NoWriter = Layer.succeed(
   WalkthroughWriter,
-  WalkthroughWriter.of({ write: () => Effect.die("unused") }),
+  WalkthroughWriter.of({
+    write: () => Effect.die("unused"),
+    explore: () => Effect.die("unused"),
+  }),
 );
 
 export const UnusedTranscripts = Layer.succeed(
@@ -95,6 +98,10 @@ export const UnusedWalkthroughs = Layer.succeed(
     verdict: () => Effect.die("unused"),
     redirect: () => Effect.die("unused"),
     rewrite: () => Effect.die("unused"),
+    listForeign: () => Stream.die("unused"),
+    writeForeign: () => Effect.die("unused"),
+    foreignStates: () => Effect.die("unused"),
+    liveForeignStates: () => Stream.die("unused"),
     openRejections: () => Effect.die("unused"),
   }),
 );
@@ -138,6 +145,8 @@ export const NotListing = {
   login: () => Effect.die("unused"),
   pullRequests: () => Effect.die("unused"),
   stacks: () => Effect.die("unused"),
+  pullRequest: () => Effect.die("unused"),
+  fetchPullRequest: () => Effect.die("unused"),
 };
 
 // A code host Fern never asks, where no Session's work lands as a Stack.
@@ -193,6 +202,7 @@ export const UnusedPullRequests = Layer.succeed(
   PullRequests.of({
     available: () => Effect.die("unused"),
     list: () => Effect.die("unused"),
+    walkThrough: () => Effect.die("unused"),
   }),
 );
 

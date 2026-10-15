@@ -2,6 +2,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
 import { walkthroughsAtom } from "../walkthrough/atoms";
+import { ReviewOutcome } from "../walkthrough/ReviewOutcome";
+import { WriteWalkthroughButton } from "../walkthrough/WriteWalkthroughButton";
 import { reviewQueue, waitingCount } from "./queue";
 import { ReviewEmpty } from "./ReviewEmpty";
 import { ReviewQueue } from "./ReviewQueue";
@@ -27,11 +29,18 @@ export function ReviewView({
         <ReviewEmpty sessionId={sessionId} />
       ) : (
         <ReviewQueue
-          sessionId={sessionId}
+          reviewKey={sessionId}
           walkthroughs={walkthroughs}
           queue={queue}
           waiting={waitingCount(walkthroughs)}
           active={active}
+          actions={
+            <WriteWalkthroughButton
+              sessionId={sessionId}
+              disabled={walkthroughs.some((w) => w.status === "writing")}
+            />
+          }
+          outcome={ReviewOutcome}
         />
       )}
     </div>

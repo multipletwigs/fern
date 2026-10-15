@@ -4,10 +4,9 @@ import { SessionBusy, SessionInUse, SessionNotFound } from "./Sessions";
 import { RiskLevel, VerdictKind, WalkthroughStatus } from "./States";
 
 // A Walkthrough explains what a Session changed since its previous Walkthrough, or since it
-// started, or what one PR of its Stack changes, in Sections the developer approves or rejects one
-// by one. Fern takes the change from
-// git snapshots, so every changed line is either claimed by a Section or shown as an Unexplained
-// change.
+// started, or what one PR of its Stack changes, or what a Foreign PR changes, in Sections the
+// developer approves or rejects one by one. Fern takes the change from git, so every changed line
+// is either claimed by a Section or shown as an Unexplained change.
 
 // The developer's call on a Section or an Unexplained change. A Rejection always carries a note.
 export const Verdict = Schema.Struct({
@@ -70,7 +69,7 @@ export class Section extends Schema.Class<Section>("Section")({
   // The Decisions behind this change, in the order the Fork cited them.
   decisions: Schema.Array(CitedDecision),
   // Cites no Decision: the agent changed something the developer never agreed to. False for a
-  // Section written before Sections cited Decisions.
+  // Section written before Sections cited Decisions, and always for a Foreign PR's.
   unplanned: Schema.Boolean,
   // Unset for a Section written before Sections carried one.
   risk: Schema.optional(Risk),
@@ -87,7 +86,8 @@ export class UnexplainedChange extends Schema.Class<UnexplainedChange>(
 
 // Where a Walkthrough's change starts: the previous Walkthrough, the snapshot Fern took when the
 // Session started, for a Session Fern never ran, the last commit, or, for a PR of the Session's
-// Stack, the PR below it (where the bottom one leaves `main`).
+// Stack, the PR below it (where the bottom one leaves `main`). For a Foreign PR, `pr` is the whole
+// PR, from where it leaves its base.
 export const WalkthroughSince = Schema.Literals([
   "previous",
   "start",
@@ -108,10 +108,22 @@ export class PullRequest extends Schema.Class<PullRequest>("PullRequest")({
   ticket: Schema.optional(Schema.Int),
 }) {}
 
+// A pull request on a Project's repo that no Hosted Session's Stack holds (ADR 0010).
+export class ForeignPr extends Schema.Class<ForeignPr>("ForeignPr")({
+  // The repo on GitHub, as "owner/name".
+  repo: Schema.String,
+  number: Schema.Int,
+}) {}
+
+// Exactly one of `sessionId` and `foreignPr` is set: a Walkthrough explains a Session's change or a
+// Foreign PR's.
 export class Walkthrough extends Schema.Class<Walkthrough>("Walkthrough")({
   id: Schema.String,
-  sessionId: Schema.String,
-  // 1 for the Session's first Walkthrough.
+  // The Session whose change it explains.
+  sessionId: Schema.optional(Schema.String),
+  // The Foreign PR it explains, written by a fresh read-only agent rather than a Fork.
+  foreignPr: Schema.optional(ForeignPr),
+  // 1 for the Session's, or the Foreign PR's, first Walkthrough.
   number: Schema.Int,
   status: WalkthroughStatus,
   // Why writing failed, when it did.

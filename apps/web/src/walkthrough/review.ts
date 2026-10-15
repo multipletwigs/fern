@@ -34,12 +34,24 @@ export const prStatus = (
   return { status: `${open} to review`, tone: "amber" };
 };
 
-export const sinceLabel: Record<WalkthroughSince, string> = {
+const sinceLabel: Record<WalkthroughSince, string> = {
   previous: "Since the previous Walkthrough",
   start: "Since the Session started",
   head: "Since the last commit · Fern didn't see this Session start",
   pr: "One PR of the Session's Stack",
 };
+
+// A Foreign PR's: the whole PR, or what changed since the developer's previous Walkthrough of it.
+const foreignSinceLabel: Partial<Record<WalkthroughSince, string>> = {
+  previous: "Since your previous Walkthrough",
+  pr: "The whole PR, from where it leaves its base",
+};
+
+// Where the Walkthrough's change starts, as its heading says.
+export const sinceOf = (walkthrough: Walkthrough) =>
+  (walkthrough.foreignPr !== undefined
+    ? foreignSinceLabel[walkthrough.since]
+    : undefined) ?? sinceLabel[walkthrough.since];
 
 // A Section's hunks by file, in the order the files first appear.
 export const byFile = (hunks: ReadonlyArray<Hunk>) => {
