@@ -40,7 +40,9 @@ export function ReviewView({
               disabled={walkthroughs.some((w) => w.status === "writing")}
             />
           }
-          outcome={ReviewOutcome}
+          renderOutcome={(walkthrough) => (
+            <ReviewOutcome walkthrough={walkthrough} />
+          )}
         />
       )}
     </div>
