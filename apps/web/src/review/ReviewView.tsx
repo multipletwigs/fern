@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
-import { useMemo } from "react";
+import { type RefObject, useMemo } from "react";
 import { walkthroughsAtom } from "../walkthrough/atoms";
 import { reviewQueue, waitingCount } from "./queue";
 import { ReviewEmpty } from "./ReviewEmpty";
@@ -11,9 +11,11 @@ import { ReviewQueue } from "./ReviewQueue";
 export function ReviewView({
   sessionId,
   active,
+  composerField,
 }: {
   sessionId: string;
   active: boolean;
+  composerField: RefObject<HTMLTextAreaElement | null>;
 }) {
   const result = useAtomValue(walkthroughsAtom(sessionId));
   const walkthroughs = useMemo(
@@ -32,6 +34,7 @@ export function ReviewView({
           queue={queue}
           waiting={waitingCount(walkthroughs)}
           active={active}
+          composerField={composerField}
         />
       )}
     </div>

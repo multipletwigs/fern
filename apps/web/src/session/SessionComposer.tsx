@@ -1,9 +1,10 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { isInUseElsewhere, type SessionHeader } from "@repo/api";
 import { Composer } from "@repo/ui/Composer";
 import { QueuedMessages } from "@repo/ui/QueuedMessages";
+import { QuoteCard } from "@repo/ui/QuoteCard";
 import { Cause, DateTime, Exit, Option } from "effect";
-import { useState } from "react";
+import { type RefObject, useState } from "react";
 import {
   interruptAtom,
   modelChoiceAtom,
@@ -15,6 +16,8 @@ import { outgoing, useCommands } from "./commands";
 import { SessionTools } from "./SessionTools";
 import { SessionMilestones } from "../autonomy/SessionMilestones";
 import { SessionCheckpoint } from "../flow/SessionCheckpoint";
+import { reviewQuoteAtom } from "../review/atoms";
+import { withQuote } from "../review/quote";
 import { SessionWalkthrough } from "../walkthrough/SessionWalkthrough";
 import { newSessionAtom } from "../workspace/showing";
 
@@ -38,13 +41,16 @@ export function SessionComposer({
   now,
   lastTurnId,
   reviewing,
+  field,
 }: {
   header: SessionHeader;
   now: number;
   // The transcript's latest developer turn, which a sent message will follow.
   lastTurnId: string | undefined;
-  // The Review tab is open, so what it already shows stays out of the space above the box.
+  // The Review tab is open, so what it already shows stays out of the space above the box, and
+  // the box itself shows only to ask about a highlighted passage.
   reviewing: boolean;
+  field: RefObject<HTMLTextAreaElement | null>;
 }) {
   const send = useAtomSet(sendMessageAtom, { mode: "promiseExit" });
   const interrupt = useAtomSet(interruptAtom);
@@ -54,6 +60,8 @@ export function SessionComposer({
   const commands = useCommands(header.cwd);
   const model = useAtomValue(modelChoiceAtom(header.id));
   const [failure, setFailure] = useState<string>();
+  const [storedQuote, setQuote] = useAtom(reviewQuoteAtom(header.id));
+  const quote = reviewing ? storedQuote : undefined;
 
   const turn = header.hostedTurn;
   const queued = turn?.queued ?? [];
@@ -79,6 +87,18 @@ export function SessionComposer({
       }
       commands={commands}
       tools={<SessionTools header={header} now={now} disabled={inUse} />}
+      field={field}
+      boxHidden={reviewing && quote === undefined}
+      onEscape={quote && (() => setQuote(undefined))}
+      context={
+        quote && (
+          <QuoteCard
+            about={quote.about}
+            text={quote.text}
+            onDismiss={() => setQuote(undefined)}
+          />
+        )
+      }
       above={
         <>
           <SessionMilestones sessionId={header.id} />
@@ -90,18 +110,27 @@ export function SessionComposer({
           />
         </>
       }
-      onSend={async (message) => {
-        if (message.command === "clear") {
+      onSend={async (typed) => {
+        if (typed.command === "clear") {
           if (header.cwd) openNew(header.cwd);
           else setFailure("This Session has no folder to start a new one in.");
           return header.cwd !== undefined;
         }
+        // A highlighted passage goes with the message, quoted ahead of it, and is done with once
+        // the message is accepted.
+        const message =
+          quote && typed.command === undefined
+            ? { ...typed, text: withQuote(quote, typed.text) }
+            : typed;
         const payload = outgoing(message, model);
         // Into a running turn the message shows in the queue until the agent takes it in, at its
         // next tool call, and then in the transcript where it did.
         if (turn?.running) {
           const exit = await send({ params: { id: header.id }, payload });
-          if (Exit.isSuccess(exit)) return true;
+          if (Exit.isSuccess(exit)) {
+            if (quote) setQuote(undefined);
+            return true;
+          }
           const error = Cause.findErrorOption(exit.cause);
           setFailure(failureNotice(Option.getOrUndefined(error)?._tag));
           return false;
@@ -119,6 +148,7 @@ export function SessionComposer({
         if (Exit.isFailure(exit)) setPending(undefined);
         if (Exit.isSuccess(exit)) {
           setFailure(undefined);
+          if (quote) setQuote(undefined);
           return true;
         }
         const error = Cause.findErrorOption(exit.cause);

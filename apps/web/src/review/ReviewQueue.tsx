@@ -5,14 +5,23 @@ import { ReviewHeading } from "@repo/ui/ReviewHeading";
 import { ReviewLayout } from "@repo/ui/ReviewLayout";
 import { VerdictBar } from "@repo/ui/VerdictBar";
 import { Exit } from "effect";
-import { type KeyboardEvent, useLayoutEffect, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type RefObject,
+  type MouseEvent,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { verdictAtom } from "../walkthrough/atoms";
 import { prStatus, rowStatus, sinceLabel } from "../walkthrough/review";
 import { ReviewOutcome } from "../walkthrough/ReviewOutcome";
 import { WriteWalkthroughButton } from "../walkthrough/WriteWalkthroughButton";
-import { reviewAtAtom } from "./atoms";
+import { reviewAtAtom, reviewQuoteAtom } from "./atoms";
 import { moveFrom } from "./navigation";
 import { PendingPane } from "./PendingPane";
+import { quoteAbout } from "./quote";
 import {
   afterVerdict,
   isWaiting,
@@ -53,20 +62,35 @@ const entryDetail = (item: ReviewQueueItem) => {
 // changes, listed on the left under the Walkthrough, itself under its PR when the Session's work
 // lands as a Stack, bottom PR first, and one item at a time on the right. `a`
 // approves, `r` opens the note a Rejection needs, `j`/`k` move. After a verdict the view snaps to
-// the next item still waiting. `active` is false while the Session is out of sight.
+// the next item still waiting. `active` is false while the Session is out of sight. Highlighting a
+// passage in the open item quotes it in the composer, and typing then goes there instead of to
+// the keys above, until Escape drops the quote.
 export function ReviewQueue({
   sessionId,
   walkthroughs,
   queue,
   waiting,
   active,
+  composerField,
 }: {
   sessionId: string;
   walkthroughs: ReadonlyArray<Walkthrough>;
   queue: ReadonlyArray<ReviewQueueItem>;
   waiting: number;
   active: boolean;
+  composerField: RefObject<HTMLTextAreaElement | null>;
 }) {
+  const [quote, setQuote] = useAtom(reviewQuoteAtom(sessionId));
+  const wrapper = useRef<HTMLDivElement>(null);
+  // Dropping the quote hides the composer, and focus with it; it comes back here for the keys.
+  useEffect(() => {
+    const focused = document.activeElement;
+    if (quote || (focused !== document.body && focused?.checkVisibility()))
+      return;
+    wrapper.current
+      ?.querySelector<HTMLElement>("[role=group]")
+      ?.focus({ preventScroll: true });
+  }, [quote]);
   const [target, setTarget] = useAtom(reviewAtAtom(sessionId));
   const send = useAtomSet(verdictAtom, { mode: "promiseExit" });
   // By item key: the one whose verdict is on its way, whose verdict didn't save, and whose note
@@ -114,7 +138,35 @@ export function ReviewQueue({
     setNoting(item.key);
   };
 
+  // A passage highlighted in the open item, not in the list or a field, becomes the quote.
+  const capture = (event: MouseEvent<HTMLElement>) => {
+    if (!item) return;
+    const clicked = event.target;
+    if (
+      clicked instanceof Element &&
+      clicked.closest("nav, textarea, input, [contenteditable]")
+    )
+      return;
+    const selection = window.getSelection();
+    const text = selection?.toString().trim();
+    if (!selection || selection.isCollapsed || !text) return;
+    const node = selection.anchorNode;
+    const from = node instanceof Element ? node : node?.parentElement;
+    if (!from || from.closest("nav") || !event.currentTarget.contains(from))
+      return;
+    setQuote({ about: quoteAbout(item), text });
+  };
+
   const onKey = (event: KeyboardEvent<HTMLElement>) => {
+    if (quote) {
+      // A character typed lands in the box once it has focus, so moving focus is all it takes.
+      if (event.key.length === 1) composerField.current?.focus();
+      if (event.key === "Escape") {
+        window.getSelection()?.removeAllRanges();
+        setQuote(undefined);
+      }
+      return;
+    }
     const settled = queue.map((entry) => !isWaiting(entry));
     if (event.key === "j" || event.key === "k") {
       event.preventDefault();
@@ -225,33 +277,35 @@ export function ReviewQueue({
   });
 
   return (
-    <ReviewLayout
-      label="Review"
-      header={
-        <div className="space-y-3">
-          <p className="flex items-baseline justify-between gap-2">
-            <span className="text-[13px] font-medium text-ink">Review</span>
-            <span
-              className={
-                waiting > 0
-                  ? "font-mono text-[11px] text-amber/90 tabular-nums"
-                  : "font-mono text-[11px] text-faint"
-              }
-            >
-              {waiting > 0 ? `${waiting} waiting` : "Nothing waiting"}
-            </span>
-          </p>
-          <WriteWalkthroughButton
-            sessionId={sessionId}
-            disabled={walkthroughs.some((w) => w.status === "writing")}
-          />
-        </div>
-      }
-      items={items}
-      at={index}
-      active={active}
-      onSelect={goTo}
-      onKeyDown={onKey}
-    />
+    <div ref={wrapper} className="h-full" onMouseUp={capture}>
+      <ReviewLayout
+        label="Review"
+        header={
+          <div className="space-y-3">
+            <p className="flex items-baseline justify-between gap-2">
+              <span className="text-[13px] font-medium text-ink">Review</span>
+              <span
+                className={
+                  waiting > 0
+                    ? "font-mono text-[11px] text-amber/90 tabular-nums"
+                    : "font-mono text-[11px] text-faint"
+                }
+              >
+                {waiting > 0 ? `${waiting} waiting` : "Nothing waiting"}
+              </span>
+            </p>
+            <WriteWalkthroughButton
+              sessionId={sessionId}
+              disabled={walkthroughs.some((w) => w.status === "writing")}
+            />
+          </div>
+        }
+        items={items}
+        at={index}
+        active={active}
+        onSelect={goTo}
+        onKeyDown={onKey}
+      />
+    </div>
   );
 }

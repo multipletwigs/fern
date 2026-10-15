@@ -5,6 +5,7 @@ import {
   type DragEvent,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
   useLayoutEffect,
   useRef,
   useState,
@@ -49,6 +50,10 @@ export function Composer({
   commands = [],
   tools,
   above,
+  context,
+  boxHidden = false,
+  field: given,
+  onEscape,
   onSend,
   onStop,
 }: {
@@ -62,6 +67,14 @@ export function Composer({
   tools?: ReactNode;
   // Shown just above the box, e.g. messages waiting for the running turn.
   above?: ReactNode;
+  // Shown inside the box over the text, e.g. the passage the message asks about.
+  context?: ReactNode;
+  // Hides the box, keeping what's typed in it, while `above` still shows.
+  boxHidden?: boolean;
+  // The text field, for something outside to focus.
+  field?: RefObject<HTMLTextAreaElement | null>;
+  // Escape in the box with no command menu open, e.g. to drop what `context` shows.
+  onEscape?: () => void;
   // Resolves true once the message is accepted. The box clears straight away and gets the message
   // back if it isn't.
   // `command` is the slash command, without its slash, when the message is one; `text` is then
@@ -84,7 +97,8 @@ export function Composer({
   const [menuDismissed, setMenuDismissed] = useState(false);
   const [chipWidth, setChipWidth] = useState(0);
   const picker = useRef<HTMLInputElement>(null);
-  const field = useRef<HTMLTextAreaElement>(null);
+  const own = useRef<HTMLTextAreaElement>(null);
+  const field = given ?? own;
   const chip = useRef<HTMLSpanElement>(null);
   // Where to put the caret after the box's text is replaced.
   const caret = useRef<number>(undefined);
@@ -200,6 +214,11 @@ export function Composer({
       event.preventDefault();
       return;
     }
+    if (event.key === "Escape" && onEscape) {
+      event.preventDefault();
+      onEscape();
+      return;
+    }
     // Backspace at the very start takes the chip back into text, to edit or delete.
     if (
       event.key === "Backspace" &&
@@ -235,8 +254,10 @@ export function Composer({
           "relative flex flex-col rounded-2xl bg-white/[0.06] shadow-[0_1px_2px_rgb(0_0_0/0.5),0_10px_30px_rgb(0_0_0/0.35),inset_0_1px_0_rgb(255_255_255/0.06)] transition-colors focus-within:bg-white/[0.08]",
           dragging && "bg-white/[0.1]",
           disabled && "opacity-60",
+          boxHidden && "hidden",
         )}
       >
+        {context}
         {menuOpen && (
           <CommandMenu
             commands={matches}

@@ -135,6 +135,8 @@ export function Session({
     );
 
   const list = useRef<VirtuosoHandle>(null);
+  // The composer's text field, which typing in the Review tab moves to while a passage is quoted.
+  const composerField = useRef<HTMLTextAreaElement>(null);
   const scroller = useRef<HTMLElement>(null);
   // The latest message sent from here, kept with room under it for the reply. It scrolls to the top
   // of the view when sent; the recorded message that later takes its place doesn't scroll again.
@@ -406,7 +408,11 @@ export function Session({
           />
         )}
         {tabs.tab === "review" && (
-          <ReviewView sessionId={id} active={visible} />
+          <ReviewView
+            sessionId={id}
+            active={visible}
+            composerField={composerField}
+          />
         )}
         {agent !== undefined && (
           <SubagentView
@@ -426,6 +432,7 @@ export function Session({
               now={now}
               lastTurnId={lastTurnId}
               reviewing={tabs.tab === "review"}
+              field={composerField}
             />
           </ReviewLayoutFoot>
         </div>

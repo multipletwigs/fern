@@ -1,4 +1,5 @@
 import { Atom } from "effect/reactivity";
+import type { ReviewQuote } from "./quote";
 import type { ReviewTarget } from "./queue";
 
 // What's open in a Session's Review tab, kept while the tab is out of sight. Until something is
@@ -26,4 +27,10 @@ export const showReviewAtom = Atom.family((sessionId: string) =>
       );
     },
   ),
+);
+
+// The passage highlighted in a Session's Review tab, which the composer shows and sends with the
+// next message. The composer stays out of the tab without one.
+export const reviewQuoteAtom = Atom.family((_sessionId: string) =>
+  Atom.make<ReviewQuote | undefined>(undefined).pipe(Atom.keepAlive),
 );
