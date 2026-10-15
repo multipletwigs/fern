@@ -134,15 +134,14 @@ layer(
   { excludeTestServices: true },
 )("Worktree Sessions", (it) => {
   it.effect(
-    "starts a Session on its own branch from main, in a worktree outside the repo, in the Grill",
+    "starts a Session as a chat on its own branch from main, in a worktree outside the repo",
     () =>
       Effect.gen(function* () {
-        const { turn } = yield* startSession("Add a dark mode toggle!");
+        const { id, turn } = yield* startSession("Add a dark mode toggle!");
 
-        assert.strictEqual(
-          turn.text,
-          "/grill-with-docs Add a dark mode toggle!",
-        );
+        assert.strictEqual(turn.text, "Add a dark mode toggle!");
+        const live = yield* makeLive;
+        assert.isNull(yield* first(live.Flow({ session: id })));
         assert.isTrue(turn.cwd.startsWith(`${dataDir}/`));
         assert.isFalse(turn.cwd.startsWith(`${repo}/`));
         const branch = git(turn.cwd, "branch", "--show-current");
@@ -257,7 +256,10 @@ layer(
         for (const folder of [outside, empty]) {
           transcript(folder, crypto.randomUUID(), "Earlier work", "cli");
           const { id } = yield* client.sessions.start({
-            payload: { root: folder, message: { text: "Tidy up" } },
+            payload: {
+              root: folder,
+              message: { text: "/grill-with-docs Tidy up" },
+            },
           });
           const turn = yield* Effect.suspend(() =>
             Effect.fromNullishOr(started.find((t) => t.sessionId === id)),

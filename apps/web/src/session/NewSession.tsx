@@ -13,8 +13,9 @@ import { outgoing, useCommands } from "./commands";
 import { currentModel, MODELS, NEW_SESSION_MODEL } from "./models";
 import { newSessionAtom } from "../workspace/showing";
 
-// A new piece of work in a Project. Its opening prompt starts a Session on a branch of its own from
-// `main`, in its own worktree, beginning with a Grill; the Session then takes over the screen.
+// A new Session in a Project. Its opening message starts it on a branch of its own from `main`, in
+// its own worktree, as a chat: the Flow starts with a Grill when the developer says so, or right
+// away when the message is the Grill's command. The Session then takes over the screen.
 export function NewSession({ root }: { root: string }) {
   const start = useAtomSet(startSessionAtom, { mode: "promiseExit" });
   const select = useAtomSet(selectedSessionAtom);
@@ -28,12 +29,10 @@ export function NewSession({ root }: { root: string }) {
   return (
     <div className="flex h-full flex-col pt-12">
       <div className="flex-1">
-        <Empty
-          text={`New session in ${root.split("/").at(-1) ?? root}, on its own branch from main`}
-        />
+        <Empty text={`New session in ${root.split("/").at(-1) ?? root}`} />
       </div>
       <Composer
-        placeholder="What should we work on? It starts with a grill."
+        placeholder="Ask about this Project, or describe what to build"
         running={false}
         notice={failure}
         commands={commands}

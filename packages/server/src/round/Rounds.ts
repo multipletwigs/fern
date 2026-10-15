@@ -344,11 +344,18 @@ export class Rounds extends Context.Service<
           ),
         );
 
-      // The Round tool, for every Hosted Session: the agent's call opens the Round and returns at
-      // once, so no turn is held open while the developer answers.
+      // The Round tool, for every Hosted Session whose Flow has started, with its Grill: the agent's
+      // call opens the Round and returns at once, so no turn is held open while the developer
+      // answers.
       const run = Effect.runPromiseWith(yield* Effect.context());
       yield* tools.register({
         steering: STEERING,
+        when: (session) =>
+          hosted
+            .session(session)
+            .pipe(
+              Effect.map((found) => (found?.flowStartedAt ?? null) !== null),
+            ),
         tools: (session) => [
           tool(
             TOOL,

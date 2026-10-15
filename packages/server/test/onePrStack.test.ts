@@ -354,7 +354,10 @@ const ticketless = (root = project()) =>
   Effect.gen(function* () {
     const client = yield* makeClient;
     const { id } = yield* client.sessions.start({
-      payload: { root, message: { text: "Fix the typo in the README" } },
+      payload: {
+        root,
+        message: { text: "/grill-with-docs Fix the typo in the README" },
+      },
     });
     const first = yield* turnWhere(id, () => true);
     const cwd = first.options.cwd;
@@ -860,7 +863,10 @@ layer(fern, { excludeTestServices: true })("A Stack of one PR", (it) => {
       Effect.gen(function* () {
         const client = yield* makeClient;
         const { id } = yield* client.sessions.start({
-          payload: { root: project(), message: { text: "Add dark mode" } },
+          payload: {
+            root: project(),
+            message: { text: "/grill-with-docs Add dark mode" },
+          },
         });
         const grill = yield* turnWhere(id, () => true);
         const cwd = grill.options.cwd;

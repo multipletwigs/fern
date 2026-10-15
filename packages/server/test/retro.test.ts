@@ -176,7 +176,7 @@ const startSession = (text: string) =>
   Effect.gen(function* () {
     const client = yield* makeClient;
     const { id } = yield* client.sessions.start({
-      payload: { root: repo, message: { text } },
+      payload: { root: repo, message: { text: `/grill-with-docs ${text}` } },
     });
     yield* turnWhere(id);
     return id;

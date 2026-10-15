@@ -43,3 +43,21 @@ export const declineCheckpointAtom = ApiClient.mutation("flows", "decline");
 export const sendCheckpointAtom = ApiClient.mutation("flows", "send");
 export const skipPhaseAtom = ApiClient.mutation("flows", "skip");
 export const findingVerdictAtom = ApiClient.mutation("flows", "findingVerdict");
+
+// How a Hosted Session stands with its Flow, and its Grill suggestions; null for a Session Fern
+// didn't start.
+export const flowStartAtom = Atom.family((sessionId: string) =>
+  LiveClient.runtime
+    .atom(
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const client = yield* LiveClient;
+          return client("FlowStart", { session: sessionId });
+        }),
+      ).pipe(resubscribe(Schedule.spaced("2 seconds"))),
+    )
+    .pipe(Atom.setIdleTTL("1 minute")),
+);
+
+export const startGrillAtom = ApiClient.mutation("flows", "grill");
+export const dismissSuggestionAtom = ApiClient.mutation("flows", "dismiss");

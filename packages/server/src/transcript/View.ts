@@ -30,6 +30,7 @@ import {
   usageTotal,
   userMessage,
 } from "./messages";
+import { SUGGEST_GRILL_CALL, suggestionIn } from "../flow/grill";
 
 // Turns the messages the Agent SDK reads from a transcript into renderable items. The SDK has
 // already resolved the active branch and dropped injected skill bodies.
@@ -139,6 +140,10 @@ const toolCall = (
         })),
       ),
     ),
+    grillSuggestion:
+      block.name === SUGGEST_GRILL_CALL && result && !result.isError
+        ? suggestionIn(result.text)
+        : undefined,
   };
 };
 

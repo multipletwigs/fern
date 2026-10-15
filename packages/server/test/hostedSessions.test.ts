@@ -72,13 +72,17 @@ layer(HostedSessions.layer.pipe(Layer.provide(DatabaseLive(":memory:"))))(
       () =>
         Effect.gen(function* () {
           const sessions = yield* HostedSessions;
-          yield* sessions.record(FERN, {
-            projectRoot: "/work/app",
-            branch: "new-thing-a1b2c3",
-            base: "0000000000000000000000000000000000000000",
-            path: "/work/new",
-            cwd: "/work/new",
-          });
+          yield* sessions.record(
+            FERN,
+            {
+              projectRoot: "/work/app",
+              branch: "new-thing-a1b2c3",
+              base: "0000000000000000000000000000000000000000",
+              path: "/work/new",
+              cwd: "/work/new",
+            },
+            { flow: true },
+          );
           const ids = (yield* sessions.listed).map((info) => info.sessionId);
           assert.deepStrictEqual(ids, [MOVED, FERN, TERMINAL]);
           assert.isTrue(yield* sessions.isProject("/work/new"));

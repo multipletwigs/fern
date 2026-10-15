@@ -8,6 +8,7 @@ import { Autonomy } from "./autonomy/Autonomy";
 import { CodeHost } from "./codehost/CodeHost";
 import { Commands } from "./commands/Commands";
 import { Flows } from "./flow/Flows";
+import { FlowStart } from "./flow/FlowStart";
 import { IssueTracker } from "./issue/IssueTracker";
 import { Transcripts } from "./transcript/Transcripts";
 import { Snapshots } from "./snapshot/Snapshots";
@@ -55,6 +56,7 @@ export const SessionsHandlers = HttpApiBuilder.group(
   Effect.fn(function* (handlers) {
     const transcripts = yield* Transcripts;
     const turns = yield* Turns;
+    const flowStart = yield* FlowStart;
     const cleanup = yield* WorktreeCleanup;
     const autonomy = yield* Autonomy;
     return handlers.handleAll({
@@ -62,7 +64,7 @@ export const SessionsHandlers = HttpApiBuilder.group(
       running: () => turns.running,
       // Only the developer sends through here; Fern's own messages go straight to Turns.
       send: ({ params, payload }) =>
-        turns
+        flowStart
           .send(params.id, payload)
           .pipe(
             Effect.andThen(
@@ -119,6 +121,7 @@ export const FlowsHandlers = HttpApiBuilder.group(
   "flows",
   Effect.fn(function* (handlers) {
     const flows = yield* Flows;
+    const flowStart = yield* FlowStart;
     return handlers.handleAll({
       approve: ({ params }) => flows.approve(params.id),
       decline: ({ params, payload }) => flows.decline(params.id, payload.note),
@@ -127,6 +130,8 @@ export const FlowsHandlers = HttpApiBuilder.group(
         flows.skip(params.session, payload.phase, payload.reason),
       findingVerdict: ({ params, payload }) =>
         flows.findingVerdict(params.id, payload),
+      grill: ({ params, payload }) => flowStart.grill(params.session, payload),
+      dismiss: ({ params }) => flowStart.dismiss(params.id),
     });
   }),
 );
@@ -215,6 +220,8 @@ export const handlersWith = (
       Transcripts.layer,
       WorktreeCleanup.layer,
       Rounds.layer,
+      // A Session starts as a chat, and gets into its Flow with its Grill.
+      FlowStart.layer,
       VerifySlots.layer,
       Tools.layer,
     ]),

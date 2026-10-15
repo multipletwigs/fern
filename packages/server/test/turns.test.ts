@@ -47,6 +47,9 @@ const KnownSessions = Layer.succeed(
   HostedSessions.of({
     record: (id) => Effect.sync(() => hostedIds.add(id)),
     archive: () => Effect.die("unused"),
+    startFlow: () => Effect.die("unused"),
+    unstartFlow: () => Effect.die("unused"),
+    setBranch: () => Effect.die("unused"),
     worktrees: Effect.succeed([]),
     sessions: Effect.succeed([]),
     session: () => Effect.undefined,
@@ -71,6 +74,9 @@ const FakeWorktrees = Layer.succeed(
         cwd: "/worktrees/work",
       }),
     isMerged: () => Effect.die("unused"),
+    hasCommits: () => Effect.die("unused"),
+    rename: () => Effect.die("unused"),
+    deleteBranch: () => Effect.die("unused"),
     isDirty: () => Effect.die("unused"),
     remove: () => Effect.die("unused"),
   }),
@@ -215,7 +221,7 @@ layer(TestTurns, { excludeTestServices: true })("Turns", (it) => {
 
         assert.deepStrictEqual(
           started.map((turn) => turn.text),
-          ["/grill-with-docs first", "into the turn", "resumed"],
+          ["first", "into the turn", "resumed"],
         );
         assert.strictEqual(opened.length, 2);
         assert.deepInclude(opened[0], { sessionId: id, ...hostedOptions(id) });
@@ -251,7 +257,7 @@ layer(
   { excludeTestServices: true },
 )("Turns with the default Fern tools", (it) => {
   it.effect(
-    "describes the Flow to a Hosted Session and offers it no tools",
+    "with no service contributing, offers a Hosted Session no tools and adds nothing to its prompt",
     () =>
       Effect.gen(function* () {
         started.length = 0;
@@ -268,10 +274,7 @@ layer(
           type: "preset",
           preset: "claude_code",
         });
-        assert.match(
-          JSON.stringify(options?.systemPrompt),
-          /Grill.*Spec.*Implement.*Retro/,
-        );
+        assert.deepInclude(options?.systemPrompt, { append: "" });
       }),
   );
 });

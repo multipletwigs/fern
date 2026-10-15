@@ -246,7 +246,10 @@ const grilled = (root: string, reply: { choice?: string; text?: string }) =>
     const client = yield* makeClient;
     const live = yield* makeLive;
     const { id } = yield* client.sessions.start({
-      payload: { root, message: { text: "Add a dark mode toggle" } },
+      payload: {
+        root,
+        message: { text: "/grill-with-docs Add a dark mode toggle" },
+      },
     });
     const turn = yield* turnOf(id, 0);
     yield* callTool(turn, "post_round", {

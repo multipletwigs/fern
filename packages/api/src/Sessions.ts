@@ -202,6 +202,8 @@ export const ToolCall = Schema.TaggedStruct("ToolCall", {
   // Edit and Write calls carry their change as unified-diff style lines ("-old" / "+new").
   diff: Schema.optional(Schema.Array(Schema.String)),
   questions: Schema.optional(Schema.Array(Question)),
+  // A `suggest_grill` call: the Grill suggestion it raised, shown as its card.
+  grillSuggestion: Schema.optional(Schema.String),
 });
 
 // An Agent call: the Subagent it started, in place of a ToolCall. Its type and description come

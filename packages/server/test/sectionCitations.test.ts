@@ -189,7 +189,10 @@ const grilled = (
     const client = yield* makeClient;
     const live = yield* makeLive;
     const { id } = yield* client.sessions.start({
-      payload: { root, message: { text: "Add a dark mode toggle" } },
+      payload: {
+        root,
+        message: { text: "/grill-with-docs Add a dark mode toggle" },
+      },
     });
     const turn = yield* turnOf(id, 0);
     // oxlint-disable-next-line no-underscore-dangle -- the MCP server's own registry

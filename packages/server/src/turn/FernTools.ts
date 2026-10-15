@@ -14,9 +14,6 @@ export interface HostedOptions {
   readonly appendSystemPrompt: string;
 }
 
-// The steering every Hosted Session gets, before what each service contributes.
-export const FLOW_STEERING = `This Session is hosted by Fern and follows Fern's Flow: Grill, then Spec, then Implement, then Retro. Grill sharpens the idea with the developer, Spec writes the Brief and its tickets, Implement builds them, and Retro looks back on the Session for Findings about the Setup. Fern moves the Session from one Phase to the next.`;
-
 // The MCP server Fern's tools are on, which names them `mcp__fern__<tool>`.
 export const SERVER = "fern";
 
@@ -57,10 +54,9 @@ export class FernTools extends Context.Service<
             ),
             Effect.map((all): HostedOptions => {
               const tools = all.flatMap((c) => c.tools(id));
-              const appendSystemPrompt = [
-                FLOW_STEERING,
-                ...all.flatMap((c) => (c.steering ? [c.steering] : [])),
-              ].join("\n\n");
+              const appendSystemPrompt = all
+                .flatMap((c) => (c.steering ? [c.steering] : []))
+                .join("\n\n");
               if (tools.length === 0)
                 return { mcpServers: {}, allowedTools: [], appendSystemPrompt };
               return {

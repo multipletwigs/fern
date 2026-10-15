@@ -293,6 +293,24 @@ const migrations = {
     yield* sql`ALTER TABLE checkpoints ADD COLUMN refusal TEXT`;
     yield* sql`ALTER TABLE checkpoints ADD COLUMN refusal_sent_at INTEGER`;
   }),
+  // A Hosted Session starts as a chat and its Flow starts with its Grill, when the developer says
+  // so. Every Session before this began with its Grill. Claude's Grill suggestions are kept with
+  // how the developer decided each, and whether Claude has heard a turned-down one was.
+  "0018_grill_suggestions": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE hosted_sessions ADD COLUMN flow_started_at INTEGER`;
+    yield* sql`UPDATE hosted_sessions SET flow_started_at = started_at
+      WHERE project_root IS NOT NULL`;
+    yield* sql`CREATE TABLE grill_suggestions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      what TEXT NOT NULL,
+      status TEXT NOT NULL,
+      raised_at INTEGER NOT NULL,
+      decided_at INTEGER,
+      told_at INTEGER
+    )`;
+  }),
 };
 
 // The database at `filename`, migrated. Columns are snake_case in SQL and camelCase in code.

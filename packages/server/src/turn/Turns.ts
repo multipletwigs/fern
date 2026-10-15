@@ -40,6 +40,7 @@ import { sdk } from "../agentSdk";
 import { Snapshots } from "../snapshot/Snapshots";
 import { FernTools } from "./FernTools";
 import { Worktrees } from "../worktree/Worktrees";
+import { grillTopic } from "../flow/grill";
 import { HostedSessions } from "./HostedSessions";
 
 // How long a Session's Claude Code process stays open with nothing to do. The next message resumes
@@ -656,18 +657,17 @@ export class Turns extends Context.Service<
         const project =
           (yield* hosted.worktrees).find((w) => w.cwd === root)?.projectRoot ??
           root;
+        // A Session starts as a chat, unless its opening message is the Grill's command, which
+        // starts its Flow with it (ADR 0010). Its branch is named after the work either way.
+        const topic = grillTopic(openingPrompt.text);
         // In a folder outside git, or a repo with no commit to branch from, it runs in place.
         const where = (yield* worktrees.branchable(project))
-          ? yield* worktrees.create(project, openingPrompt.text)
+          ? yield* worktrees.create(project, topic ?? openingPrompt.text)
           : { cwd: project };
         const id = crypto.randomUUID();
-        yield* hosted.record(id, where);
+        yield* hosted.record(id, where, { flow: topic !== undefined });
         yield* markStart(where.cwd, id);
-        // Only the developer can start a skill, so Fern sends the Grill's for them.
-        const message = {
-          ...openingPrompt,
-          text: `/grill-with-docs ${openingPrompt.text.trim()}`.trim(),
-        };
+        const message = openingPrompt;
         const input = yield* Queue.unbounded<Sent, Cause.Done>();
         const process = yield* Effect.sync(() =>
           newProcess(id, where.cwd, input, message),

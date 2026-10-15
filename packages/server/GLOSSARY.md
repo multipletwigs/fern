@@ -65,11 +65,11 @@ A recognised point in a Setup's track record, often carrying an offer of more Au
 _Avoid_: Gem, badge, achievement, streak
 
 **Hosted Session**:
-A Session Fern drives itself, in its own git worktree (in place, for a folder outside git or a repo with no commits yet), so its Redirects, Checkpoints, and Phases are recorded exactly. Each Hosted Session carries one piece of work through the whole Flow.
+A Session Fern drives itself, in its own git worktree (in place, for a folder outside git or a repo with no commits yet), so its Redirects, Checkpoints, and Phases are recorded exactly. It starts as a chat about its Project; once the developer starts its Grill, it carries one piece of work through the whole Flow.
 _Avoid_: Fern session, managed session
 
 **Archived**:
-Said of a Hosted Session whose worktree Fern has removed, because the developer archived it, its Stack Landed, or its branch merged into `main`. The sidebar no longer lists it; its branch is kept. Uncommitted changes are only thrown away when the developer confirms.
+Said of a Hosted Session whose worktree Fern has removed, because the developer archived it, its Stack Landed, its branch merged into `main`, or it sat idle a week as a chat with nothing committed. The sidebar no longer lists it; its branch is kept, unless it never held a commit. Uncommitted changes are only thrown away when the developer confirms.
 _Avoid_: Closed, deleted
 
 **Subagent**:
@@ -153,12 +153,16 @@ _Avoid_: Decline, revert
 ### Workflow
 
 **Flow**:
-The ordered Phases every Hosted Session follows: Grill, Spec, Implement, then Retro. It is versioned as part of the Setup.
+The ordered Phases a Hosted Session follows once the developer starts its Grill: Grill, Spec, Implement, then Retro. It is versioned as part of the Setup.
 _Avoid_: Pipeline, workflow, process
 
 **Phase**:
 A named stage of a Flow: Grill, Spec, Implement, or Retro. The agent decides when its Phase is done, and moving to the next Phase is a Checkpoint unless Autonomy covers it.
 _Avoid_: Step, stage, mode
+
+**Grill suggestion**:
+Claude's proposal, in a chat whose Flow hasn't started, that a piece of work it named in a line be Grilled before it's built. The developer starts the Grill on it, edited or not, or turns it down for now.
+_Avoid_: Grill prompt, nudge, work detection
 
 **Skip**:
 A Phase passed over with a one-line reason from the developer, shown on the Flow and kept in the Session's record.

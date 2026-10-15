@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
 import { SessionAutonomy } from "./Autonomy";
-import { Checkpoint, Flow, SessionPhase } from "./Flows";
+import { Checkpoint, Flow, FlowStart, SessionPhase } from "./Flows";
 import {
   FileContent,
   FileNotFound,
@@ -96,6 +96,13 @@ export class LiveRpcs extends RpcGroup.make(
   Rpc.make("Flow", {
     payload: { session: Schema.NonEmptyString },
     success: Schema.NullOr(Flow),
+    stream: true,
+  }),
+  // How a Hosted Session stands with its Flow, and its Grill suggestions, re-sent whenever either
+  // changes. Null for a Session Fern didn't start.
+  Rpc.make("FlowStart", {
+    payload: { session: Schema.NonEmptyString },
+    success: Schema.NullOr(FlowStart),
     stream: true,
   }),
   // Every Session's pending Checkpoint, oldest first: the one queue the developer clears.

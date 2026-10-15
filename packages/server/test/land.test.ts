@@ -288,7 +288,10 @@ const startIn = (root: string) =>
   Effect.gen(function* () {
     const client = yield* makeClient;
     const { id } = yield* client.sessions.start({
-      payload: { root, message: { text: "Add a dark mode toggle" } },
+      payload: {
+        root,
+        message: { text: "/grill-with-docs Add a dark mode toggle" },
+      },
     });
     const turn = yield* turnWhere(id, () => true);
     return { id, turn, cwd: turn.options.cwd };

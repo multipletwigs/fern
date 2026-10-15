@@ -3,18 +3,21 @@ import {
   UncommittedChanges,
   type WorktreeError,
 } from "@repo/api";
+import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import {
+  Clock,
   Context,
-  type Duration,
+  Duration,
   Effect,
   Layer,
   Schedule,
   Semaphore,
 } from "effect";
+import { sdk } from "../agentSdk";
 import { Flows } from "../flow/Flows";
 import { Stacks } from "../stack/Stacks";
 import { Terminals } from "../terminal/Terminals";
-import { HostedSessions } from "../turn/HostedSessions";
+import { type HostedWorktree, HostedSessions } from "../turn/HostedSessions";
 import { Turns } from "../turn/Turns";
 import { Worktrees } from "./Worktrees";
 
@@ -24,10 +27,19 @@ export const CleanupInterval = Context.Reference<Duration.Input>(
   { defaultValue: () => "5 minutes" },
 );
 
+// How long a Session that never started its Flow, nor committed anything, sits idle before Fern
+// archives it and deletes its branch (ADR 0010).
+export const ChatIdleLimit = Context.Reference<Duration.Input>(
+  "@repo/server/worktree/ChatIdleLimit",
+  { defaultValue: () => "7 days" },
+);
+
 // Takes Sessions' worktrees away once they're done with (ADR 0005): when the developer archives a
-// Session, and when its work has merged into `main` and its Flow is over: its branch, or its Stack
-// as GitHub says (ADR 0009). A merged Session is archived too. Worktrees with uncommitted changes
-// are only removed when the developer says so.
+// Session, and when its work has merged into `main` and its Flow is over, or never started: its
+// branch, or its Stack as GitHub says (ADR 0009). A merged Session is archived too. A chat, its Flow
+// never started, with nothing committed, goes once it has sat idle long enough, and its branch with
+// it, as it does when archived. Worktrees with uncommitted changes are only removed when the
+// developer says so.
 export class WorktreeCleanup extends Context.Service<
   WorktreeCleanup,
   {
@@ -53,6 +65,9 @@ export class WorktreeCleanup extends Context.Service<
       const stacks = yield* Stacks;
       const terminals = yield* Terminals;
       const interval = yield* CleanupInterval;
+      const idleLimit = Duration.toMillis(
+        Duration.fromInputUnsafe(yield* ChatIdleLimit),
+      );
       // One removal at a time, so archiving and the merge sweep never race on a worktree.
       const lock = yield* Semaphore.make(1);
 
@@ -69,6 +84,43 @@ export class WorktreeCleanup extends Context.Service<
           .kill(id)
           .pipe(Effect.catchTag("TerminalError", () => Effect.void));
 
+      // A chat's branch with nothing on it but `main` as it was holds nothing to keep.
+      const dropUnused = (session: HostedWorktree) =>
+        Effect.gen(function* () {
+          if (session.flowStartedAt !== null) return;
+          if (
+            yield* worktrees.hasCommits(
+              session.projectRoot,
+              session.branch,
+              session.baseCommit,
+            )
+          )
+            return;
+          yield* worktrees.deleteBranch(session.projectRoot, session.branch);
+        });
+
+      // A chat that never started its Flow, has no PR, and has nothing committed or uncommitted,
+      // idle past the limit.
+      const forgotten = (session: HostedWorktree) =>
+        Effect.gen(function* () {
+          if (session.flowStartedAt !== null) return false;
+          if ((yield* stacks.prs(session.id)).length > 0) return false;
+          if (
+            yield* worktrees.hasCommits(
+              session.projectRoot,
+              session.branch,
+              session.baseCommit,
+            )
+          )
+            return false;
+          const info = yield* sdk("getSessionInfo", () =>
+            getSessionInfo(session.id),
+          ).pipe(Effect.orElseSucceed(() => undefined));
+          if (!info) return false;
+          const now = yield* Clock.currentTimeMillis;
+          return now - info.lastModified >= idleLimit;
+        });
+
       const archive = Effect.fn("WorktreeCleanup.archive")(function* (
         id: string,
         { force }: { readonly force: boolean },
@@ -82,11 +134,13 @@ export class WorktreeCleanup extends Context.Service<
         yield* worktrees.remove(session.projectRoot, session.worktree, {
           force,
         });
+        yield* dropUnused(session);
         return yield* hosted.archive(id);
       }, lock.withPermits(1));
 
-      // Archives every Session whose work merged once its Flow is over, unless its turn is running
-      // or its worktree has uncommitted changes.
+      // Archives every Session whose work merged once its Flow is over, or never started, and every
+      // chat forgotten past the limit, unless its turn is running or its worktree has uncommitted
+      // changes.
       const sweep = Effect.gen(function* () {
         const sessions = (yield* hosted.worktrees).filter(
           (w) => w.archivedAt === null,
@@ -95,7 +149,8 @@ export class WorktreeCleanup extends Context.Service<
           sessions,
           (session) =>
             Effect.gen(function* () {
-              if (!(yield* flows.isOver(session.id))) return;
+              const chat = session.flowStartedAt === null;
+              if (!chat && !(yield* flows.isOver(session.id))) return;
               // A squash-merged Stack leaves the branch out of `main`'s history, so GitHub says when
               // it landed (ADR 0009).
               const landed =
@@ -106,7 +161,8 @@ export class WorktreeCleanup extends Context.Service<
                       session.branch,
                       session.baseCommit,
                     );
-              if (!landed) return;
+              const unused = !landed && (yield* forgotten(session));
+              if (!landed && !unused) return;
               if (yield* worktrees.isDirty(session.worktree)) return;
               // Looked at last, right before the worktree goes: a turn may have started meanwhile.
               if ((yield* turns.running).includes(session.id)) return;
@@ -115,6 +171,7 @@ export class WorktreeCleanup extends Context.Service<
               yield* worktrees.remove(session.projectRoot, session.worktree, {
                 force: false,
               });
+              if (unused) yield* dropUnused(session);
               yield* hosted.archive(session.id);
             }).pipe(
               lock.withPermits(1),

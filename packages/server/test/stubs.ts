@@ -3,6 +3,7 @@ import { Autonomy } from "../src/autonomy/Autonomy";
 import { CodeHost } from "../src/codehost/CodeHost";
 import { Commands } from "../src/commands/Commands";
 import { Flows } from "../src/flow/Flows";
+import { FlowStart } from "../src/flow/FlowStart";
 import { IssueTracker, type TrackedIssue } from "../src/issue/IssueTracker";
 import { ProjectSettings } from "../src/project/ProjectSettings";
 import { Rounds } from "../src/round/Rounds";
@@ -159,6 +160,9 @@ export const UnusedWorktrees = Layer.succeed(
     branchable: () => Effect.die("unused"),
     create: () => Effect.die("unused"),
     isMerged: () => Effect.die("unused"),
+    hasCommits: () => Effect.die("unused"),
+    rename: () => Effect.die("unused"),
+    deleteBranch: () => Effect.die("unused"),
     isDirty: () => Effect.die("unused"),
     remove: () => Effect.die("unused"),
   }),
@@ -201,6 +205,30 @@ export const UnusedFlows = Layer.succeed(
     send: () => Effect.die("unused"),
     skip: () => Effect.die("unused"),
     findingVerdict: () => Effect.die("unused"),
+  }),
+);
+
+export const UnusedFlowStart = Layer.succeed(
+  FlowStart,
+  FlowStart.of({
+    state: () => Stream.die("unused"),
+    grill: () => Effect.die("unused"),
+    dismiss: () => Effect.die("unused"),
+    send: () => Effect.die("unused"),
+  }),
+);
+
+// Sends straight through to Turns, for tests of sending that don't start a Session's Flow.
+export const TurnsFlowStart = Layer.effect(
+  FlowStart,
+  Effect.gen(function* () {
+    const turns = yield* Turns;
+    return FlowStart.of({
+      state: () => Stream.die("unused"),
+      grill: () => Effect.die("unused"),
+      dismiss: () => Effect.die("unused"),
+      send: (id, message) => turns.send(id, message),
+    });
   }),
 );
 

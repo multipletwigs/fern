@@ -178,3 +178,14 @@ export const DeveloperToolState = Schema.Literals([
   "unknown",
 ]);
 export type DeveloperToolState = typeof DeveloperToolState.Type;
+
+// Grill suggestions
+
+// Where a Grill suggestion stands: waiting on the developer, turned down for now, or taken, its
+// Grill started.
+export const GrillSuggestionStatus = Schema.Literals([
+  "pending",
+  "dismissed",
+  "started",
+]);
+export type GrillSuggestionStatus = typeof GrillSuggestionStatus.Type;

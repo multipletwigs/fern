@@ -21,6 +21,7 @@ import {
   UnusedCommands,
   UnusedProjectSettings,
   UnusedFlows,
+  TurnsFlowStart,
   UnusedRounds,
   UnusedTranscripts,
   UnusedWalkthroughs,
@@ -65,6 +66,9 @@ const TestTurns = Turns.layer.pipe(
       HostedSessions.of({
         record: () => Effect.void,
         archive: () => Effect.die("unused"),
+        startFlow: () => Effect.die("unused"),
+        unstartFlow: () => Effect.die("unused"),
+        setBranch: () => Effect.die("unused"),
         worktrees: Effect.succeed([]),
         sessions: Effect.succeed([]),
         session: () => Effect.undefined,
@@ -420,7 +424,7 @@ const SessionsApi = Layer.mergeAll(
   UnusedSubagents,
   UnusedVerifySlots,
   UnusedTools,
-  TestTurns,
+  TurnsFlowStart.pipe(Layer.provideMerge(TestTurns)),
 );
 layer(
   Layer.mergeAll(

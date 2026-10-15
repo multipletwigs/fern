@@ -20,9 +20,11 @@ export type Row =
       readonly calls: ReadonlyArray<ToolCall>;
     };
 
-// AskUserQuestion renders as cards, so it never folds into a run.
+// AskUserQuestion and Grill suggestions render as cards, so they never fold into a run.
 const foldable = (item: TranscriptItem): item is ToolCall =>
-  item._tag === "ToolCall" && item.questions === undefined;
+  item._tag === "ToolCall" &&
+  item.questions === undefined &&
+  item.grillSuggestion === undefined;
 
 export const toRows = (items: ReadonlyArray<TranscriptItem>) => {
   const rows: Array<Row> = [];

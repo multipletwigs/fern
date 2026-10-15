@@ -327,7 +327,10 @@ const implemented = (root: string) =>
   Effect.gen(function* () {
     const client = yield* makeClient;
     const { id } = yield* client.sessions.start({
-      payload: { root, message: { text: "Add a dark mode toggle" } },
+      payload: {
+        root,
+        message: { text: "/grill-with-docs Add a dark mode toggle" },
+      },
     });
     yield* approveAt(id, "grill");
     yield* approveAt(id, "spec");
@@ -622,7 +625,10 @@ test.live(
       const root = project();
       const client = yield* makeClient;
       const other = yield* client.sessions.start({
-        payload: { root, message: { text: "Rename the settings page" } },
+        payload: {
+          root,
+          message: { text: "/grill-with-docs Rename the settings page" },
+        },
       });
       const waiting = yield* flowOf(
         other.id,
@@ -632,7 +638,10 @@ test.live(
       // This Session reports Spec done, and the tracker never answers Fern's check.
       hanging = true;
       const { id } = yield* client.sessions.start({
-        payload: { root, message: { text: "Add a dark mode toggle" } },
+        payload: {
+          root,
+          message: { text: "/grill-with-docs Add a dark mode toggle" },
+        },
       });
       yield* approveAt(id, "grill");
       yield* eventually(() => (asked > 0 ? true : undefined));

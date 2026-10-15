@@ -20,6 +20,7 @@ import {
 import { type Components, Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { SessionCodeToggle } from "../code/SessionCodeToggle";
 import { SessionChecklist } from "../flow/SessionChecklist";
+import { StartGrill } from "../flow/StartGrill";
 import { type PendingPrompt, pendingPromptAtom, transcriptAtom } from "./atoms";
 import { GrillView } from "../grill/GrillView";
 import { ItemView } from "./ItemView";
@@ -363,6 +364,7 @@ export function Session({
             onClose={tabs.close}
           />
         </div>
+        <StartGrill sessionId={id} />
         <SessionWorktree sessionId={id} />
         {changed !== undefined && <SessionCodeToggle changed={changed} />}
         <SessionTerminalToggle sessionId={id} />

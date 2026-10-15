@@ -30,11 +30,13 @@ export const HostedWorktree = Schema.Struct({
   baseCommit: Schema.String,
   // When the Session was archived, and its worktree removed.
   archivedAt: Schema.NullOr(Schema.Finite),
+  // When its Flow started, with its Grill; null while it's still a chat.
+  flowStartedAt: Schema.NullOr(Schema.Finite),
 });
 export type HostedWorktree = typeof HostedWorktree.Type;
 
-// A Session Fern started that follows the Flow: in a worktree of its own, or in place in a folder
-// outside git.
+// A Session Fern started in a Project, which can follow the Flow: in a worktree of its own, or in
+// place in a folder outside git. It starts as a chat; its Flow starts with its Grill.
 export const FlowSession = Schema.Struct({
   id: Schema.String,
   cwd: Schema.String,
@@ -42,6 +44,8 @@ export const FlowSession = Schema.Struct({
   // The worktree's root, for a Session in one.
   worktree: Schema.NullOr(Schema.String),
   archivedAt: Schema.NullOr(Schema.Finite),
+  // When its Flow started; null while it's still a chat.
+  flowStartedAt: Schema.NullOr(Schema.Finite),
 });
 export type FlowSession = typeof FlowSession.Type;
 
@@ -52,20 +56,28 @@ export class HostedSessions extends Context.Service<
   HostedSessions,
   {
     // Remembers a Session Fern started, in a worktree or in place in the folder, so it's listed
-    // from then on, under the Project it was started from, and follows the Flow.
+    // from then on, under the Project it was started from: a chat, unless `flow` starts its Flow
+    // with it.
     record(
       id: string,
       where: Worktree | { readonly cwd: string },
+      options: { readonly flow: boolean },
     ): Effect.Effect<void>;
+    // Starts the Session's Flow; one started already stays as it was.
+    startFlow(id: string): Effect.Effect<void>;
+    // Takes back a Flow start whose Grill never reached the Session.
+    unstartFlow(id: string): Effect.Effect<void>;
+    // The branch the Session's worktree has checked out, after it was renamed.
+    setBranch(id: string, branch: string): Effect.Effect<void>;
     // Leaves the Session out of every listing from now on.
     archive(id: string): Effect.Effect<void>;
     // Each time a Session is recorded or archived from now on.
     readonly changes: Stream.Stream<void>;
     // Every Session Fern started in a worktree, archived or not.
     readonly worktrees: Effect.Effect<ReadonlyArray<HostedWorktree>>;
-    // Every Session following the Flow, archived or not.
+    // Every Session Fern started in a Project, archived or not, its Flow started or not.
     readonly sessions: Effect.Effect<ReadonlyArray<FlowSession>>;
-    // The Session following the Flow with the id, archived or not.
+    // The Session Fern started in a Project with the id, archived or not.
     session(id: string): Effect.Effect<FlowSession | undefined>;
     // Every listed Session, most recently active first.
     readonly listed: Effect.Effect<
@@ -103,25 +115,28 @@ export class HostedSessions extends Context.Service<
         Request: Schema.Void,
         Result: HostedWorktree,
         execute: () => sql`
-          SELECT id, cwd, project_root, branch, worktree, base_commit, archived_at
+          SELECT id, cwd, project_root, branch, worktree, base_commit, archived_at,
+            flow_started_at
           FROM hosted_sessions
           WHERE project_root IS NOT NULL AND branch IS NOT NULL
             AND worktree IS NOT NULL AND base_commit IS NOT NULL`,
       })().pipe(Effect.orDie);
-      // A Session Fern started follows the Flow, unless it predates the Flow: those have no
+      // A Session Fern started can follow the Flow, unless it predates the Flow: those have no
       // Project of their own recorded.
       const flowSessions = SqlSchema.findAll({
         Request: Schema.Void,
         Result: FlowSession,
         execute: () => sql`
-          SELECT id, cwd, project_root, worktree, archived_at FROM hosted_sessions
+          SELECT id, cwd, project_root, worktree, archived_at, flow_started_at
+          FROM hosted_sessions
           WHERE project_root IS NOT NULL`,
       })().pipe(Effect.orDie);
       const flowSession = SqlSchema.findOneOption({
         Request: Schema.String,
         Result: FlowSession,
         execute: (id) => sql`
-          SELECT id, cwd, project_root, worktree, archived_at FROM hosted_sessions
+          SELECT id, cwd, project_root, worktree, archived_at, flow_started_at
+          FROM hosted_sessions
           WHERE id = ${id} AND project_root IS NOT NULL`,
       });
       const session = Effect.fn("HostedSessions.session")(function* (
@@ -149,6 +164,7 @@ export class HostedSessions extends Context.Service<
       const record = Effect.fn("HostedSessions.record")(function* (
         id: string,
         where: Worktree | { readonly cwd: string },
+        { flow }: { readonly flow: boolean },
       ) {
         const startedAt = yield* Clock.currentTimeMillis;
         // In place, the folder is the Project.
@@ -161,8 +177,32 @@ export class HostedSessions extends Context.Service<
           branch: worktree?.branch ?? null,
           baseCommit: worktree?.base ?? null,
           worktree: worktree?.path ?? null,
+          flowStartedAt: flow ? startedAt : null,
         })}`;
         yield* PubSub.publish(changed, undefined);
+      }, Effect.orDie);
+
+      const startFlow = Effect.fn("HostedSessions.startFlow")(function* (
+        id: string,
+      ) {
+        const at = yield* Clock.currentTimeMillis;
+        yield* sql`UPDATE hosted_sessions SET flow_started_at = ${at}
+          WHERE id = ${id} AND flow_started_at IS NULL`;
+        yield* PubSub.publish(changed, undefined);
+      }, Effect.orDie);
+
+      const unstartFlow = Effect.fn("HostedSessions.unstartFlow")(function* (
+        id: string,
+      ) {
+        yield* sql`UPDATE hosted_sessions SET flow_started_at = NULL WHERE id = ${id}`;
+        yield* PubSub.publish(changed, undefined);
+      }, Effect.orDie);
+
+      const setBranch = Effect.fn("HostedSessions.setBranch")(function* (
+        id: string,
+        branch: string,
+      ) {
+        yield* sql`UPDATE hosted_sessions SET branch = ${branch} WHERE id = ${id}`;
       }, Effect.orDie);
 
       const archive = Effect.fn("HostedSessions.archive")(function* (
@@ -241,6 +281,9 @@ export class HostedSessions extends Context.Service<
 
       return HostedSessions.of({
         record,
+        startFlow,
+        unstartFlow,
+        setBranch,
         archive,
         changes: Stream.fromPubSub(changed),
         worktrees,

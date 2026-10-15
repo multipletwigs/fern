@@ -11,6 +11,7 @@ import { QuestionCard } from "@repo/ui/QuestionCard";
 import { SubagentRow } from "@repo/ui/SubagentRow";
 import { ToolCallRow } from "@repo/ui/ToolCallRow";
 import { useFileOpener } from "../code/useFileOpener";
+import { GrillSuggestion } from "../flow/GrillSuggestion";
 import { displayName } from "./toolName";
 import { UnansweredPrompt } from "./UnansweredPrompt";
 
@@ -50,6 +51,10 @@ export function ItemView({
       );
     case "ToolCall": {
       const { result } = item;
+      if (item.grillSuggestion)
+        return (
+          <GrillSuggestion sessionId={sessionId} id={item.grillSuggestion} />
+        );
       // AskUserQuestion as the card it was meant to be: the question, its options, and the answer given.
       if (item.questions)
         return item.questions.map((q) => (

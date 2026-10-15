@@ -1,10 +1,16 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
-import { SessionInUse, SessionNotFound, TranscriptError } from "./Sessions";
+import {
+  SessionBusy,
+  SessionInUse,
+  SessionNotFound,
+  TranscriptError,
+} from "./Sessions";
 import {
   CheckpointKind,
   CheckpointStatus,
   FindingVerdictKind,
+  GrillSuggestionStatus,
   PhaseStatus,
 } from "./States";
 import { PullRequest } from "./Walkthroughs";
@@ -145,6 +151,47 @@ export const SessionPhase = Schema.Struct({
 });
 export type SessionPhase = typeof SessionPhase.Type;
 
+// What Claude raised in a Hosted Session whose Flow hasn't started, once the chat turned to
+// something worth building: the work, in a line, for the developer to Grill or turn down.
+export const GrillSuggestion = Schema.Struct({
+  id: Schema.String,
+  what: Schema.String,
+  status: GrillSuggestionStatus,
+  raisedAt: Schema.DateTimeUtcFromMillis,
+});
+export type GrillSuggestion = typeof GrillSuggestion.Type;
+
+// How a Hosted Session stands with its Flow: started, with its Grill, or still a chat, and every
+// Grill suggestion Claude raised in it, oldest first.
+export class FlowStart extends Schema.Class<FlowStart>("FlowStart")({
+  sessionId: Schema.String,
+  started: Schema.Boolean,
+  suggestions: Schema.Array(GrillSuggestion),
+}) {}
+
+// The Session's Flow has started already, so there's no Grill to start.
+export class FlowStarted extends Schema.TaggedError<FlowStarted>()(
+  "FlowStarted",
+  { session: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
+export class GrillSuggestionNotFound extends Schema.TaggedError<GrillSuggestionNotFound>()(
+  "GrillSuggestionNotFound",
+  { id: Schema.String },
+  { httpApiStatus: 404 },
+) {}
+
+// The Grill suggestion was decided already: turned down, or its Grill started.
+export class GrillSuggestionClosed extends Schema.TaggedError<GrillSuggestionClosed>()(
+  "GrillSuggestionClosed",
+  { id: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
+// What the Grill starts on, in a line.
+export const GrillTopic = Schema.Trim.check(Schema.isNonEmpty());
+
 export class CheckpointNotFound extends Schema.TaggedError<CheckpointNotFound>()(
   "CheckpointNotFound",
   { id: Schema.String },
@@ -278,6 +325,33 @@ export class FlowsApi extends HttpApiGroup.make("flows")
       payload: FindingVerdict,
       success: HttpApiSchema.NoContent,
       error: [FindingNotFound, CheckpointClosed, ...SendErrors],
+    }),
+  )
+  .add(
+    // Starts the Session's Flow with its Grill on `what`, sent into the Session after the chat so
+    // far, from a Grill suggestion or not. Refused while a turn runs.
+    HttpApiEndpoint.post("grill", "/sessions/:session/grill", {
+      params: { session: Schema.NonEmptyString },
+      payload: Schema.Struct({
+        what: GrillTopic,
+        suggestion: Schema.optional(Schema.NonEmptyString),
+      }),
+      success: HttpApiSchema.NoContent,
+      error: [
+        FlowStarted,
+        GrillSuggestionNotFound,
+        GrillSuggestionClosed,
+        SessionBusy,
+        ...SendErrors,
+      ],
+    }),
+  )
+  .add(
+    // Turns a Grill suggestion down for now; Claude raises another only for different work.
+    HttpApiEndpoint.post("dismiss", "/suggestions/:id/dismiss", {
+      params: { id: Schema.NonEmptyString },
+      success: HttpApiSchema.NoContent,
+      error: [GrillSuggestionNotFound, GrillSuggestionClosed],
     }),
   )
   .prefix("/flows") {}

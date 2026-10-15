@@ -18,7 +18,10 @@ import { vi } from "vitest";
 import { DatabaseLive } from "../src/database/Database";
 import { handlersWith } from "../src/http";
 import { TerminalShell } from "../src/terminal/Terminals";
-import { CleanupInterval } from "../src/worktree/WorktreeCleanup";
+import {
+  ChatIdleLimit,
+  CleanupInterval,
+} from "../src/worktree/WorktreeCleanup";
 import { WorktreesDir } from "../src/worktree/Worktrees";
 import { closedSessions } from "./fakeClaude";
 import { NoWriter } from "./stubs";
@@ -98,12 +101,16 @@ const finishFlow = (id: string) =>
   });
 const makeLive = RpcTest.makeClient(LiveRpcs);
 
-// Starts a Session through the API and waits for its first turn, returning its id and worktree.
-const startSession = (text: string) =>
+// Starts a Session through the API and waits for its first turn, returning its id and worktree:
+// in its Flow, with the Grill, unless `chat`.
+const startSession = (text: string, { chat = false } = {}) =>
   Effect.gen(function* () {
     const client = yield* makeClient;
     const { id } = yield* client.sessions.start({
-      payload: { root: repo, message: { text } },
+      payload: {
+        root: repo,
+        message: { text: chat ? text : `/grill-with-docs ${text}` },
+      },
     });
     const turn = yield* Effect.suspend(() =>
       Effect.fromNullishOr(started.find((t) => t.sessionId === id)),
@@ -285,6 +292,69 @@ layer(
           git(dirty.worktree, "status", "--porcelain"),
           "M a.ts",
         );
+      }),
+  );
+
+  it.effect(
+    "archiving a chat that never committed deletes its branch too; a chat with commits keeps it",
+    () =>
+      Effect.gen(function* () {
+        const unused = yield* startSession("Just asking", { chat: true });
+        const used = yield* startSession("Small fix", { chat: true });
+        commit(used.worktree, "fix.ts");
+        const client = yield* makeClient;
+
+        yield* client.sessions.archive({
+          params: { id: unused.id },
+          payload: {},
+        });
+        yield* client.sessions.archive({
+          params: { id: used.id },
+          payload: {},
+        });
+
+        assert.isFalse(existsSync(unused.worktree));
+        assert.isFalse(branchExists(unused.branch));
+        assert.isTrue(branchExists(used.branch));
+      }),
+  );
+});
+
+layer(
+  Layer.mergeAll(
+    handlersWith(NoWriter).pipe(
+      Layer.provide([
+        DatabaseLive(":memory:"),
+        Layer.succeed(WorktreesDir, { dir: dataDir }),
+        Layer.succeed(CleanupInterval, "100 millis"),
+        // Any chat is idle long enough at once.
+        Layer.succeed(ChatIdleLimit, "1 millis"),
+        Layer.succeed(TerminalShell, { file: "/bin/sh", args: [] }),
+      ]),
+    ),
+    HttpServer.layerServices,
+  ),
+  { excludeTestServices: true },
+)("Cleaning up idle chats", (it) => {
+  it.effect(
+    "archives a chat left idle with nothing committed and deletes its branch, keeping a chat with commits or uncommitted changes, and a Session in its Flow",
+    () =>
+      Effect.gen(function* () {
+        const committed = yield* startSession("Fixed a typo", { chat: true });
+        commit(committed.worktree, "typo.ts");
+        const dirty = yield* startSession("Half a fix", { chat: true });
+        writeFileSync(join(dirty.worktree, "a.ts"), "export const a = 2;\n");
+        const flow = yield* startSession("In the Grill");
+        const idle = yield* startSession("Only a question", { chat: true });
+
+        yield* sidebarListing(idle.id, false);
+        assert.isFalse(existsSync(idle.worktree));
+        assert.isFalse(branchExists(idle.branch));
+        yield* Effect.sleep("300 millis");
+        for (const kept of [committed, dirty, flow]) {
+          assert.isTrue(existsSync(kept.worktree), kept.branch);
+          assert.isTrue(branchExists(kept.branch), kept.branch);
+        }
       }),
   );
 });

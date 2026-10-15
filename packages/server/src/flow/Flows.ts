@@ -78,6 +78,9 @@ const COMMANDS: Record<Exclude<Phase, "grill">, ReadonlyArray<string>> = {
   retro: ["/retro"],
 };
 
+// What a Session following the Flow is told about it, ahead of how to report each Phase.
+export const FLOW_STEERING = `This Session is hosted by Fern and follows Fern's Flow: Grill, then Spec, then Implement, then Retro. Grill sharpens the idea with the developer, Spec writes the Brief and its tickets, Implement builds them, and Retro looks back on the Session for Findings about the Setup. Fern moves the Session from one Phase to the next.`;
+
 export const STEERING = `Report the end of each Phase through Fern's \`phase_done\` tool, with the Phase and a short summary of what it settled or produced, then end your turn. Fern raises a Checkpoint, and the developer approves it or declines it with a note. Never start the next Phase's skill yourself (/to-spec, /to-tickets, /implement-spec, /retro): once the developer approves, Fern sends the next Phase's command as your next message. A message that isn't the next Phase's command means the Phase isn't done yet, so keep working on it. Spec is done only once both the Brief and its tickets exist on the issue tracker: report it with the Brief's issue number and its tickets' issue numbers.`;
 
 // When Implement is done where the work doesn't land as a Stack, which has its own rule.
@@ -540,9 +543,10 @@ export class Flows extends Context.Service<
 
       const load = (sessionId: string) =>
         Effect.gen(function* () {
-          // Hosted Sessions follow the Flow (ADR 0005).
+          // A Hosted Session follows the Flow once it has started, with its Grill (ADR 0010).
           const session = yield* hosted.session(sessionId);
-          if (session === undefined) return null;
+          if (session === undefined || session.flowStartedAt === null)
+            return null;
           const phases = yield* phasesOf(sessionId);
           const waiting = yield* pendingOf(sessionId).pipe(Effect.orDie);
           const land = pastRetro(phases)
@@ -1482,16 +1486,25 @@ export class Flows extends Context.Service<
           flowRows().pipe(Effect.orDie),
         ]);
         const byId = new Map(rows.map((row) => [row.sessionId, row.phases]));
-        return sessions.map(({ id }): SessionPhase => ({
-          sessionId: id,
-          current: current(byId.get(id) ?? opening),
-        }));
+        return sessions
+          .filter((session) => session.flowStartedAt !== null)
+          .map(({ id }): SessionPhase => ({
+            sessionId: id,
+            current: current(byId.get(id) ?? opening),
+          }));
       });
 
       // The tools answer for the Session they were made for, from a plain async call.
       const run = Effect.runPromiseWith(yield* Effect.context());
+      const following = (sessionId: string) =>
+        hosted
+          .session(sessionId)
+          .pipe(
+            Effect.map((session) => (session?.flowStartedAt ?? null) !== null),
+          );
       yield* tools.register({
-        steering: STEERING,
+        steering: `${FLOW_STEERING}\n\n${STEERING}`,
+        when: following,
         tools: (sessionId) => [
           tool(
             "phase_done",
@@ -1558,7 +1571,10 @@ export class Flows extends Context.Service<
       yield* tools.register({
         steering: CLOSED_STEERING,
         when: (sessionId) =>
-          stacks.landsAsStack(sessionId).pipe(Effect.map((stack) => !stack)),
+          Effect.all([
+            following(sessionId),
+            stacks.landsAsStack(sessionId),
+          ]).pipe(Effect.map(([flow, stack]) => flow && !stack)),
         tools: () => [],
       });
 

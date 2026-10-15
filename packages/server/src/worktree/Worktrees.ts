@@ -59,6 +59,25 @@ export class Worktrees extends Context.Service<
     // Whether the worktree at `path` has changes not yet committed, untracked files included. One
     // that's gone has none.
     isDirty(path: string): Effect.Effect<boolean, WorktreeError>;
+    // Whether the branch, made from `base` in the repo at `root`, has moved past it: one deleted, or
+    // that Fern can't read, counts as moved, so nothing is taken for unused that might not be.
+    hasCommits(
+      root: string,
+      branch: string,
+      base: string,
+    ): Effect.Effect<boolean>;
+    // Renames the branch the worktree at `path` has checked out after `topic`, keeping the short id
+    // that makes it unique, and returns the new name.
+    rename(
+      path: string,
+      branch: string,
+      topic: string,
+    ): Effect.Effect<string, WorktreeError>;
+    // Deletes the branch from the repo at `root`, as for a Session that never committed to it.
+    deleteBranch(
+      root: string,
+      branch: string,
+    ): Effect.Effect<void, WorktreeError>;
     // Removes the worktree at `path`, made from the repo at `root`, keeping its branch. With
     // uncommitted changes in it, git refuses unless `force`. One already deleted by hand is only
     // forgotten.
@@ -163,6 +182,46 @@ export class Worktrees extends Context.Service<
         Effect.orElseSucceed(() => false),
       );
 
+      const hasCommits = Effect.fn("Worktrees.hasCommits")(
+        function* (root: string, branch: string, base: string) {
+          const tip = yield* git
+            .run(root, [
+              "rev-parse",
+              "--verify",
+              "-q",
+              `refs/heads/${branch}^{commit}`,
+            ])
+            .pipe(Effect.map(trim));
+          return tip !== base;
+        },
+        Effect.orElseSucceed(() => true),
+      );
+
+      const rename = Effect.fn("Worktrees.rename")(function* (
+        worktree: string,
+        branch: string,
+        topic: string,
+      ) {
+        const id =
+          /-([0-9a-f]{6})$/.exec(branch)?.[1] ??
+          crypto.randomUUID().replaceAll("-", "").slice(0, 6);
+        const renamed = `${slug(topic)}-${id}`;
+        if (renamed === branch) return branch;
+        yield* git
+          .run(worktree, ["branch", "-m", branch, renamed])
+          .pipe(Effect.mapError((error) => failed(error.message)));
+        return renamed;
+      });
+
+      const deleteBranch = Effect.fn("Worktrees.deleteBranch")(function* (
+        root: string,
+        branch: string,
+      ) {
+        yield* git
+          .run(root, ["branch", "-D", branch])
+          .pipe(Effect.mapError((error) => failed(error.message)));
+      });
+
       const exists = (worktree: string) =>
         fs.exists(worktree).pipe(Effect.orElseSucceed(() => true));
 
@@ -189,7 +248,16 @@ export class Worktrees extends Context.Service<
           .pipe(Effect.mapError((error) => failed(error.message)));
       });
 
-      return Worktrees.of({ branchable, create, isMerged, isDirty, remove });
+      return Worktrees.of({
+        branchable,
+        create,
+        isMerged,
+        hasCommits,
+        rename,
+        deleteBranch,
+        isDirty,
+        remove,
+      });
     }),
   ).pipe(Layer.provide(Git.layer));
 }

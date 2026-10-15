@@ -3,6 +3,7 @@ import { Effect, Layer, Stream } from "effect";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { Autonomy } from "./autonomy/Autonomy";
 import { Flows } from "./flow/Flows";
+import { FlowStart } from "./flow/FlowStart";
 import { Rounds } from "./round/Rounds";
 import { Subagents } from "./subagent/Subagents";
 import { Terminals } from "./terminal/Terminals";
@@ -17,6 +18,7 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
     const workspace = yield* Workspace;
     const walkthroughs = yield* Walkthroughs;
     const flows = yield* Flows;
+    const flowStart = yield* FlowStart;
     const rounds = yield* Rounds;
     const autonomy = yield* Autonomy;
     const subagents = yield* Subagents;
@@ -33,6 +35,7 @@ export const LiveHandlersNoDeps = LiveRpcs.toLayer(
         Stream.unwrap(workspace.changes(root, session)),
       Walkthroughs: ({ session }) => walkthroughs.list(session),
       Flow: ({ session }) => flows.flow(session),
+      FlowStart: ({ session }) => flowStart.state(session),
       Checkpoints: () => flows.checkpoints,
       SessionPhases: () => flows.phases,
       Rounds: ({ session }) => rounds.list(session),
