@@ -23,6 +23,7 @@ import {
   TerminalEvent,
   TerminalInputData,
   TerminalSize,
+  TerminalTarget,
 } from "./Terminals";
 import { Walkthrough, WalkthroughError } from "./Walkthroughs";
 
@@ -137,35 +138,34 @@ export class LiveRpcs extends RpcGroup.make(
     success: Schema.NullOr(SessionAutonomy),
     stream: true,
   }),
-  // A Session's terminal: a shell in its folder, its worktree or else its Project's, as the server
-  // knows it, started at `cols` by `rows` unless one is running there already, in which case this
-  // attaches to it. Streams what the shell has printed lately, as a replay, then what it goes on to
-  // print, then its exit. A shell that has exited is replayed up to its exit until
-  // `TerminalRestart`. Ending the stream detaches; the shell runs on.
+  // A terminal: a shell in its target's folder, as the server knows it: a Session's worktree or
+  // else its Project's, or a Foreign PR's worktree. Started at `cols` by `rows` unless one is
+  // running there already, in which case this attaches to it. Streams what the shell has printed
+  // lately, as a replay, then what it goes on to print, then its exit. A shell that has exited is
+  // replayed up to its exit until `TerminalRestart`. Ending the stream detaches; the shell runs on.
   Rpc.make("Terminal", {
     payload: {
-      sessionId: Schema.NonEmptyString,
+      target: TerminalTarget,
       ...TerminalSize.fields,
     },
     success: TerminalEvent,
     error: TerminalError,
     stream: true,
   }),
-  // Keystrokes or a piece of a paste, typed into a Session's terminal. Fails when its shell isn't
-  // running.
+  // Keystrokes or a piece of a paste, typed into a terminal. Fails when its shell isn't running.
   Rpc.make("TerminalInput", {
-    payload: { sessionId: Schema.NonEmptyString, data: TerminalInputData },
+    payload: { target: TerminalTarget, data: TerminalInputData },
     error: TerminalError,
   }),
-  // The size a Session's terminal is shown at. Fails when its shell isn't running.
+  // The size a terminal is shown at. Fails when its shell isn't running.
   Rpc.make("TerminalResize", {
-    payload: { sessionId: Schema.NonEmptyString, ...TerminalSize.fields },
+    payload: { target: TerminalTarget, ...TerminalSize.fields },
     error: TerminalError,
   }),
-  // Ends a Session's shell, if it's still running, so the next `Terminal` starts a fresh one. Fails
-  // when the Session has no shell, running or exited.
+  // Ends a terminal's shell, if it's still running, so the next `Terminal` starts a fresh one.
+  // Fails when it has no shell, running or exited.
   Rpc.make("TerminalRestart", {
-    payload: { sessionId: Schema.NonEmptyString },
+    payload: { target: TerminalTarget },
     error: TerminalError,
   }),
 ) {}

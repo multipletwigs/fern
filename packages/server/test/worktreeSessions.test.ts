@@ -337,7 +337,7 @@ layer(
       const { id, turn } = yield* startSession("Look around");
       const live = yield* makeLive;
       const printed: Array<string> = [];
-      yield* live.Terminal({ sessionId: id, cols: 80, rows: 24 }).pipe(
+      yield* live.Terminal({ target: { _tag: "Session", sessionId: id }, cols: 80, rows: 24 }).pipe(
         Stream.runForEach((event) =>
           Effect.sync(() => {
             if (event._tag !== "TerminalExit") printed.push(event.data);
@@ -347,7 +347,7 @@ layer(
       );
       yield* Effect.suspend(() =>
         live
-          .TerminalInput({ sessionId: id, data: "echo $PWD\r" })
+          .TerminalInput({ target: { _tag: "Session", sessionId: id }, data: "echo $PWD\r" })
           .pipe(
             Effect.andThen(
               printed.join("").includes(`${turn.cwd}\r`)
@@ -365,7 +365,11 @@ layer(
     Effect.gen(function* () {
       const live = yield* makeLive;
       const error = yield* live
-        .Terminal({ sessionId: crypto.randomUUID(), cols: 80, rows: 24 })
+        .Terminal({
+          target: { _tag: "Session", sessionId: crypto.randomUUID() },
+          cols: 80,
+          rows: 24,
+        })
         .pipe(Stream.runDrain, Effect.flip);
       assert.strictEqual(error._tag, "TerminalError");
     }),

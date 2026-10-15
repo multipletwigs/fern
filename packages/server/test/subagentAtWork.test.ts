@@ -37,6 +37,7 @@ import {
   UnusedWorkspace,
   unusedTurns,
   UnusedTerminals,
+  UnusedPullRequests,
 } from "./stubs";
 
 const projectDir = makeConfig();
@@ -173,6 +174,7 @@ layer(
       UnusedRounds,
       UnusedAutonomy,
       UnusedTerminals,
+      UnusedPullRequests,
       DatabaseLive(":memory:"),
     ]),
     Layer.provide(NodeServices.layer),

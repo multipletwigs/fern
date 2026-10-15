@@ -4,6 +4,7 @@ import {
   Effect,
   FileSystem,
   Layer,
+  Option,
   Path,
   Semaphore,
   SynchronizedRef,
@@ -40,6 +41,20 @@ export class PrWorktrees extends Context.Service<
       pr: PrKey,
       commit: string,
     ): Effect.Effect<string, WorktreeError>;
+    // The commit the PR's worktree is checked out at, when it has one.
+    head(pr: PrKey): Effect.Effect<Option.Option<string>, WorktreeError>;
+    // Whether the PR's worktree has changes not committed, files git doesn't know included. False
+    // when it has none.
+    isDirty(pr: PrKey): Effect.Effect<boolean, WorktreeError>;
+    // The numbers of the repo's PRs that have a worktree.
+    checkedOut(repo: string): Effect.Effect<ReadonlyArray<number>>;
+    // Removes the PR's worktree from the repo the folder `root` is in, with any changes not
+    // committed when `force`, else refusing them. Nothing to do when it has none.
+    remove(
+      root: string,
+      pr: PrKey,
+      options: { readonly force: boolean },
+    ): Effect.Effect<void, WorktreeError>;
     // Runs the effect while nothing else runs for the same PR.
     exclusive(
       pr: PrKey,
@@ -111,6 +126,57 @@ export class PrWorktrees extends Context.Service<
           }),
         );
 
+      const exists = (folder: string) =>
+        fs.exists(folder).pipe(Effect.orElseSucceed(() => false));
+
+      const head = Effect.fn("PrWorktrees.head")(function* (pr: PrKey) {
+        const worktree = yield* path(pr);
+        if (!(yield* exists(worktree))) return Option.none<string>();
+        return Option.some(
+          yield* run(worktree, ["rev-parse", "HEAD"]).pipe(Effect.map(trim)),
+        );
+      });
+
+      const isDirty = Effect.fn("PrWorktrees.isDirty")(function* (pr: PrKey) {
+        const worktree = yield* path(pr);
+        if (!(yield* exists(worktree))) return false;
+        const off = yield* unfiltered(worktree);
+        const status = yield* run(worktree, [...off, "status", "--porcelain"]);
+        return status.trim() !== "";
+      });
+
+      const checkedOut = (repo: string) =>
+        Effect.gen(function* () {
+          const [owner = "", name = "", ...rest] = repo.split("/");
+          if (rest.length > 0 || !NAME.test(owner) || !NAME.test(name))
+            return [];
+          const names = yield* fs.readDirectory(
+            paths.join(dir, "prs", owner, name),
+          );
+          return names
+            .filter((n) => /^[1-9][0-9]{0,9}$/.test(n))
+            .map(Number)
+            .toSorted((a, b) => a - b);
+        }).pipe(Effect.orElseSucceed((): ReadonlyArray<number> => []));
+
+      const remove = Effect.fn("PrWorktrees.remove")(function* (
+        root: string,
+        pr: PrKey,
+        { force }: { readonly force: boolean },
+      ) {
+        const worktree = yield* path(pr);
+        if (!(yield* exists(worktree))) return;
+        const top = yield* run(root, ["rev-parse", "--show-toplevel"]).pipe(
+          Effect.map(trim),
+        );
+        yield* run(top, [
+          "worktree",
+          "remove",
+          ...(force ? ["--force"] : []),
+          worktree,
+        ]);
+      });
+
       const checkout = Effect.fn("PrWorktrees.checkout")(function* (
         root: string,
         pr: PrKey,
@@ -167,7 +233,15 @@ export class PrWorktrees extends Context.Service<
             Effect.flatMap((lock) => lock.withPermits(1)(effect)),
           );
 
-      return PrWorktrees.of({ path, checkout, exclusive });
+      return PrWorktrees.of({
+        path,
+        checkout,
+        head,
+        isDirty,
+        checkedOut,
+        remove,
+        exclusive,
+      });
     }),
   ).pipe(Layer.provide(Git.layer));
 }

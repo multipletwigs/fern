@@ -177,7 +177,7 @@ layer(
       const { id } = yield* startSession("Work with a terminal");
       const live = yield* makeLive;
       const terminal = yield* live
-        .Terminal({ sessionId: id, cols: 80, rows: 24 })
+        .Terminal({ target: { _tag: "Session", sessionId: id }, cols: 80, rows: 24 })
         .pipe(Stream.runCollect, Effect.forkScoped);
       yield* Effect.sleep("200 millis");
       const client = yield* makeClient;

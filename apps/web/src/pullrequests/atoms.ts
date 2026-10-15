@@ -76,6 +76,13 @@ export const walkThroughAtom = ApiClient.mutation(
   "walkThrough",
 );
 
+export const tryItAtom = ApiClient.mutation("pullRequests", "tryIt");
+
+export const dismissWorktreeAtom = ApiClient.mutation(
+  "pullRequests",
+  "dismiss",
+);
+
 // How a Project's Pull requests page is filtered, kept while the page is out of sight.
 export const pullRequestFiltersAtom = Atom.family((_root: string) =>
   Atom.make<PrFilters>(defaultFilters).pipe(Atom.keepAlive),

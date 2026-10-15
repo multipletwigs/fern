@@ -76,6 +76,7 @@ export function PullRequestsPage({ root }: { root: string }) {
           (pr) => pr.number === open,
         )}
         onBack={() => setOpen(undefined)}
+        onChanged={refresh}
       />
     );
 
