@@ -11,6 +11,7 @@ import {
   type PrFilters,
   presetOf,
   presets,
+  type WalkthroughFilter,
   withPreset,
 } from "./list";
 
@@ -18,6 +19,17 @@ const DRAFT_CHOICES: ReadonlyArray<{ value: DraftFilter; label: string }> = [
   { value: "any", label: "Any" },
   { value: "draft", label: "Drafts" },
   { value: "ready", label: "Ready" },
+];
+
+const WALKTHROUGH_CHOICES: ReadonlyArray<{
+  value: WalkthroughFilter;
+  label: string;
+}> = [
+  { value: "any", label: "Any" },
+  { value: "none", label: "None" },
+  { value: "unreviewed", label: "To review" },
+  { value: "reviewed", label: "Reviewed" },
+  { value: "stale", label: "New commits" },
 ];
 
 const STATE_CHOICES: ReadonlyArray<{ value: PrState; label: string }> = [
@@ -83,6 +95,18 @@ export function PullRequestFiltersBar({
         onChange={(value) => {
           const draft = DRAFT_CHOICES.find((c) => c.value === value)?.value;
           if (draft !== undefined) set({ draft });
+        }}
+      />
+      <FilterMenu
+        name="Walkthrough"
+        choices={WALKTHROUGH_CHOICES}
+        value={filters.walkthrough}
+        active={filters.walkthrough !== "any"}
+        onChange={(value) => {
+          const walkthrough = WALKTHROUGH_CHOICES.find(
+            (c) => c.value === value,
+          )?.value;
+          if (walkthrough !== undefined) set({ walkthrough });
         }}
       />
       <FilterMenu

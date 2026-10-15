@@ -12,7 +12,7 @@ export function SearchField({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-lg border border-hairline px-2.5 text-[12px] text-ink focus-within:border-ice/30">
+    <label className="flex h-7 min-w-56 flex-1 items-center gap-2 rounded-lg border border-hairline px-2.5 text-[12px] text-ink focus-within:border-ice/30">
       <MagnifyingGlassIcon className="size-3.5 shrink-0 text-faint" />
       <input
         type="search"

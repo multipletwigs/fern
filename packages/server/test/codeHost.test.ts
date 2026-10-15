@@ -46,6 +46,12 @@ case "$1 $2" in
     esac
     exit 0 ;;
   "api user") echo "octocat"; exit 0 ;;
+  "api repos/{owner}/{repo}/compare/"*)
+    case "$2" in
+      *aaaa111...bbbb222*) echo "3" ;;
+      *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+    esac
+    exit 0 ;;
   "api -X")
     : > "${input}"
     while IFS= read -r l || [ -n "$l" ]; do printf '%s\\n' "$l" >> "${input}"; done
@@ -474,6 +480,36 @@ layer(CodeHost.layer.pipe(Layer.provide(NodeServices.layer)), {
         );
       }),
     ),
+  );
+
+  it.effect(
+    "how many commits a PR's head has past an earlier one, as GitHub compares them, only ever for two commits",
+    () =>
+      withStub(
+        Effect.gen(function* () {
+          const host = yield* CodeHost;
+          assert.strictEqual(
+            yield* host.commitsAhead("/", { from: "aaaa111", to: "bbbb222" }),
+            3,
+          );
+          assert.deepStrictEqual(calls(), [
+            "api repos/{owner}/{repo}/compare/aaaa111...bbbb222?per_page=1 --jq .ahead_by",
+          ]);
+
+          writeFileSync(log, "");
+          const gone = yield* host
+            .commitsAhead("/", { from: "cccc333", to: "bbbb222" })
+            .pipe(Effect.flip);
+          assert.strictEqual(gone._tag, "CodeHostError");
+
+          writeFileSync(log, "");
+          const flag = yield* host
+            .commitsAhead("/", { from: "main", to: "bbbb222" })
+            .pipe(Effect.flip);
+          assert.strictEqual(flag._tag, "CodeHostError");
+          assert.deepStrictEqual(calls(), []);
+        }),
+      ),
   );
 
   it.effect("a repo without Stacks has none", () =>

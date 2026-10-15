@@ -107,7 +107,7 @@ The developer-facing explanation of one change, usually one PR: of a Session's S
 _Avoid_: Diff, summary, changelog, report
 
 **Foreign PR**:
-An open or closed pull request on a Project's repo that no Hosted Session's Stack holds, whoever wrote it, the developer included. Its Walkthrough comes from the PR alone, with no Session's intent behind it, and its verdicts stay with the developer until they post them to GitHub as a review.
+An open or closed pull request on a Project's repo that no Hosted Session's Stack holds, whoever wrote it, the developer included. Its Walkthrough comes from the PR alone, with no Session's intent behind it, and its verdicts stay with the developer until they post them to GitHub as a review. Once it gets commits after its latest Walkthrough, that Walkthrough is stale, and the next one covers only the new commits, unless the PR was force-pushed or its base moved.
 _Avoid_: Outside PR, external PR, teammate's PR
 
 **Stack**:

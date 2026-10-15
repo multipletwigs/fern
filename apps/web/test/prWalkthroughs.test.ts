@@ -63,7 +63,7 @@ it("until the live states arrive, each PR shows what the list was fetched with",
 it("each state reads as a mark on the PR's row, amber where it waits on the developer", () => {
   assert.deepStrictEqual(
     (["writing", "failed", "unreviewed", "reviewed"] as const).map((state) =>
-      walkthroughMark(state),
+      walkthroughMark(walkthrough(state), "h"),
     ),
     [
       { label: "Writing Walkthrough…", tone: "muted" },
@@ -71,5 +71,56 @@ it("each state reads as a mark on the PR's row, amber where it waits on the deve
       { label: "To review", tone: "amber" },
       { label: "Reviewed", tone: "muted" },
     ],
+  );
+});
+
+// The mark of a Reviewed Walkthrough of the head "h", once the PR has moved on from it.
+const stale = (newCommits?: number) =>
+  walkthroughMark(
+    new PrWalkthrough({ state: "reviewed", head: "h", newCommits }),
+    "moved",
+  );
+
+it("a PR that got commits after its Walkthrough says how many, once GitHub counted them", () => {
+  assert.deepStrictEqual(
+    [stale(1), stale(3), stale()],
+    [
+      { label: "1 new commit since your Walkthrough", tone: "amber" },
+      { label: "3 new commits since your Walkthrough", tone: "amber" },
+      { label: "New commits since your Walkthrough", tone: "amber" },
+    ],
+  );
+  // Being written, it says so, whatever head it's of.
+  assert.deepStrictEqual(walkthroughMark(walkthrough("writing"), "moved"), {
+    label: "Writing Walkthrough…",
+    tone: "muted",
+  });
+});
+
+it("the count of new commits stays while the live state is of the same head, and goes once it isn't", () => {
+  const counted = pr(5, {
+    walkthrough: new PrWalkthrough({
+      state: "unreviewed",
+      head: "h",
+      newCommits: 2,
+    }),
+  });
+  const now = (state: PrWalkthrough["state"], head: string) =>
+    walkthroughOf(
+      counted,
+      liveWalkthroughs([
+        new PrWalkthroughOf({
+          number: 5,
+          walkthrough: new PrWalkthrough({ state, head }),
+        }),
+      ]),
+    );
+  assert.deepStrictEqual(
+    [now("reviewed", "h")?.state, now("reviewed", "h")?.newCommits],
+    ["reviewed", 2],
+  );
+  assert.deepStrictEqual(
+    [now("writing", "new")?.state, now("writing", "new")?.newCommits],
+    ["writing", undefined],
   );
 });

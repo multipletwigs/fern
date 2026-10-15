@@ -182,6 +182,17 @@ export const PrWalkthroughState = Schema.Literals([
 ]);
 export type PrWalkthroughState = typeof PrWalkthroughState.Type;
 
+// Where a Foreign PR stands with the developer's Walkthroughs of it, as the Pull requests page
+// filters it: none to read (none written, or its latest failed or being written), its latest
+// waiting on the developer's verdicts, Reviewed, or stale: written of a head the PR has since moved
+// on from.
+export const ForeignPrState = Schema.Literals([
+  "none",
+  "unreviewed",
+  "reviewed",
+  "stale",
+]);
+export type ForeignPrState = typeof ForeignPrState.Type;
 // What a review the developer posts on a Foreign PR says of it, as GitHub takes it: approved, with
 // nothing rejected; changes requested, with something rejected; or a plain comment, on the
 // developer's own PR, which GitHub won't let them approve or request changes on.

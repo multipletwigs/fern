@@ -10,6 +10,10 @@ const messageOf = (error: unknown) =>
 export const whyNotWalked = (error: unknown): string => {
   if (Predicate.isTagged(error, "PrWalkthroughInProgress"))
     return "A Walkthrough of this PR is being written already.";
+  if (Predicate.isTagged(error, "PrWalkthroughUpToDate"))
+    return "Your latest Walkthrough of this PR is at its head already.";
+  if (Predicate.isTagged(error, "PrStackNotFound"))
+    return "GitHub no longer lists this Stack. Refresh the list.";
   if (Predicate.isTagged(error, "PrNothingToReview"))
     return "This PR changes nothing from where it leaves its base.";
   if (Predicate.isTagged(error, "PullRequestNotForeign"))

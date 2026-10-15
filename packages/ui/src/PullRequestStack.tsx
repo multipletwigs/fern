@@ -2,16 +2,19 @@ import { StackIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 
 // A GitHub Stack on the Pull requests page: its number, how many of its PRs are listed and who
-// wrote them, over its PRs' rows, bottom first.
+// wrote them, and what can be done to the whole Stack, over its PRs' rows, bottom first.
 export function PullRequestStack({
   number,
   count,
   authors,
+  action,
   children,
 }: {
   number: number;
   count: number;
   authors: ReadonlyArray<string>;
+  // At the header's end, such as walking the whole Stack through.
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -19,7 +22,7 @@ export function PullRequestStack({
       aria-label={`Stack ${number}`}
       className="rounded-xl border border-hairline bg-white/[0.02] p-1.5"
     >
-      <header className="flex h-7 items-center gap-2 px-2.5 text-[11px] text-faint">
+      <header className="flex min-h-7 items-center gap-2 px-2.5 text-[11px] text-faint">
         <StackIcon className="size-3.5 shrink-0" />
         <span className="font-mono tracking-wide uppercase">
           Stack #{number}
@@ -27,7 +30,8 @@ export function PullRequestStack({
         <span>
           {count} {count === 1 ? "PR" : "PRs"}
         </span>
-        <span className="min-w-0 truncate">· {authors.join(", ")}</span>
+        <span className="min-w-0 flex-1 truncate">· {authors.join(", ")}</span>
+        {action}
       </header>
       <ol>{children}</ol>
     </section>
