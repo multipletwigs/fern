@@ -1,3 +1,4 @@
+import { Column } from "@repo/ui/Column";
 import { KeyHint } from "@repo/ui/KeyHint";
 import { Loader } from "@repo/ui/Loader";
 
@@ -21,7 +22,7 @@ export function GrillReview({
   const button =
     "flex h-10 items-center gap-2.5 rounded-xl bg-ink px-4 text-[14px] font-medium text-canvas transition-[opacity,transform] hover:opacity-90 active:scale-[0.98] disabled:opacity-50";
   return (
-    <div className="mx-auto flex min-h-full max-w-[680px] flex-col justify-center px-10 py-10">
+    <Column className="flex min-h-full flex-col justify-center py-10">
       {open > 0 ? (
         <>
           <p className="font-mono text-[11px] tracking-wide text-amber/80 uppercase">
@@ -77,6 +78,6 @@ export function GrillReview({
           )}
         </>
       )}
-    </div>
+    </Column>
   );
 }

@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Column } from "./Column";
 import { CommandMenu, type ComposerCommand } from "./CommandMenu";
 import { ImageThumb } from "./ImageThumb";
 import { Loader } from "./Loader";
@@ -219,7 +220,7 @@ export function Composer({
   };
 
   return (
-    <div className="mx-auto w-full max-w-[720px] shrink-0 px-6 pb-5">
+    <Column className="shrink-0 pb-5">
       {(notice ?? unreadable) && (
         <p className="mb-2 px-1 text-xs text-muted">
           {notice ?? "Only PNG, JPEG, GIF, and WebP images can be attached."}
@@ -339,6 +340,6 @@ export function Composer({
           )}
         </div>
       </div>
-    </div>
+    </Column>
   );
 }

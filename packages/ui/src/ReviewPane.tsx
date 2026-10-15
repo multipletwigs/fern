@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Column } from "./Column";
 
 // The open item of the Review tab, filling the right: where it sits, what it is, its explanation
 // and diff, and its verdict pinned to the foot, so a long diff scrolls under it. A `badge`, such
@@ -18,7 +19,7 @@ export function ReviewPane({
 }) {
   return (
     <div className="flex min-h-full flex-col">
-      <div className="mx-auto w-full max-w-[860px] flex-1 px-10 pt-10 pb-8">
+      <Column className="flex-1 pt-10 pb-8">
         <p className="font-mono text-[11px] tracking-wide text-amber/80 uppercase">
           {eyebrow}
         </p>
@@ -31,12 +32,10 @@ export function ReviewPane({
         <div className="mt-4 space-y-4 text-[14px] leading-6 text-ink/80">
           {children}
         </div>
-      </div>
+      </Column>
       {footer && (
         <div className="sticky bottom-0 border-t border-hairline bg-panel/95 backdrop-blur-sm">
-          <div className="mx-auto w-full max-w-[860px] px-10 py-4">
-            {footer}
-          </div>
+          <Column className="py-4">{footer}</Column>
         </div>
       )}
     </div>

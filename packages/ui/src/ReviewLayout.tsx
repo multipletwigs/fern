@@ -117,7 +117,7 @@ export function ReviewLayout({
     >
       <nav className={`flex flex-col ${listColumn}`}>
         {header && (
-          <div className="hidden shrink-0 px-4 pt-5 pb-3 @3xl:block">
+          <div className="hidden shrink-0 px-4.5 pt-5 pb-3 @3xl:block">
             {header}
           </div>
         )}

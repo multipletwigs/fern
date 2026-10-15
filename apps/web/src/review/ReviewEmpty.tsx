@@ -1,10 +1,11 @@
+import { Column } from "@repo/ui/Column";
 import { WriteWalkthroughButton } from "../walkthrough/WriteWalkthroughButton";
 
 // The Review tab before there's anything in it: what will show up here, and a way to ask for a
 // Walkthrough of what's changed so far.
 export function ReviewEmpty({ sessionId }: { sessionId: string }) {
   return (
-    <div className="mx-auto flex h-full max-w-[560px] flex-col justify-center px-10 py-10">
+    <Column className="flex h-full flex-col justify-center py-10">
       <p className="font-mono text-[11px] tracking-wide text-faint uppercase">
         Review
       </p>
@@ -19,6 +20,6 @@ export function ReviewEmpty({ sessionId }: { sessionId: string }) {
       <div className="mt-6">
         <WriteWalkthroughButton sessionId={sessionId} />
       </div>
-    </div>
+    </Column>
   );
 }

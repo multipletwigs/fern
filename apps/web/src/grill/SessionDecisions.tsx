@@ -1,4 +1,5 @@
 import type { Decision } from "@repo/api";
+import { Column } from "@repo/ui/Column";
 import { DecisionRow } from "@repo/ui/DecisionRow";
 import { Empty } from "@repo/ui/Empty";
 
@@ -14,7 +15,7 @@ export function SessionDecisions({
     );
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-[680px] px-8 py-8">
+      <Column className="py-8">
         <p className="font-mono text-[11px] tracking-wide text-faint uppercase">
           Grill
         </p>
@@ -38,7 +39,7 @@ export function SessionDecisions({
             />
           ))}
         </div>
-      </div>
+      </Column>
     </div>
   );
 }

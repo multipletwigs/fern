@@ -1,5 +1,6 @@
 import type { RoundQuestion } from "@repo/api";
 import { ChoiceOption } from "@repo/ui/ChoiceOption";
+import { Column } from "@repo/ui/Column";
 import { FreeTextAnswer } from "@repo/ui/FreeTextAnswer";
 import { KeyHint } from "@repo/ui/KeyHint";
 import { Markdown } from "@repo/ui/Markdown";
@@ -31,7 +32,7 @@ export function GrillQuestion({
   onBack?: () => void;
 }) {
   return (
-    <div className="mx-auto flex min-h-full max-w-[680px] flex-col px-10 pt-6 pb-10">
+    <Column className="flex min-h-full flex-col pt-6 pb-10">
       <div className="my-auto pt-8 pb-6">
         <p className="font-mono text-[11px] tracking-wide text-amber/80 uppercase">
           Question {number} of {total}
@@ -103,6 +104,6 @@ export function GrillQuestion({
           <KeyHint>k</KeyHint> move
         </span>
       </div>
-    </div>
+    </Column>
   );
 }
