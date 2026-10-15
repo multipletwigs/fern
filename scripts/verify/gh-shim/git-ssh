@@ -1,0 +1,13 @@
+#!/bin/sh
+# git's SSH command for a slot's clone under `--gh-shim`: answers every fetch and push from the bare
+# repo given first, whatever host git asks for, so nothing reaches GitHub. git adds the host, then
+# the command to run on it, e.g. git-upload-pack 'owner/name.git'.
+remote=$1
+for last; do :; done
+case $last in
+  git-upload-pack\ *) exec git upload-pack "$remote" ;;
+  git-receive-pack\ *) exec git receive-pack "$remote" ;;
+  git-upload-archive\ *) exec git upload-archive "$remote" ;;
+esac
+echo "git-ssh (Fern's verify shim): can't run $last" >&2
+exit 1

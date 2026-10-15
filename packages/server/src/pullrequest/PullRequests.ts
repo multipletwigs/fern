@@ -50,7 +50,6 @@ import {
   prHeadRef,
 } from "../codehost/CodeHost";
 import { gitHubRepo } from "../codehost/gitHubRepo";
-import { Git } from "../git/Git";
 import { prTerminalKey, Terminals } from "../terminal/Terminals";
 import { HostedSessions } from "../turn/HostedSessions";
 import { Walkthroughs } from "../walkthrough/Walkthroughs";
@@ -254,7 +253,6 @@ export class PullRequests extends Context.Service<
       const sql = yield* SqlClient.SqlClient;
       const hosted = yield* HostedSessions;
       const codeHost = yield* CodeHost;
-      const git = yield* Git;
       const walkthroughs = yield* Walkthroughs;
       const worktrees = yield* PrWorktrees;
       const terminals = yield* Terminals;
@@ -275,7 +273,11 @@ export class PullRequests extends Context.Service<
         timeToLive: REMEMBERED,
         lookup: (root: string) =>
           Effect.gen(function* () {
-            const url = yield* git.run(root, ["remote", "get-url", "origin"]);
+            const url = yield* worktrees.git(root, [
+              "remote",
+              "get-url",
+              "origin",
+            ]);
             const repo = gitHubRepo(url);
             if (Option.isNone(repo)) return Option.none<OnGitHub>();
             const login = yield* codeHost.login(root);
@@ -490,12 +492,12 @@ export class PullRequests extends Context.Service<
       });
 
       const commitOf = (root: string, ref: string) =>
-        git
-          .run(root, ["rev-parse", "--verify", "-q", `${ref}^{commit}`])
+        worktrees
+          .git(root, ["rev-parse", "--verify", "-q", `${ref}^{commit}`])
           .pipe(Effect.map((out) => out.trim()));
       // Any failure means no: then the Walkthrough covers the whole PR, which is never wrong.
       const isAncestor = (root: string, ancestor: string, of: string) =>
-        git.run(root, ["merge-base", "--is-ancestor", ancestor, of]).pipe(
+        worktrees.git(root, ["merge-base", "--is-ancestor", ancestor, of]).pipe(
           Effect.as(true),
           Effect.orElseSucceed(() => false),
         );
@@ -541,8 +543,8 @@ export class PullRequests extends Context.Service<
             ]).pipe(gitFailed);
             if (previous?.head === head)
               return yield* new PrWalkthroughUpToDate({ number });
-            const mergeBase = yield* git
-              .run(root, ["merge-base", base, head])
+            const mergeBase = yield* worktrees
+              .git(root, ["merge-base", base, head])
               .pipe(
                 Effect.map((out) => out.trim()),
                 gitFailed,
@@ -774,5 +776,5 @@ export class PullRequests extends Context.Service<
         worktree,
       });
     }),
-  ).pipe(Layer.provide(Git.layer));
+  );
 }

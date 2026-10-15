@@ -30,3 +30,4 @@ Done when each verified finding is fixed or recorded as deferred (in an issue, o
 
 - `deepseek-v4.1-flash:US` has a 131K context: one prompt covering a whole branch's diff runs out of room and comes back empty. Keep the reviews scoped. `deepseek-v4-flash` (1M) is for unavoidably large inputs.
 - pi's default model is something else, so always pass `--model`. A model asked its own name can answer wrong; `--mode json` shows the model actually called.
+- Inside a subagent's worktree (`.claude/worktrees/…`) the sandbox refuses `pi`. There, run each surface's review as a read-only Claude subagent (Explore) with the same prompt instead, and say so in the fix's commit.

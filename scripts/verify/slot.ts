@@ -9,7 +9,7 @@ export const slotOf = (arg: string | undefined) => {
   const n = Number(arg);
   if (!Number.isInteger(n) || n < 1 || n > 9) {
     console.error(
-      "Usage: pnpm verify:up <slot 1-9> | pnpm verify:down <slot 1-9>",
+      "Usage: pnpm verify:up <slot 1-9> [--gh-shim [fixture]] [--claude-auth] | pnpm verify:down <slot 1-9>",
     );
     process.exit(1);
   }
@@ -21,6 +21,14 @@ export const slotOf = (arg: string | undefined) => {
     dir,
     userData: join(dir, "userdata"),
     configDir: join(dir, "claude-config"),
+    // A throwaway clone of the worktree, which the fixture Session runs in, so the PR refs and
+    // worktrees Fern makes land in it, never in the developer's shared `.git`.
+    repo: join(dir, "repo"),
+    // With `--gh-shim`: the bare repo the clone's `origin` reaches instead of GitHub, the shim's
+    // fixture with its commits filled in, and every write the shim was asked to make.
+    remote: join(dir, "remote.git"),
+    ghFixture: join(dir, "gh-fixture.json"),
+    ghWrites: join(dir, "gh-writes.jsonl"),
     logs: dir,
     // What's running in the slot, for `verify:down` and for Fern's "Running" list: the slot's
     // worktree, branch, ports and processes. Only there while the slot is up.

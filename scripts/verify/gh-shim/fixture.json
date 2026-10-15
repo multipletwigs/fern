@@ -1,0 +1,172 @@
+{
+  "login": "fern-dev",
+  "defaultBranch": "main",
+  "issues": [
+    {
+      "number": 12,
+      "title": "Greet the developer by name",
+      "body": "The welcome line says \"Hello\" to nobody. It should use the developer's name when Fern knows it."
+    }
+  ],
+  "stacks": [
+    { "id": 9101, "number": 1, "prs": [41, 42, 43] },
+    { "id": 9102, "number": 2, "prs": [44, 45] }
+  ],
+  "prs": [
+    {
+      "number": 41,
+      "title": "Add a clamp helper",
+      "author": "fern-dev",
+      "head": "fern-dev/clamp",
+      "base": "main",
+      "body": "Adds `clamp`, which the slider in #42 needs.",
+      "edits": [
+        {
+          "path": "packages/shared/clamp.ts",
+          "content": "// The number, kept between `min` and `max`.\nexport const clamp = (value: number, min: number, max: number) =>\n  Math.min(max, Math.max(min, value));\n"
+        }
+      ]
+    },
+    {
+      "number": 42,
+      "title": "Clamp the font size slider",
+      "author": "fern-dev",
+      "head": "fern-dev/font-size",
+      "base": "fern-dev/clamp",
+      "body": "The slider let the font size go to 0. Now it stays between 10 and 24.",
+      "edits": [
+        {
+          "path": "packages/shared/fontSize.ts",
+          "content": "import { clamp } from \"./clamp\";\n\nexport const MIN_FONT = 10;\nexport const MAX_FONT = 24;\n\n// The font size the slider asks for, as one Fern can show.\nexport const fontSize = (asked: number) => clamp(asked, MIN_FONT, MAX_FONT);\n"
+        }
+      ]
+    },
+    {
+      "number": 43,
+      "title": "Remember the font size across launches",
+      "author": "fern-dev",
+      "head": "fern-dev/font-size-saved",
+      "base": "fern-dev/font-size",
+      "draft": true,
+      "body": "Saves the font size with the window's other settings.",
+      "edits": [
+        {
+          "path": "packages/shared/fontSize.ts",
+          "append": "\n// The font size saved last time, or the smallest when none was.\nexport const savedFontSize = (saved: string | null) =>\n  saved === null ? MIN_FONT : fontSize(Number(saved));\n"
+        }
+      ]
+    },
+    {
+      "number": 44,
+      "title": "Retry a failed fetch once",
+      "author": "mira-k",
+      "head": "mira-k/retry",
+      "base": "main",
+      "reviewers": ["fern-dev"],
+      "body": "A flaky network made the Pull requests page fail on the first try. This retries once before giving up.",
+      "edits": [
+        {
+          "path": "packages/shared/retry.ts",
+          "content": "// Runs `attempt`, and once more if it fails.\nexport const retryOnce = async <A>(attempt: () => Promise<A>): Promise<A> => {\n  try {\n    return await attempt();\n  } catch {\n    return attempt();\n  }\n};\n"
+        }
+      ]
+    },
+    {
+      "number": 45,
+      "title": "Wait before the retry",
+      "author": "mira-k",
+      "head": "mira-k/retry-wait",
+      "base": "mira-k/retry",
+      "reviewers": ["fern-dev"],
+      "body": "Waits 200 ms before retrying, so a blip has time to pass.",
+      "edits": [
+        {
+          "path": "packages/shared/retry.ts",
+          "content": "import { setTimeout as sleep } from \"node:timers/promises\";\n\n// Runs `attempt`, and once more, 200 ms later, if it fails.\nexport const retryOnce = async <A>(attempt: () => Promise<A>): Promise<A> => {\n  try {\n    return await attempt();\n  } catch {\n    await sleep(200);\n    return attempt();\n  }\n};\n"
+        }
+      ],
+      "reviews": [
+        {
+          "login": "devon-r",
+          "state": "COMMENTED",
+          "body": "Should the wait be configurable?"
+        }
+      ]
+    },
+    {
+      "number": 47,
+      "title": "Greet the developer by name",
+      "author": "devon-r",
+      "head": "devon-r/greeting",
+      "base": "main",
+      "reviewers": ["fern-dev", "mira-k"],
+      "body": "Closes #12.",
+      "closes": [12],
+      "edits": [
+        {
+          "path": "packages/shared/greeting.ts",
+          "content": "// The welcome line, with the developer's name when Fern knows it.\nexport const greeting = (name: string | undefined) =>\n  name === undefined ? \"Hello\" : `Hello, ${name}`;\n"
+        },
+        {
+          "path": "README.md",
+          "append": "\nFern greets you by name once it knows it.\n"
+        }
+      ]
+    },
+    {
+      "number": 48,
+      "title": "Fix a typo in the README",
+      "author": "fern-dev",
+      "head": "fern-dev/readme-typo",
+      "base": "main",
+      "body": "",
+      "edits": [
+        { "path": "README.md", "append": "\nSee `docs/` for the ADRs.\n" }
+      ]
+    },
+    {
+      "number": 49,
+      "title": "Log how long each request takes",
+      "author": "devon-r",
+      "head": "devon-r/request-timing",
+      "base": "main",
+      "body": "Logs each request's duration at debug level.",
+      "edits": [
+        {
+          "path": "packages/shared/timed.ts",
+          "content": "// Runs `work`, logging how long it took.\nexport const timed = async <A>(label: string, work: () => Promise<A>) => {\n  const start = performance.now();\n  try {\n    return await work();\n  } finally {\n    console.debug(`${label} took ${Math.round(performance.now() - start)} ms`);\n  }\n};\n"
+        }
+      ]
+    },
+    {
+      "number": 40,
+      "title": "Rename the settings file",
+      "author": "mira-k",
+      "head": "mira-k/settings-name",
+      "base": "main",
+      "state": "MERGED",
+      "body": "Renames it to match the others.",
+      "edits": [
+        {
+          "path": "packages/shared/settings.ts",
+          "content": "export const SETTINGS_FILE = \"settings.json\";\n"
+        }
+      ]
+    },
+    {
+      "number": 39,
+      "title": "Try a dark splash screen",
+      "author": "devon-r",
+      "head": "devon-r/dark-splash",
+      "base": "main",
+      "state": "CLOSED",
+      "body": "An experiment; closing in favour of the theme work.",
+      "edits": [
+        {
+          "path": "packages/shared/splash.ts",
+          "content": "export const SPLASH = \"#111\";\n"
+        }
+      ]
+    }
+  ]
+}

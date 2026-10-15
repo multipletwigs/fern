@@ -5,7 +5,7 @@
     "prepare": "effect-tsgo patch --typescript --oxlint && husky",
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "lint": "oxlint --deny-warnings && node scripts/check-states.ts",
+    "lint": "oxlint --deny-warnings && node scripts/check-states.ts && node scripts/check-foreign-git.ts",
     "bootstrap": "pnpm install --frozen-lockfile",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
